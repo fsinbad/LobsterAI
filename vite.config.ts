@@ -6,8 +6,13 @@ import path from 'path';
 
 // https://vitejs.dev/config/
 const devPort = 5175;
+const katexVersion = process.env.npm_package_dependencies_katex?.replace(/^[~^]/, '') || '0.16.0';
 
 export default defineConfig({
+  define: {
+    // KaTeX ESM bundle references this compile-time constant.
+    __VERSION__: JSON.stringify(katexVersion),
+  },
   plugins: [
     react(),
     electron([
@@ -70,6 +75,11 @@ export default defineConfig({
   },
   optimizeDeps: {
     exclude: ['electron'],
+    esbuildOptions: {
+      define: {
+        __VERSION__: JSON.stringify(katexVersion),
+      },
+    },
   },
   clearScreen: false,
 }); 

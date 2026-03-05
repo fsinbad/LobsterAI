@@ -443,6 +443,7 @@ interface ActiveSession {
   ipcBridge?: VirtioSerialBridge;
   sandboxSkillsGuestPath?: string;
   sandboxSkillMounts?: Record<string, { tag: string; guestPath: string }>;
+  sandboxSkillRootMounts?: SandboxSkillRootMount[];
   /** Resolve callback for the current sandbox turn; called by the result event handler. */
   sandboxTurnResolve?: (result: { status: 'ok' } | { status: 'error'; message: string; hvfDenied: boolean; memoryFailed: boolean }) => void;
   /** When true, auto-approve all tool permissions (for scheduled tasks) */
@@ -481,12 +482,19 @@ type AttachmentEntry = {
 type SandboxSkillRewriteOptions = {
   guestSkillsRoot?: string | null;
   hostSkillsRoots?: string[];
+  hostSkillsRootMounts?: SandboxSkillRootMount[];
 };
 
 type SandboxSkillEntry = {
   skillId: string;
   hostPath: string;
   guestPath: string;
+  mountTag: string;
+};
+
+type SandboxSkillRootMount = {
+  hostRoot: string;
+  guestRoot: string;
   mountTag: string;
 };
 
@@ -1084,6 +1092,7 @@ export class CoworkRunner extends EventEmitter {
     skillEntries: SandboxSkillEntry[];
     extraMounts: SandboxExtraMount[];
     skillMounts: Record<string, { tag: string; guestPath: string }>;
+    rootMounts: SandboxSkillRootMount[];
   } {
     const guestSkillsRoot = runtimePlatform === 'win32'
       ? SANDBOX_SKILLS_GUEST_PATH_WINDOWS
@@ -1095,6 +1104,7 @@ export class CoworkRunner extends EventEmitter {
         skillEntries: [],
         extraMounts: [],
         skillMounts: {},
+        rootMounts: [],
       };
     }
 
@@ -1105,14 +1115,51 @@ export class CoworkRunner extends EventEmitter {
         skillEntries,
         extraMounts: [],
         skillMounts: {},
+        rootMounts: [],
       };
     }
 
-    const extraMounts = skillEntries.map(({ hostPath, mountTag }) => ({ hostPath, mountTag }));
-    const skillMounts = skillEntries.reduce<Record<string, { tag: string; guestPath: string }>>((acc, entry, index) => {
-      acc[`skill${index}`] = {
+    const keyOf = (target: string): string => (
+      process.platform === 'win32' ? target.toLowerCase() : target
+    );
+    const entryRoots = new Set<string>();
+    for (const entry of skillEntries) {
+      entryRoots.add(path.resolve(path.dirname(entry.hostPath)));
+    }
+
+    const mountHostRoots: string[] = [];
+    const seenMountRoots = new Set<string>();
+    const pushMountRoot = (candidate: string) => {
+      const resolved = path.resolve(candidate);
+      if (!entryRoots.has(resolved) || !this.isDirectory(resolved)) {
+        return;
+      }
+      const key = keyOf(resolved);
+      if (seenMountRoots.has(key)) {
+        return;
+      }
+      seenMountRoots.add(key);
+      mountHostRoots.push(resolved);
+    };
+
+    for (const root of hostSkillsRoots) {
+      pushMountRoot(root);
+    }
+    for (const root of entryRoots) {
+      pushMountRoot(root);
+    }
+
+    const rootMounts = mountHostRoots.map<SandboxSkillRootMount>((hostRoot, index) => ({
+      hostRoot,
+      guestRoot: index === 0 ? guestSkillsRoot : `${guestSkillsRoot}-roots/${index}`,
+      mountTag: `${SANDBOX_SKILLS_MOUNT_TAG}${index}`,
+    }));
+
+    const extraMounts = rootMounts.map(({ hostRoot, mountTag }) => ({ hostPath: hostRoot, mountTag }));
+    const skillMounts = rootMounts.reduce<Record<string, { tag: string; guestPath: string }>>((acc, entry, index) => {
+      acc[`skillsRoot${index}`] = {
         tag: entry.mountTag,
-        guestPath: entry.guestPath,
+        guestPath: entry.guestRoot,
       };
       return acc;
     }, {});
@@ -1122,6 +1169,7 @@ export class CoworkRunner extends EventEmitter {
       skillEntries,
       extraMounts,
       skillMounts,
+      rootMounts,
     };
   }
 
@@ -1685,28 +1733,37 @@ export class CoworkRunner extends EventEmitter {
     skillPath: string,
     options: SandboxSkillRewriteOptions
   ): string {
+    const mappings = this.buildSandboxSkillRootMappings(options);
     const guestSkillsRoot = options.guestSkillsRoot?.trim();
     if (!guestSkillsRoot) {
       return content;
     }
 
-    const replacementSources = new Set<string>(LEGACY_SKILLS_ROOT_HINTS);
-    replacementSources.add(path.resolve(path.dirname(path.dirname(skillPath))));
-    for (const root of options.hostSkillsRoots ?? []) {
-      if (!root) continue;
-      replacementSources.add(path.resolve(root));
-    }
-
     let rewritten = content;
-    for (const source of replacementSources) {
-      if (!source || source === guestSkillsRoot) continue;
-      const sourcePosix = source.replace(/\\/g, '/');
-      const sourceVariants = new Set<string>([source, sourcePosix]);
+    for (const mapping of mappings) {
+      const sourceVariants = new Set<string>([
+        mapping.hostRoot,
+        mapping.hostRoot.replace(/\\/g, '/'),
+      ]);
       for (const variant of sourceVariants) {
-        if (!variant || variant === guestSkillsRoot) continue;
-        rewritten = rewritten.replace(new RegExp(escapeRegExp(variant), 'gi'), guestSkillsRoot);
+        if (!variant || variant === mapping.guestRoot) continue;
+        rewritten = rewritten.replace(new RegExp(escapeRegExp(variant), 'gi'), mapping.guestRoot);
       }
     }
+
+    const skillRoot = path.resolve(path.dirname(path.dirname(skillPath)));
+    const mappedSkillRoot = this.mapHostSkillPathToSandboxPath(skillRoot, options) ?? guestSkillsRoot;
+    const skillRootVariants = new Set<string>([skillRoot, skillRoot.replace(/\\/g, '/')]);
+    for (const variant of skillRootVariants) {
+      if (!variant || variant === mappedSkillRoot) continue;
+      rewritten = rewritten.replace(new RegExp(escapeRegExp(variant), 'gi'), mappedSkillRoot);
+    }
+
+    for (const legacyRoot of LEGACY_SKILLS_ROOT_HINTS) {
+      const normalizedLegacyRoot = legacyRoot.replace(/\\/g, '/');
+      rewritten = rewritten.replace(new RegExp(escapeRegExp(normalizedLegacyRoot), 'gi'), guestSkillsRoot);
+    }
+
     return rewritten;
   }
 
@@ -1724,24 +1781,25 @@ export class CoworkRunner extends EventEmitter {
       return null;
     }
 
-    const hostRoots = new Set<string>();
-    for (const root of options.hostSkillsRoots ?? []) {
-      if (!root) continue;
-      hostRoots.add(path.resolve(root));
+    const normalizedRawLocation = rawLocation.replace(/\\/g, '/');
+    const guestRoots = new Set<string>([guestSkillsRoot]);
+    for (const mapping of options.hostSkillsRootMounts ?? []) {
+      if (!mapping.guestRoot) continue;
+      guestRoots.add(mapping.guestRoot.replace(/\\/g, '/').replace(/\/+$/, ''));
     }
-
-    const normalizedLocation = path.resolve(rawLocation);
-    for (const hostRoot of hostRoots) {
-      if (isPathWithin(hostRoot, normalizedLocation)) {
-        const relative = path.relative(hostRoot, normalizedLocation).split(path.sep).join('/');
-        if (!relative || relative.startsWith('..')) {
-          continue;
-        }
-        return `${guestSkillsRoot}/${relative}`.replace(/\/+/g, '/');
+    for (const guestRoot of guestRoots) {
+      if (!guestRoot) continue;
+      if (normalizedRawLocation === guestRoot || normalizedRawLocation.startsWith(`${guestRoot}/`)) {
+        return normalizedRawLocation;
       }
     }
 
-    const normalizedPosix = normalizedLocation.replace(/\\/g, '/');
+    const mappedHostLocation = this.mapHostSkillPathToSandboxPath(rawLocation, options);
+    if (mappedHostLocation) {
+      return mappedHostLocation;
+    }
+
+    const normalizedPosix = rawLocation.replace(/\\/g, '/');
     const markerIndex = findSkillsMarkerIndex(normalizedPosix);
     if (markerIndex >= 0) {
       const relative = normalizedPosix.slice(markerIndex + SKILLS_MARKER.length);
@@ -1792,17 +1850,25 @@ export class CoworkRunner extends EventEmitter {
       }
     );
 
-    const replacementSources = new Set<string>(LEGACY_SKILLS_ROOT_HINTS);
-    for (const root of options.hostSkillsRoots ?? []) {
-      if (!root) continue;
-      replacementSources.add(path.resolve(root));
+    for (const mapping of this.buildSandboxSkillRootMappings(options)) {
+      const variants = new Set<string>([
+        mapping.hostRoot,
+        mapping.hostRoot.replace(/\\/g, '/'),
+      ]);
+      let next = rewritten;
+      for (const variant of variants) {
+        if (!variant || variant === mapping.guestRoot) continue;
+        next = next.replace(new RegExp(escapeRegExp(variant), 'gi'), mapping.guestRoot);
+      }
+      if (next !== rewritten) {
+        hasRewrite = true;
+        rewritten = next;
+      }
     }
 
-    for (const source of replacementSources) {
-      if (!source || source === guestSkillsRoot) continue;
-      const sourcePosix = source.replace(/\\/g, '/');
-      if (!sourcePosix || sourcePosix === guestSkillsRoot) continue;
-      const next = rewritten.replace(new RegExp(escapeRegExp(sourcePosix), 'gi'), guestSkillsRoot);
+    for (const legacyRoot of LEGACY_SKILLS_ROOT_HINTS) {
+      const normalizedLegacyRoot = legacyRoot.replace(/\\/g, '/');
+      const next = rewritten.replace(new RegExp(escapeRegExp(normalizedLegacyRoot), 'gi'), guestSkillsRoot);
       if (next !== rewritten) {
         hasRewrite = true;
         rewritten = next;
@@ -1810,6 +1876,77 @@ export class CoworkRunner extends EventEmitter {
     }
 
     return { prompt: rewritten, hasRewrite };
+  }
+
+  private buildSandboxSkillRootMappings(
+    options: SandboxSkillRewriteOptions
+  ): Array<{ hostRoot: string; guestRoot: string }> {
+    const mappings: Array<{ hostRoot: string; guestRoot: string }> = [];
+    const seen = new Set<string>();
+    const keyOf = (target: string): string => (
+      process.platform === 'win32' ? target.toLowerCase() : target
+    );
+
+    const pushMapping = (hostRoot: string, guestRoot: string) => {
+      if (!hostRoot || !guestRoot) return;
+      const resolvedHostRoot = path.resolve(hostRoot);
+      const normalizedGuestRoot = guestRoot.replace(/\\/g, '/').replace(/\/+$/, '');
+      if (!normalizedGuestRoot) return;
+      const key = keyOf(resolvedHostRoot);
+      if (seen.has(key)) return;
+      seen.add(key);
+      mappings.push({
+        hostRoot: resolvedHostRoot,
+        guestRoot: normalizedGuestRoot,
+      });
+    };
+
+    for (const mount of options.hostSkillsRootMounts ?? []) {
+      if (!mount?.hostRoot || !mount?.guestRoot) continue;
+      pushMapping(mount.hostRoot, mount.guestRoot);
+    }
+
+    if (mappings.length === 0) {
+      const guestSkillsRoot = options.guestSkillsRoot?.trim();
+      if (!guestSkillsRoot) {
+        return mappings;
+      }
+      for (const root of options.hostSkillsRoots ?? []) {
+        if (!root) continue;
+        pushMapping(root, guestSkillsRoot);
+      }
+    }
+
+    return mappings.sort((a, b) => b.hostRoot.length - a.hostRoot.length);
+  }
+
+  private mapHostSkillPathToSandboxPath(
+    hostPath: string,
+    options: SandboxSkillRewriteOptions
+  ): string | null {
+    if (!hostPath || !path.isAbsolute(hostPath)) {
+      return null;
+    }
+
+    const resolvedHostPath = path.resolve(hostPath);
+    const mappings = this.buildSandboxSkillRootMappings(options);
+    for (const mapping of mappings) {
+      if (!isPathWithin(mapping.hostRoot, resolvedHostPath)) {
+        continue;
+      }
+
+      const relative = path.relative(mapping.hostRoot, resolvedHostPath).split(path.sep).join('/');
+      if (relative.startsWith('..')) {
+        continue;
+      }
+
+      if (!relative) {
+        return mapping.guestRoot;
+      }
+
+      return `${mapping.guestRoot}/${relative}`.replace(/\/+/g, '/');
+    }
+    return null;
   }
 
   private normalizeWorkspaceRoot(workspaceRoot: string, cwd: string): string {
@@ -3556,10 +3693,14 @@ export class CoworkRunner extends EventEmitter {
     const resolvedSystemPrompt = this.resolveAutoRoutingForSandbox(sandboxSystemPrompt, {
       guestSkillsRoot: sandboxSkills.guestSkillsRoot,
       hostSkillsRoots: hostSkillsRoots,
+      hostSkillsRootMounts: sandboxSkills.rootMounts,
     });
     activeSession.sandboxSkillsGuestPath = sandboxSkills.guestSkillsRoot ?? undefined;
     activeSession.sandboxSkillMounts = Object.keys(sandboxSkills.skillMounts).length > 0
       ? sandboxSkills.skillMounts
+      : undefined;
+    activeSession.sandboxSkillRootMounts = sandboxSkills.rootMounts.length > 0
+      ? sandboxSkills.rootMounts
       : undefined;
 
     const mounts: Record<string, { tag: string; guestPath: string }> = {
@@ -3806,9 +3947,28 @@ export class CoworkRunner extends EventEmitter {
           }
         }
 
-        // Wait for the VM to be ready before sending requests
-        // Use longer timeout (180s) to allow for slower boot in TCG/software emulation mode
-        const vmReady = await this.waitForVmReady(paths.ipcDir, child, 180000);
+        // Wait for the VM to be ready before sending requests.
+        // Windows TCG can be significantly slower than hardware acceleration.
+        const vmReadyTimeoutOverride = Number.parseInt(
+          process.env.COWORK_SANDBOX_VM_READY_TIMEOUT_MS ?? '',
+          10
+        );
+        const defaultVmReadyTimeout =
+          runtimeInfo.platform === 'win32' && accelMode === 'tcg'
+            ? 300000
+            : 180000;
+        const vmReadyTimeoutMs =
+          Number.isFinite(vmReadyTimeoutOverride) && vmReadyTimeoutOverride > 0
+            ? vmReadyTimeoutOverride
+            : defaultVmReadyTimeout;
+
+        coworkLog('INFO', 'runSandbox', 'Waiting for VM heartbeat', {
+          timeoutMs: vmReadyTimeoutMs,
+          accelMode,
+          platform: runtimeInfo.platform,
+        });
+
+        const vmReady = await this.waitForVmReady(paths.ipcDir, child, vmReadyTimeoutMs);
         if (!vmReady) {
           const stderrSnippet = stderrBuffer.trim();
           let message = 'VM failed to become ready';
@@ -4072,6 +4232,10 @@ export class CoworkRunner extends EventEmitter {
             sessionId,
             'Hardware virtualization (WHPX/Hyper-V) is unavailable. Retrying with software emulation (TCG).'
           );
+          // TCG boots faster and more reliably with lower guest memory on typical Windows hosts.
+          if (!memoryMb || memoryMb > 2048) {
+            memoryMb = 2048;
+          }
           accelOverride = 'tcg';
           continue;
         }
@@ -4129,6 +4293,7 @@ export class CoworkRunner extends EventEmitter {
     const resolvedSystemPrompt = this.resolveAutoRoutingForSandbox(sandboxSystemPrompt, {
       guestSkillsRoot: activeSession.sandboxSkillsGuestPath ?? null,
       hostSkillsRoots: hostSkillsRoots,
+      hostSkillsRootMounts: activeSession.sandboxSkillRootMounts,
     });
     const sandboxEnv = this.buildSandboxEnv(env, activeSession.sandboxSkillsGuestPath ?? null);
     coworkLog('INFO', 'runSandbox', 'Resolved sandbox API endpoint (continue)', {
@@ -4384,9 +4549,12 @@ export class CoworkRunner extends EventEmitter {
           const nameMatch = match[1].match(nameRe);
           const skillId = path.basename(path.dirname(resolvedSkillPath));
           const name = nameMatch?.[1] || skillId;
-          const sandboxSkillDir = guestSkillsRoot
-            ? `${guestSkillsRoot}/${skillId}`.replace(/\/+/g, '/')
-            : null;
+          const sandboxSkillLocation = this.rewriteSkillLocationForSandbox(resolvedSkillPath, options);
+          const sandboxSkillDir = sandboxSkillLocation
+            ? path.posix.dirname(sandboxSkillLocation.replace(/\\/g, '/'))
+            : guestSkillsRoot
+              ? `${guestSkillsRoot}/${skillId}`.replace(/\/+/g, '/')
+              : null;
           if (sandboxSkillDir) {
             rewrittenContent = rewrittenContent.replace(
               /\]\((?!https?:\/\/|#|\/)(\.\/)?([^)]+)\)/g,
