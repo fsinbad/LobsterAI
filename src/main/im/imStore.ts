@@ -13,7 +13,6 @@ import {
   DiscordOpenClawConfig,
   NimConfig,
   XiaomifengConfig,
-  WecomConfig,
   WecomOpenClawConfig,
   PopoOpenClawConfig,
   WeixinOpenClawConfig,

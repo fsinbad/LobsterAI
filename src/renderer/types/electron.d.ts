@@ -438,17 +438,17 @@ interface IElectronAPI {
     onMessageReceived: (callback: (message: IMMessage) => void) => () => void;
   };
   scheduledTasks: {
-    list: () => Promise<{ success: boolean; tasks?: import('./scheduledTask').ScheduledTask[]; error?: string }>;
-    get: (id: string) => Promise<{ success: boolean; task?: import('./scheduledTask').ScheduledTask; error?: string }>;
-    create: (input: import('./scheduledTask').ScheduledTaskInput) => Promise<{ success: boolean; task?: import('./scheduledTask').ScheduledTask; error?: string }>;
-    update: (id: string, input: Partial<import('./scheduledTask').ScheduledTaskInput>) => Promise<{ success: boolean; task?: import('./scheduledTask').ScheduledTask; error?: string }>;
+    list: () => Promise<{ success: boolean; tasks?: import('../../scheduled-task/types').ScheduledTask[]; error?: string }>;
+    get: (id: string) => Promise<{ success: boolean; task?: import('../../scheduled-task/types').ScheduledTask; error?: string }>;
+    create: (input: import('../../scheduled-task/types').ScheduledTaskInput) => Promise<{ success: boolean; task?: import('../../scheduled-task/types').ScheduledTask; error?: string }>;
+    update: (id: string, input: Partial<import('../../scheduled-task/types').ScheduledTaskInput>) => Promise<{ success: boolean; task?: import('../../scheduled-task/types').ScheduledTask; error?: string }>;
     delete: (id: string) => Promise<{ success: boolean; error?: string }>;
-    toggle: (id: string, enabled: boolean) => Promise<{ success: boolean; task?: import('./scheduledTask').ScheduledTask; warning?: string; error?: string }>;
+    toggle: (id: string, enabled: boolean) => Promise<{ success: boolean; task?: import('../../scheduled-task/types').ScheduledTask; warning?: string; error?: string }>;
     runManually: (id: string) => Promise<{ success: boolean; error?: string }>;
     stop: (id: string) => Promise<{ success: boolean; error?: string }>;
-    listRuns: (taskId: string, limit?: number, offset?: number) => Promise<{ success: boolean; runs?: import('./scheduledTask').ScheduledTaskRun[]; error?: string }>;
+    listRuns: (taskId: string, limit?: number, offset?: number) => Promise<{ success: boolean; runs?: import('../../scheduled-task/types').ScheduledTaskRun[]; error?: string }>;
     countRuns: (taskId: string) => Promise<{ success: boolean; count?: number; error?: string }>;
-    listAllRuns: (limit?: number, offset?: number) => Promise<{ success: boolean; runs?: import('./scheduledTask').ScheduledTaskRunWithName[]; error?: string }>;
+    listAllRuns: (limit?: number, offset?: number) => Promise<{ success: boolean; runs?: import('../../scheduled-task/types').ScheduledTaskRunWithName[]; error?: string }>;
     resolveSession: (sessionKey: string) => Promise<{
       success: boolean;
       session?: import('./cowork').CoworkSession | null;
@@ -456,11 +456,16 @@ interface IElectronAPI {
     }>;
     listChannels: () => Promise<{
       success: boolean;
-      channels?: import('./scheduledTask').ScheduledTaskChannelOption[];
+      channels?: import('../../scheduled-task/types').ScheduledTaskChannelOption[];
       error?: string;
     }>;
-    onStatusUpdate: (callback: (data: import('./scheduledTask').ScheduledTaskStatusEvent) => void) => () => void;
-    onRunUpdate: (callback: (data: import('./scheduledTask').ScheduledTaskRunEvent) => void) => () => void;
+    listChannelConversations?: (channel: string) => Promise<{
+      success: boolean;
+      conversations?: import('../../scheduled-task/types').ScheduledTaskConversationOption[];
+      error?: string;
+    }>;
+    onStatusUpdate: (callback: (data: import('../../scheduled-task/types').ScheduledTaskStatusEvent) => void) => () => void;
+    onRunUpdate: (callback: (data: import('../../scheduled-task/types').ScheduledTaskRunEvent) => void) => () => void;
     onRefresh: (callback: () => void) => () => void;
   };
   permissions: {

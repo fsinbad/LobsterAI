@@ -44,6 +44,8 @@ import {
   OpenClawChannelSessionSync,
   buildManagedSessionKey,
   DEFAULT_MANAGED_AGENT_ID,
+  CHANNEL_PLATFORM_MAP,
+  PLATFORM_TO_CHANNEL_MAP,
 } from './libs/openclawChannelSessionSync';
 import { IMGatewayManager, IMPlatform, IMGatewayConfig } from './im';
 import { APP_NAME } from './appConstants';
@@ -52,9 +54,10 @@ import { createTray, destroyTray, updateTrayMenu } from './trayManager';
 import { setLanguage, t } from './i18n';
 import { isAutoLaunched, getAutoLaunchEnabled, setAutoLaunchEnabled } from './autoLaunchManager';
 import { McpStore } from './mcpStore';
-import { CronJobService } from './libs/cronJobService';
-import { migrateScheduledTasksToOpenclaw, migrateScheduledTaskRunsToOpenclaw } from './libs/migrateScheduledTasks';
-import { buildScheduledTaskEnginePrompt } from './libs/scheduledTaskEnginePrompt';
+import { CronJobService } from '../scheduled-task/cronJobService';
+import { migrateScheduledTasksToOpenclaw, migrateScheduledTaskRunsToOpenclaw } from '../scheduled-task/migrate';
+import { buildScheduledTaskEnginePrompt } from '../scheduled-task/enginePrompt';
+import { IpcChannel as ScheduledTaskIpc, DeliveryMode as STDeliveryMode, SessionTarget as STSessionTarget, PayloadKind as STPayloadKind } from '../scheduled-task/constants';
 import { McpServerManager } from './libs/mcpServerManager';
 import { getServerApiBaseUrl, refreshEndpointsTestMode } from './libs/endpoints';
 import { McpBridgeServer } from './libs/mcpBridgeServer';
@@ -87,7 +90,6 @@ const IPC_MAX_ITEMS = 40;
 const MAX_INLINE_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 const ENGINE_NOT_READY_CODE = 'ENGINE_NOT_READY';
 const SCHEDULED_TASK_CHANNEL_OPTIONS = [
-  { value: 'last', label: 'Last conversation' },
   { value: 'dingtalk-connector', label: 'DingTalk' },
   { value: 'feishu', label: 'Feishu' },
   { value: 'telegram', label: 'Telegram' },
@@ -1295,6 +1297,16 @@ const getIMGatewayManager = () => {
               sessionId,
             );
           }
+          const channelName = PLATFORM_TO_CHANNEL_MAP[message.platform];
+          const hasChannel = !!(channelName && message.conversationId);
+          // Strip IM subtype prefix (e.g. "direct:ou_xxx" -> "ou_xxx")
+          let deliveryTo = message.conversationId;
+          if (hasChannel && deliveryTo) {
+            const colonIdx = deliveryTo.indexOf(':');
+            if (colonIdx > 0) {
+              deliveryTo = deliveryTo.slice(colonIdx + 1);
+            }
+          }
           const task = await getCronJobService().addJob({
             name: request.taskName,
             description: '',
@@ -1303,22 +1315,29 @@ const getIMGatewayManager = () => {
               kind: 'at',
               at: request.scheduleAt,
             },
-            sessionTarget: 'main',
+            sessionTarget: hasChannel ? 'isolated' : 'main',
             wakeMode: 'now',
-            payload: {
-              kind: 'systemEvent',
-              text: request.payloadText,
+            payload: hasChannel
+              ? { kind: 'agentTurn', message: request.payloadText }
+              : { kind: 'systemEvent', text: request.payloadText },
+            delivery: {
+              mode: hasChannel ? 'announce' : 'none',
+              ...(channelName ? { channel: channelName } : {}),
+              ...(hasChannel ? { to: deliveryTo } : message.conversationId ? { to: message.conversationId } : {}),
             },
-            delivery: { mode: 'none' },
             agentId: DEFAULT_MANAGED_AGENT_ID,
-            sessionKey: buildManagedSessionKey(sessionId, DEFAULT_MANAGED_AGENT_ID),
+            ...(hasChannel ? {} : { sessionKey: buildManagedSessionKey(sessionId, DEFAULT_MANAGED_AGENT_ID) }),
           });
           return {
             id: task.id,
             name: task.name,
             agentId: task.agentId,
             sessionKey: task.sessionKey,
-            payloadText: task.payload.kind === 'systemEvent' ? task.payload.text : '',
+            payloadText: task.payload.kind === 'systemEvent'
+              ? task.payload.text
+              : task.payload.kind === 'agentTurn'
+                ? task.payload.message
+                : '',
             scheduleAt: task.schedule.kind === 'at' ? task.schedule.at : request.scheduleAt,
           };
         },
@@ -1419,9 +1438,6 @@ function listScheduledTaskChannels(): Array<{ value: string; label: string }> {
   }
 
   return SCHEDULED_TASK_CHANNEL_OPTIONS.filter((option) => {
-    if (option.value === 'last') {
-      return true;
-    }
     if (option.value === 'dingtalk-connector') {
       return enabledConfigKeys.has('dingtalk');
     }
@@ -3084,7 +3100,7 @@ if (!gotTheLock) {
 
   // ==================== Scheduled Task IPC Handlers (OpenClaw) ====================
 
-  ipcMain.handle('scheduledTask:list', async () => {
+  ipcMain.handle(ScheduledTaskIpc.List, async () => {
     try {
       // If OpenClaw gateway is not connected yet, return empty list immediately
       // to avoid blocking the renderer init. Tasks will be loaded later via the
@@ -3099,7 +3115,7 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('scheduledTask:get', async (_event, id: string) => {
+  ipcMain.handle(ScheduledTaskIpc.Get, async (_event, id: string) => {
     try {
       const task = await getCronJobService().getJob(id);
       return { success: true, task };
@@ -3108,27 +3124,113 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('scheduledTask:create', async (_event, input: any) => {
+  ipcMain.handle(ScheduledTaskIpc.Create, async (_event, input: any) => {
     try {
       const normalizedInput = input && typeof input === 'object' ? { ...input } : {};
+      console.log('[IPC][scheduledTask:create] normalizedInput:', JSON.stringify(normalizedInput, null, 2));
+      console.log('[IPC][scheduledTask:create] delivery:', JSON.stringify(normalizedInput.delivery, null, 2));
+
+      // When an IM conversation is selected as notification target, let OpenClaw
+      // handle delivery natively via its announce mechanism. We keep
+      // sessionTarget='isolated' and delivery.mode='announce' so OpenClaw runs
+      // the agent in an isolated cron session and delivers the result through
+      // its outbound channel adapter (e.g. feishu plugin).
+      //
+      // DingTalk still needs the reply route primed so the outbound adapter
+      // can locate the correct conversation.
+      const delivery = normalizedInput.delivery;
+      if (delivery && delivery.mode === STDeliveryMode.Announce && delivery.channel && delivery.to) {
+        const platform = CHANNEL_PLATFORM_MAP[delivery.channel] as IMPlatform | undefined;
+        if (platform) {
+          console.log('[IPC][scheduledTask:create] IM notification target detected, using OpenClaw native announce delivery.',
+            JSON.stringify({ channel: delivery.channel, to: delivery.to, platform }));
+          normalizedInput.sessionTarget = STSessionTarget.Isolated;
+          if (normalizedInput.payload?.kind === STPayloadKind.SystemEvent) {
+            normalizedInput.payload = {
+              kind: STPayloadKind.AgentTurn,
+              message: normalizedInput.payload.text || '',
+            };
+          }
+          // Strip IM subtype prefix from delivery.to before passing to OpenClaw.
+          // LobsterAI stores conversationIds with subtype prefixes (e.g. "direct:ou_xxx",
+          // "group:oc_xxx") but OpenClaw channel adapters expect raw platform IDs
+          // (e.g. "ou_xxx", "oc_xxx").
+          const rawTo = delivery.to;
+          const colonIdx = rawTo.indexOf(':');
+          if (colonIdx > 0) {
+            delivery.to = rawTo.slice(colonIdx + 1);
+            console.log('[IPC][scheduledTask:create] stripped IM subtype prefix from delivery.to:',
+              rawTo, '->', delivery.to);
+          }
+          if (platform === 'dingtalk') {
+            const imStore = getIMGatewayManager()?.getIMStore();
+            const mapping = imStore?.getSessionMapping(rawTo, platform);
+            if (mapping) {
+              await getIMGatewayManager().primeConversationReplyRoute(
+                platform, rawTo, mapping.coworkSessionId,
+              );
+            }
+          }
+        }
+      }
+
       const task = await getCronJobService().addJob(normalizedInput);
+      console.log('[IPC][scheduledTask:create] result task id:', task?.id, 'name:', task?.name);
       return { success: true, task };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to create task' };
     }
   });
 
-  ipcMain.handle('scheduledTask:update', async (_event, id: string, input: any) => {
+  ipcMain.handle(ScheduledTaskIpc.Update, async (_event, id: string, input: any) => {
     try {
       const normalizedInput = input && typeof input === 'object' ? { ...input } : {};
+      console.log('[IPC][scheduledTask:update] id:', id, 'normalizedInput:', JSON.stringify(normalizedInput, null, 2));
+      console.log('[IPC][scheduledTask:update] delivery:', JSON.stringify(normalizedInput.delivery, null, 2));
+
+      // Same OpenClaw native announce delivery logic as create handler.
+      const delivery = normalizedInput.delivery;
+      if (delivery && delivery.mode === STDeliveryMode.Announce && delivery.channel && delivery.to) {
+        const platform = CHANNEL_PLATFORM_MAP[delivery.channel] as IMPlatform | undefined;
+        if (platform) {
+          console.log('[IPC][scheduledTask:update] IM notification target detected, using OpenClaw native announce delivery.',
+            JSON.stringify({ channel: delivery.channel, to: delivery.to, platform }));
+          normalizedInput.sessionTarget = STSessionTarget.Isolated;
+          if (normalizedInput.payload?.kind === STPayloadKind.SystemEvent) {
+            normalizedInput.payload = {
+              kind: STPayloadKind.AgentTurn,
+              message: normalizedInput.payload.text || '',
+            };
+          }
+          // Strip IM subtype prefix (e.g. "direct:ou_xxx" -> "ou_xxx")
+          const rawTo = delivery.to;
+          const colonIdx = rawTo.indexOf(':');
+          if (colonIdx > 0) {
+            delivery.to = rawTo.slice(colonIdx + 1);
+            console.log('[IPC][scheduledTask:update] stripped IM subtype prefix from delivery.to:',
+              rawTo, '->', delivery.to);
+          }
+          if (platform === 'dingtalk') {
+            const imStore = getIMGatewayManager()?.getIMStore();
+            const mapping = imStore?.getSessionMapping(rawTo, platform);
+            if (mapping) {
+              await getIMGatewayManager().primeConversationReplyRoute(
+                platform, rawTo, mapping.coworkSessionId,
+              );
+            }
+          }
+        }
+      }
+
       const task = await getCronJobService().updateJob(id, normalizedInput);
+      console.log('[IPC][scheduledTask:update] result task id:', task?.id, 'name:', task?.name);
       return { success: true, task };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to update task' };
     }
   });
 
-  ipcMain.handle('scheduledTask:delete', async (_event, id: string) => {
+  ipcMain.handle(ScheduledTaskIpc.Delete, async (_event, id: string) => {
     try {
       await getCronJobService().removeJob(id);
       return { success: true, result: true };
@@ -3137,7 +3239,7 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('scheduledTask:toggle', async (_event, id: string, enabled: boolean) => {
+  ipcMain.handle(ScheduledTaskIpc.Toggle, async (_event, id: string, enabled: boolean) => {
     try {
       const task = await getCronJobService().toggleJob(id, enabled);
       return { success: true, task };
@@ -3146,7 +3248,7 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('scheduledTask:runManually', async (_event, id: string) => {
+  ipcMain.handle(ScheduledTaskIpc.RunManually, async (_event, id: string) => {
     try {
       await getCronJobService().runJob(id);
       return { success: true };
@@ -3157,7 +3259,7 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('scheduledTask:stop', async (_event, id: string) => {
+  ipcMain.handle(ScheduledTaskIpc.Stop, async (_event, id: string) => {
     try {
       // OpenClaw doesn't expose a direct stop API for running cron jobs
       // The job will complete or timeout on its own
@@ -3167,7 +3269,7 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('scheduledTask:listRuns', async (_event, taskId: string, limit?: number, offset?: number) => {
+  ipcMain.handle(ScheduledTaskIpc.ListRuns, async (_event, taskId: string, limit?: number, offset?: number) => {
     try {
       const runs = await getCronJobService().listRuns(taskId, limit, offset);
       return { success: true, runs };
@@ -3176,7 +3278,7 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('scheduledTask:countRuns', async (_event, taskId: string) => {
+  ipcMain.handle(ScheduledTaskIpc.CountRuns, async (_event, taskId: string) => {
     try {
       const count = await getCronJobService().countRuns(taskId);
       return { success: true, count };
@@ -3185,7 +3287,7 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('scheduledTask:listAllRuns', async (_event, limit?: number, offset?: number) => {
+  ipcMain.handle(ScheduledTaskIpc.ListAllRuns, async (_event, limit?: number, offset?: number) => {
     try {
       const runs = await getCronJobService().listAllRuns(limit, offset);
       return { success: true, runs };
@@ -3194,7 +3296,7 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('scheduledTask:resolveSession', async (_event, sessionKey: string) => {
+  ipcMain.handle(ScheduledTaskIpc.ResolveSession, async (_event, sessionKey: string) => {
     try {
       if (!sessionKey) return { success: true, session: null };
       // Fetch session history from OpenClaw (returns transient session, not persisted)
@@ -3205,11 +3307,40 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('scheduledTask:listChannels', async () => {
+  ipcMain.handle(ScheduledTaskIpc.ListChannels, async () => {
     try {
       return { success: true, channels: listScheduledTaskChannels() };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to list channels' };
+    }
+  });
+
+  ipcMain.handle(ScheduledTaskIpc.ListChannelConversations, async (_event, channel: string) => {
+    try {
+      console.log('[IPC][listChannelConversations] channel:', channel);
+      const platform = CHANNEL_PLATFORM_MAP[channel] as IMPlatform | undefined;
+      console.log('[IPC][listChannelConversations] resolved platform:', platform);
+      if (!platform) {
+        console.log('[IPC][listChannelConversations] no platform mapping, returning empty');
+        return { success: true, conversations: [] };
+      }
+      const imStore = getIMGatewayManager()?.getIMStore();
+      if (!imStore) {
+        console.log('[IPC][listChannelConversations] no imStore available, returning empty');
+        return { success: true, conversations: [] };
+      }
+      const mappings = imStore.listSessionMappings(platform);
+      console.log('[IPC][listChannelConversations] found', mappings.length, 'session mappings for platform:', platform);
+      const conversations = mappings.map((m) => ({
+        conversationId: m.imConversationId,
+        platform: m.platform,
+        coworkSessionId: m.coworkSessionId,
+        lastActiveAt: m.lastActiveAt,
+      }));
+      console.log('[IPC][listChannelConversations] conversations:', JSON.stringify(conversations, null, 2));
+      return { success: true, conversations };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to list conversations' };
     }
   });
 

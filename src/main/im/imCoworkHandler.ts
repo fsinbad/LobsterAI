@@ -19,7 +19,7 @@ import {
   type IMScheduledTaskRequestDetector,
   type ParsedIMScheduledTaskRequest,
 } from './imScheduledTaskHandler';
-import { buildScheduledTaskEnginePrompt } from '../libs/scheduledTaskEnginePrompt';
+import { buildScheduledTaskEnginePrompt } from '../../scheduled-task/enginePrompt';
 
 interface MessageAccumulator {
   messages: CoworkMessage[];
@@ -541,9 +541,12 @@ export class IMCoworkHandler extends EventEmitter {
    */
   private handleMessage(sessionId: string, message: CoworkMessage): void {
     // Only process messages from IM sessions
-    if (!this.ensureTrackedSession(sessionId)) return;
+    const tracked = this.ensureTrackedSession(sessionId);
+    console.log('[IMCoworkHandler:handleMessage] sessionId:', sessionId, 'tracked:', tracked, 'messageType:', message.type);
+    if (!tracked) return;
 
     const accumulator = this.messageAccumulators.get(sessionId) ?? this.ensureBackgroundAccumulator(sessionId);
+    console.log('[IMCoworkHandler:handleMessage] accumulator exists:', !!accumulator, 'backgroundDelivery:', !!(accumulator as any)?.backgroundDelivery);
     if (accumulator) {
       accumulator.messages.push(message);
     }
@@ -819,7 +822,9 @@ export class IMCoworkHandler extends EventEmitter {
    */
   private handleComplete(sessionId: string): void {
     // Only process complete events from IM sessions
-    if (!this.ensureTrackedSession(sessionId)) return;
+    const tracked = this.ensureTrackedSession(sessionId);
+    console.log('[IMCoworkHandler:handleComplete] sessionId:', sessionId, 'tracked:', tracked, 'hasAccumulator:', this.messageAccumulators.has(sessionId));
+    if (!tracked) return;
 
     this.clearPendingPermissionsBySessionId(sessionId);
     const accumulator = this.messageAccumulators.get(sessionId);

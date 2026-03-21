@@ -72,6 +72,11 @@ export const CHANNEL_PLATFORM_MAP: Record<string, IMPlatform> = {
   'openclaw-weixin': 'weixin',
 };
 
+/** Reverse map: IM platform → preferred OpenClaw channel name. */
+export const PLATFORM_TO_CHANNEL_MAP: Record<string, string> = Object.fromEntries(
+  Object.entries(CHANNEL_PLATFORM_MAP).map(([channel, platform]) => [platform, channel]),
+);
+
 /** Parse a channel sessionKey into platform + conversationId.
  *  Supports three formats:
  *  - OpenClaw format: "agent:{agentId}:{platform}:{subtype}:{conversationId}"
