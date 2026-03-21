@@ -16,6 +16,7 @@ interface CoworkState {
   unreadSessionIds: string[];
   isCoworkActive: boolean;
   isStreaming: boolean;
+  remoteManaged: boolean;
   pendingPermissions: CoworkPermissionRequest[];
   config: CoworkConfig;
 }
@@ -28,6 +29,7 @@ const initialState: CoworkState = {
   unreadSessionIds: [],
   isCoworkActive: false,
   isStreaming: false,
+  remoteManaged: false,
   pendingPermissions: [],
   config: {
     workingDirectory: '',
@@ -248,6 +250,10 @@ const coworkSlice = createSlice({
       state.isStreaming = action.payload;
     },
 
+    setRemoteManaged(state, action: PayloadAction<boolean>) {
+      state.remoteManaged = action.payload;
+    },
+
     updateSessionPinned(state, action: PayloadAction<{ sessionId: string; pinned: boolean }>) {
       const { sessionId, pinned } = action.payload;
       const sessionIndex = state.sessions.findIndex(s => s.id === sessionId);
@@ -307,6 +313,7 @@ const coworkSlice = createSlice({
       state.currentSessionId = null;
       state.currentSession = null;
       state.isStreaming = false;
+      state.remoteManaged = false;
     },
   },
 });
@@ -324,6 +331,7 @@ export const {
   addMessage,
   updateMessageContent,
   setStreaming,
+  setRemoteManaged,
   updateSessionPinned,
   updateSessionTitle,
   enqueuePendingPermission,
