@@ -2204,6 +2204,98 @@ async function handleRequest(
     return;
   }
 
+  // OpenClaw sends requests to /v1/chat/completions (OpenAI format) when using
+  // the lobster provider. Transparently proxy these requests to the upstream with
+  // IDE headers injected (needed for GitHub Copilot).
+  if (method === 'POST' && (url.pathname === '/v1/chat/completions' || url.pathname === '/chat/completions')) {
+    if (!upstreamConfig) {
+      writeJSON(res, 503, createAnthropicErrorBody('Proxy not configured', 'service_unavailable'));
+      return;
+    }
+    let body = '';
+    try {
+      body = await readRequestBody(req);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Invalid request body';
+      writeJSON(res, 400, createAnthropicErrorBody(message, 'invalid_request_error'));
+      return;
+    }
+    const upstreamHeaders: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (upstreamConfig.apiKey) {
+      upstreamHeaders.Authorization = `Bearer ${upstreamConfig.apiKey}`;
+    }
+    if (upstreamConfig.provider === 'github-copilot') {
+      upstreamHeaders['Copilot-Integration-Id'] = 'vscode-chat';
+      upstreamHeaders['Editor-Version'] = 'vscode/1.96.2';
+      upstreamHeaders['Editor-Plugin-Version'] = 'copilot-chat/0.26.7';
+      upstreamHeaders['User-Agent'] = 'GitHubCopilotChat/0.26.7';
+      upstreamHeaders['Openai-Intent'] = 'conversation-panel';
+    }
+    // Build upstream URL: use the upstream baseURL + /chat/completions
+    const upstreamBase = upstreamConfig.baseURL.replace(/\/+$/, '');
+    const upstreamUrl = upstreamBase.endsWith('/chat/completions')
+      ? upstreamBase
+      : `${upstreamBase}/chat/completions`;
+    console.log(`[CoworkProxy] OpenAI passthrough → ${upstreamUrl} (provider: ${upstreamConfig.provider})`);
+    try {
+      const { session } = await import('electron');
+      let upstreamResponse = await session.defaultSession.fetch(upstreamUrl, {
+        method: 'POST',
+        headers: upstreamHeaders,
+        body,
+      });
+      // Auto-retry once for Copilot token expiry
+      if (
+        upstreamConfig.provider === 'github-copilot'
+        && (upstreamResponse.status === 401 || upstreamResponse.status === 403)
+      ) {
+        console.log('[CoworkProxy] OpenAI passthrough: Copilot auth error, refreshing token and retrying...');
+        try {
+          const { refreshCopilotTokenNow } = await import('./copilotTokenManager');
+          const refreshed = await refreshCopilotTokenNow();
+          upstreamConfig.apiKey = refreshed.copilotToken;
+          upstreamHeaders.Authorization = `Bearer ${refreshed.copilotToken}`;
+          upstreamResponse = await session.defaultSession.fetch(upstreamUrl, {
+            method: 'POST',
+            headers: upstreamHeaders,
+            body,
+          });
+          console.log(`[CoworkProxy] OpenAI passthrough: retry status=${upstreamResponse.status}`);
+        } catch (refreshErr) {
+          console.warn('[CoworkProxy] OpenAI passthrough: token refresh failed:', refreshErr);
+        }
+      }
+      // Pipe response back
+      res.writeHead(upstreamResponse.status, {
+        'Content-Type': upstreamResponse.headers.get('content-type') || 'application/json',
+        'Transfer-Encoding': upstreamResponse.headers.get('transfer-encoding') || '',
+      });
+      if (upstreamResponse.body) {
+        const reader = upstreamResponse.body.getReader();
+        const pump = async () => {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) { res.end(); return; }
+            res.write(Buffer.from(value));
+          }
+        };
+        await pump();
+      } else {
+        const text = await upstreamResponse.text();
+        res.end(text);
+      }
+    } catch (proxyError) {
+      console.error('[CoworkProxy] OpenAI passthrough error:', proxyError);
+      writeJSON(res, 502, createAnthropicErrorBody(
+        proxyError instanceof Error ? proxyError.message : 'Upstream error',
+        'api_error',
+      ));
+    }
+    return;
+  }
+
   if (method !== 'POST' || url.pathname !== '/v1/messages') {
     writeJSON(res, 404, createAnthropicErrorBody('Not found', 'not_found_error'));
     return;
@@ -2292,6 +2384,9 @@ async function handleRequest(
   if (upstreamConfig.provider === 'github-copilot') {
     headers['Copilot-Integration-Id'] = 'vscode-chat';
     headers['Editor-Version'] = 'vscode/1.96.2';
+    headers['Editor-Plugin-Version'] = 'copilot-chat/0.26.7';
+    headers['User-Agent'] = 'GitHubCopilotChat/0.26.7';
+    headers['Openai-Intent'] = 'conversation-panel';
   }
 
   const targetURLs = buildUpstreamTargetUrls(upstreamConfig.baseURL, upstreamAPIType);
@@ -2340,6 +2435,27 @@ async function handleRequest(
         }
         if (upstreamResponse.ok || upstreamResponse.status !== 404) {
           break;
+        }
+      }
+    }
+
+    if (!upstreamResponse.ok) {
+      // Auto-retry once for Copilot token expiry (401/403)
+      if (
+        upstreamConfig.provider === 'github-copilot'
+        && (upstreamResponse.status === 401 || upstreamResponse.status === 403)
+      ) {
+        console.log('[CoworkProxy] Copilot auth error, refreshing token and retrying...');
+        try {
+          const { refreshCopilotTokenNow } = await import('./copilotTokenManager');
+          const refreshed = await refreshCopilotTokenNow();
+          // Update the in-memory upstream config with the new token
+          upstreamConfig.apiKey = refreshed.copilotToken;
+          headers.Authorization = `Bearer ${refreshed.copilotToken}`;
+          upstreamResponse = await sendUpstreamRequest(upstreamRequest, currentTargetURL);
+          console.log(`[CoworkProxy] Copilot retry response: status=${upstreamResponse.status}`);
+        } catch (refreshErr) {
+          console.warn('[CoworkProxy] Copilot token refresh failed:', refreshErr);
         }
       }
     }

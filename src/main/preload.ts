@@ -436,12 +436,17 @@ contextBridge.exposeInMainWorld('electron', {
       }>,
     cancelPolling: () => ipcRenderer.invoke('github-copilot:cancel-polling') as Promise<void>,
     signOut: () => ipcRenderer.invoke('github-copilot:sign-out') as Promise<void>,
-    refreshToken: (githubToken: string) =>
-      ipcRenderer.invoke('github-copilot:refresh-token', { githubToken }) as Promise<{
+    refreshToken: () =>
+      ipcRenderer.invoke('github-copilot:refresh-token') as Promise<{
         success: boolean;
         token?: string;
         baseUrl?: string;
         error?: string;
       }>,
+    onTokenUpdated: (callback: (data: { token: string; baseUrl: string }) => void) => {
+      const handler = (_event: unknown, data: { token: string; baseUrl: string }) => callback(data);
+      ipcRenderer.on('github-copilot:token-updated', handler);
+      return () => ipcRenderer.removeListener('github-copilot:token-updated', handler);
+    },
   },
 });

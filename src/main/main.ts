@@ -27,6 +27,12 @@ import {
 } from './im/imPairingStore';
 import { OpenClawConfigSync } from './libs/openclawConfigSync';
 import {
+  initCopilotTokenManager,
+  setCopilotTokenState,
+  clearCopilotTokenState,
+  refreshCopilotTokenNow,
+} from './libs/copilotTokenManager';
+import {
   resolveMemoryFilePath,
   readMemoryEntries,
   addMemoryEntry,
@@ -3475,9 +3481,11 @@ if (!gotTheLock) {
     try {
       const githubAccessToken = await pollForAccessToken(deviceCode, interval, expiresIn);
       const githubUser = await getGitHubUser(githubAccessToken);
-      const { token: copilotToken, baseUrl } = await getCopilotToken(githubAccessToken);
+      const { token: copilotToken, expiresAt, baseUrl } = await getCopilotToken(githubAccessToken);
       // Store the GitHub access token for later token refresh
       getStore().set('github_copilot_github_token', githubAccessToken);
+      // Register with the token manager for automatic refresh
+      setCopilotTokenState({ copilotToken, baseUrl, expiresAt, githubToken: githubAccessToken });
       return { success: true, token: copilotToken, githubUser, baseUrl };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Authentication failed' };
@@ -3491,13 +3499,13 @@ if (!gotTheLock) {
 
   ipcMain.handle('github-copilot:sign-out', async () => {
     getStore().delete('github_copilot_github_token');
+    clearCopilotTokenState();
   });
 
-  ipcMain.handle('github-copilot:refresh-token', async (_event, { githubToken }: { githubToken: string }) => {
-    const { getCopilotToken } = await import('./libs/githubCopilotAuth');
+  ipcMain.handle('github-copilot:refresh-token', async () => {
     try {
-      const { token, baseUrl } = await getCopilotToken(githubToken);
-      return { success: true, token, baseUrl };
+      const state = await refreshCopilotTokenNow();
+      return { success: true, token: state.copilotToken, baseUrl: state.baseUrl };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Token refresh failed' };
     }
@@ -3742,6 +3750,23 @@ if (!gotTheLock) {
     }
   });
 
+  // Helper: detect if a URL belongs to GitHub Copilot and apply token refresh on 401.
+  const isCopilotUrl = (url: string) =>
+    url.includes('githubcopilot.com');
+  const retryCopilotWithRefreshedToken = async (
+    opts: { url: string; method: string; headers: Record<string, string>; body?: string },
+  ): Promise<{ headers: Record<string, string>; retried: boolean }> => {
+    try {
+      const state = await refreshCopilotTokenNow();
+      const refreshedHeaders = { ...opts.headers, Authorization: `Bearer ${state.copilotToken}` };
+      console.log('[CopilotRetry] token refreshed, retrying request');
+      return { headers: refreshedHeaders, retried: true };
+    } catch (err) {
+      console.warn('[CopilotRetry] token refresh failed, not retrying:', err);
+      return { headers: opts.headers, retried: false };
+    }
+  };
+
   // API 代理处理程序 - 解决 CORS 问题
   ipcMain.handle('api:fetch', async (_event, options: {
     url: string;
@@ -3750,10 +3775,11 @@ if (!gotTheLock) {
     body?: string;
   }) => {
     console.log(`[api:fetch] ${options.method} ${options.url}`);
-    try {
+
+    const doFetch = async (headers: Record<string, string>) => {
       const response = await session.defaultSession.fetch(options.url, {
         method: options.method,
-        headers: options.headers,
+        headers,
         body: options.body,
       });
 
@@ -3761,7 +3787,6 @@ if (!gotTheLock) {
       let data: string | object;
 
       if (contentType.includes('text/event-stream')) {
-        // SSE 流式响应，返回完整的文本
         data = await response.text();
       } else if (contentType.includes('application/json')) {
         data = await response.json();
@@ -3769,14 +3794,29 @@ if (!gotTheLock) {
         data = await response.text();
       }
 
-      const result = {
+      return {
         ok: response.ok,
         status: response.status,
         statusText: response.statusText,
         headers: Object.fromEntries(response.headers.entries()),
         data,
       };
-      console.log(`[api:fetch] ${options.method} ${options.url} -> ${response.status} ${response.statusText}`, typeof data === 'object' ? JSON.stringify(data) : data);
+    };
+
+    try {
+      let result = await doFetch(options.headers);
+      console.log(`[api:fetch] ${options.method} ${options.url} -> ${result.status} ${result.statusText}`, typeof result.data === 'object' ? JSON.stringify(result.data) : result.data);
+
+      // Auto-retry once for Copilot 401/403
+      if (!result.ok && (result.status === 401 || result.status === 403) && isCopilotUrl(options.url)) {
+        console.log('[api:fetch] Copilot auth error, attempting token refresh and retry');
+        const { headers: refreshedHeaders, retried } = await retryCopilotWithRefreshedToken(options);
+        if (retried) {
+          result = await doFetch(refreshedHeaders);
+          console.log(`[api:fetch] retry -> ${result.status} ${result.statusText}`);
+        }
+      }
+
       return result;
     } catch (error) {
       console.error(`[api:fetch] ${options.method} ${options.url} -> ERROR:`, error instanceof Error ? error.message : error);
@@ -3805,12 +3845,27 @@ if (!gotTheLock) {
     activeStreamControllers.set(options.requestId, controller);
 
     try {
-      const response = await session.defaultSession.fetch(options.url, {
+      let response = await session.defaultSession.fetch(options.url, {
         method: options.method,
         headers: options.headers,
         body: options.body,
         signal: controller.signal,
       });
+
+      // Auto-retry once for Copilot 401/403
+      if (!response.ok && (response.status === 401 || response.status === 403) && isCopilotUrl(options.url)) {
+        console.log('[api:stream] Copilot auth error, attempting token refresh and retry');
+        const { headers: refreshedHeaders, retried } = await retryCopilotWithRefreshedToken(options);
+        if (retried) {
+          response = await session.defaultSession.fetch(options.url, {
+            method: options.method,
+            headers: refreshedHeaders,
+            body: options.body,
+            signal: controller.signal,
+          });
+          console.log(`[api:stream] retry -> ${response.status} ${response.statusText}`);
+        }
+      }
 
       if (!response.ok) {
         const errorData = await response.text();
@@ -4335,6 +4390,20 @@ if (!gotTheLock) {
     });
     setServerBaseUrlGetter(() => getServerApiBaseUrl());
 
+    // Initialize Copilot token manager and restore token state if available
+    initCopilotTokenManager(getStore);
+    const storedGithubToken = getStore().get('github_copilot_github_token') as string | undefined;
+    if (storedGithubToken) {
+      import('./libs/githubCopilotAuth').then(({ getCopilotToken }) =>
+        getCopilotToken(storedGithubToken).then(({ token, expiresAt, baseUrl }) => {
+          setCopilotTokenState({ copilotToken: token, baseUrl, expiresAt, githubToken: storedGithubToken });
+          console.log('[Main] restored Copilot token state from stored GitHub token');
+        })
+      ).catch((err) => {
+        console.warn('[Main] failed to restore Copilot token on startup:', err);
+      });
+    }
+
     bindCoworkRuntimeForwarder();
     bindOpenClawStatusForwarder();
 
@@ -4413,6 +4482,18 @@ if (!gotTheLock) {
     await startCoworkOpenAICompatProxy().catch((error) => {
       console.error('Failed to start OpenAI compatibility proxy:', error);
     });
+
+    // Re-sync OpenClaw config after proxy is ready so that providers that route
+    // through the proxy (e.g. github-copilot) get the correct baseUrl.
+    if (resolveCoworkAgentEngine() === 'openclaw') {
+      const proxyResync = await syncOpenClawConfig({
+        reason: 'proxy-ready',
+        restartGatewayIfRunning: true,
+      });
+      if (proxyResync.changed) {
+        console.log('[Main] OpenClaw config updated after proxy ready, gateway will restart to pick up new config');
+      }
+    }
 
     // 设置安全策略
     setContentSecurityPolicy();

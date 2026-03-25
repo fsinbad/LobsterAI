@@ -1811,8 +1811,11 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, onUpda
           headers.Authorization = `Bearer ${providerConfig.apiKey}`;
         }
         if (testingProvider === 'github-copilot') {
-          headers['Copilot-Integration-Id'] = 'vscode-chat';
-          headers['Editor-Version'] = 'vscode/1.96.2';
+                  headers['Copilot-Integration-Id'] = 'vscode-chat';
+                  headers['Editor-Version'] = 'vscode/1.96.2';
+                  headers['Editor-Plugin-Version'] = 'copilot-chat/0.26.7';
+                  headers['User-Agent'] = 'GitHubCopilotChat/0.26.7';
+                  headers['Openai-Intent'] = 'conversation-panel';
         }
         const openAIRequestBody: Record<string, unknown> = useResponsesApi
           ? {

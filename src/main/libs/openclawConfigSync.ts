@@ -5,6 +5,7 @@ import type { CoworkConfig, CoworkExecutionMode } from '../coworkStore';
 import type { TelegramOpenClawConfig, DiscordOpenClawConfig } from '../im/types';
 import type { DingTalkOpenClawConfig, FeishuOpenClawConfig, QQOpenClawConfig, WecomOpenClawConfig, PopoOpenClawConfig, NimConfig, WeixinOpenClawConfig } from '../im/types';
 import { resolveRawApiConfig } from './claudeSettings';
+import { getCoworkOpenAICompatProxyBaseURL } from './coworkOpenAICompatProxy';
 import type { OpenClawEngineManager } from './openclawEngineManager';
 import { parseChannelSessionKey } from './openclawChannelSessionSync';
 import type { McpToolManifestEntry } from './mcpServerManager';
@@ -401,6 +402,35 @@ const buildProviderSelection = (options: {
     };
   }
 
+  // GitHub Copilot: route through the cowork OpenAI compat proxy so that the
+  // proxy can inject the required IDE headers (Editor-Version, Copilot-Integration-Id,
+  // etc.) that the bundled OpenClaw runtime does not add on its own.
+  if (providerName === 'github-copilot') {
+    const proxyBaseUrl = getCoworkOpenAICompatProxyBaseURL('local');
+    if (proxyBaseUrl) {
+      return {
+        providerId: 'lobster',
+        legacyModelId: options.modelId,
+        sessionModelId: options.modelId,
+        primaryModel: `lobster/${options.modelId}`,
+        providerConfig: {
+          baseUrl: proxyBaseUrl,
+          api: providerApi,
+          apiKey: '${LOBSTER_PROVIDER_API_KEY}',
+          auth: 'api-key',
+          models: [
+            {
+              id: options.modelId,
+              name: providerModelName,
+              api: providerApi,
+              input: modelInput,
+            },
+          ],
+        },
+      };
+    }
+  }
+
   return {
     providerId: 'lobster',
     legacyModelId: options.modelId,
@@ -494,6 +524,7 @@ export class OpenClawConfigSync {
     this.getWeixinConfig = deps.getWeixinConfig;
     this.getMcpBridgeConfig = deps.getMcpBridgeConfig;
     this.getSkillsList = deps.getSkillsList;
+
   }
 
   sync(reason: string): OpenClawConfigSyncResult {
@@ -1000,6 +1031,9 @@ export class OpenClawConfigSync {
     // Provider API Key — always set so stale openclaw.json with
     // ${LOBSTER_PROVIDER_API_KEY} placeholder doesn't crash the gateway.
     // OpenClaw treats empty string as "missing", so use a non-empty placeholder.
+    // For GitHub Copilot: OpenClaw's github-copilot provider expects the long-lived
+    // GitHub OAuth token (not the short-lived Copilot API token) so it can perform
+    // token exchange internally and inject the required IDE headers.
     env.LOBSTER_PROVIDER_API_KEY = apiResolution.config?.apiKey || 'unconfigured';
 
     // MCP Bridge Secret — always set so stale openclaw.json with

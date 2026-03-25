@@ -214,6 +214,9 @@ export async function getCopilotToken(githubAccessToken: string): Promise<{
     headers: {
       'Authorization': `Bearer ${githubAccessToken}`,
       'Accept': 'application/json',
+      'Editor-Version': 'vscode/1.96.2',
+      'Editor-Plugin-Version': 'copilot-chat/0.26.7',
+      'User-Agent': 'GitHubCopilotChat/0.26.7',
     },
   });
 

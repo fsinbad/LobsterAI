@@ -508,12 +508,13 @@ interface IElectronAPI {
     }>;
     cancelPolling: () => Promise<void>;
     signOut: () => Promise<void>;
-    refreshToken: (githubToken: string) => Promise<{
+    refreshToken: () => Promise<{
       success: boolean;
       token?: string;
       baseUrl?: string;
       error?: string;
     }>;
+    onTokenUpdated: (callback: (data: { token: string; baseUrl: string }) => void) => () => void;
   };
 }
 
