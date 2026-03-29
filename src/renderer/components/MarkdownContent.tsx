@@ -175,6 +175,10 @@ const openExternalViaAnchorFallback = (url: string): void => {
   document.body.removeChild(anchor);
 };
 
+const dispatchAppToast = (message: string): void => {
+  window.dispatchEvent(new CustomEvent('app:showToast', { detail: message }));
+};
+
 const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
   const normalizedClassName = Array.isArray(className)
     ? className.join(' ')
@@ -397,7 +401,8 @@ const findFallbackPathFromContext = (
 };
 
 const createMarkdownComponents = (
-  resolveLocalFilePath?: (href: string, text: string) => string | null
+  resolveLocalFilePath?: (href: string, text: string) => string | null,
+  showRevealInFolderAction = false,
 ) => ({
   p: ({ node, className, children, ...props }: any) => (
     <p className="my-1 first:mt-0 last:mb-0 leading-6 dark:text-claude-darkText text-claude-text" {...props}>
@@ -504,6 +509,8 @@ const createMarkdownComponents = (
         ?? stripFileProtocol(stripHashAndQuery(hrefValue));
       const decodedPath = safeDecodeURIComponent(rawPath);
       const filePath = decodedPath || rawPath;
+      const isDirectoryLink = looksLikeDirectory(filePath);
+      const shouldShowRevealInFolderAction = showRevealInFolderAction && !isDirectoryLink;
 
       const handleClick = async (e: React.MouseEvent<HTMLAnchorElement>) => {
         e.preventDefault();
@@ -532,21 +539,70 @@ const createMarkdownComponents = (
         }
       };
 
+      const handleRevealInFolder = async (e: React.MouseEvent<HTMLButtonElement>) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const anchor = e.currentTarget.parentElement?.querySelector('a');
+        const linkedAnchor = anchor instanceof HTMLAnchorElement ? anchor : null;
+
+        const tryReveal = async (targetPath: string): Promise<boolean> => {
+          const result = await window.electron.shell.showItemInFolder(targetPath);
+          if (result?.success) {
+            return true;
+          }
+          console.error('Failed to show item in folder:', targetPath, result?.error);
+          return false;
+        };
+
+        try {
+          if (await tryReveal(filePath)) {
+            return;
+          }
+
+          const fallbackPath = findFallbackPathFromContext(
+            linkedAnchor,
+            linkText,
+            resolveLocalFilePath
+          );
+          if (fallbackPath && fallbackPath !== filePath && await tryReveal(fallbackPath)) {
+            return;
+          }
+
+          dispatchAppToast(i18nService.t('showInFolderFailed'));
+        } catch (error) {
+          console.error('Failed to show item in folder:', filePath, error);
+          dispatchAppToast(i18nService.t('showInFolderFailed'));
+        }
+      };
+
       return (
-        <a
-          href={toFileHref(filePath)}
-          onClick={handleClick}
-          className="text-claude-accent hover:text-claude-accentHover underline decoration-claude-accent/50 hover:decoration-claude-accent transition-colors cursor-pointer inline-flex items-center gap-1"
-          title={filePath}
-          {...props}
-        >
-          {children}
-          {looksLikeDirectory(filePath) ? (
-            <FolderIcon className="h-3.5 w-3.5 inline" />
-          ) : (
-            <DocumentIcon className="h-3.5 w-3.5 inline" />
+        <span className="group inline-flex max-w-full items-center gap-1 align-baseline">
+          <a
+            href={toFileHref(filePath)}
+            onClick={handleClick}
+            className="text-claude-accent hover:text-claude-accentHover underline decoration-claude-accent/50 hover:decoration-claude-accent transition-colors cursor-pointer inline-flex items-center gap-1"
+            title={filePath}
+            {...props}
+          >
+            {children}
+            {isDirectoryLink ? (
+              <FolderIcon className="h-3.5 w-3.5 inline" />
+            ) : (
+              <DocumentIcon className="h-3.5 w-3.5 inline" />
+            )}
+          </a>
+          {shouldShowRevealInFolderAction && (
+            <button
+              type="button"
+              onClick={handleRevealInFolder}
+              className="inline-flex items-center justify-center rounded-md p-0.5 text-claude-textSecondary hover:text-claude-accent hover:bg-claude-surfaceHover dark:text-claude-darkTextSecondary dark:hover:text-claude-accent dark:hover:bg-claude-darkSurfaceHover opacity-0 pointer-events-none transition-all group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto"
+              title={i18nService.t('showInFolder')}
+              aria-label={i18nService.t('showInFolder')}
+            >
+              <FolderIcon className="h-3.5 w-3.5" />
+            </button>
           )}
-        </a>
+        </span>
       );
     }
 
@@ -596,14 +652,19 @@ interface MarkdownContentProps {
   content: string;
   className?: string;
   resolveLocalFilePath?: (href: string, text: string) => string | null;
+  showRevealInFolderAction?: boolean;
 }
 
 const MarkdownContent: React.FC<MarkdownContentProps> = ({
   content,
   className = '',
   resolveLocalFilePath,
+  showRevealInFolderAction = false,
 }) => {
-  const components = useMemo(() => createMarkdownComponents(resolveLocalFilePath), [resolveLocalFilePath]);
+  const components = useMemo(
+    () => createMarkdownComponents(resolveLocalFilePath, showRevealInFolderAction),
+    [resolveLocalFilePath, showRevealInFolderAction]
+  );
   const normalizedContent = useMemo(() => normalizeDisplayMath(encodeFileUrlsInMarkdown(content)), [content]);
   return (
     <div className={`markdown-content text-[15px] leading-6 ${className}`}>

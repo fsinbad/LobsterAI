@@ -665,6 +665,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     showInFolder: '在文件夹中显示',
     outputFiles: '输出文件',
     openFileFailed: '打开文件失败',
+    showInFolderFailed: '打开文件所在目录失败',
     fileCreated: '文件已创建',
 
     // IM Bot
@@ -1723,6 +1724,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     showInFolder: 'Show in Folder',
     outputFiles: 'Output Files',
     openFileFailed: 'Failed to open file',
+    showInFolderFailed: 'Failed to show file in folder',
     fileCreated: 'File created',
 
     // IM Bot
