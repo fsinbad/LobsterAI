@@ -3,13 +3,15 @@ import fs from 'fs';
 import path from 'path';
 import type { CoworkConfig, CoworkExecutionMode, Agent } from '../coworkStore';
 import type { TelegramOpenClawConfig, DiscordOpenClawConfig, IMSettings } from '../im/types';
-import type { DingTalkOpenClawConfig, FeishuOpenClawConfig, QQOpenClawConfig, WecomOpenClawConfig, PopoOpenClawConfig, NimConfig, WeixinOpenClawConfig } from '../im/types';
+import type { DingTalkOpenClawConfig, FeishuOpenClawConfig, QQOpenClawConfig, WecomOpenClawConfig, PopoOpenClawConfig, NimConfig, WeixinOpenClawConfig, NeteaseBeeChanConfig } from '../im/types';
+import { PlatformRegistry } from '../../shared/platform';
 import { resolveRawApiConfig, resolveAllProviderApiKeys } from './claudeSettings';
 import type { OpenClawEngineManager } from './openclawEngineManager';
 import { parseChannelSessionKey } from './openclawChannelSessionSync';
 import type { McpToolManifestEntry } from './mcpServerManager';
 import { hasBundledOpenClawExtension } from './openclawLocalExtensions';
-import { buildScheduledTaskEnginePrompt } from '../../scheduled-task/enginePrompt';
+import { buildScheduledTaskEnginePrompt } from '../../scheduledTask/enginePrompt';
+import { getOpenClawTokenProxyPort } from './openclawTokenProxy';
 
 export type McpBridgeConfig = {
   callbackUrl: string;
@@ -29,8 +31,24 @@ const mapExecutionModeToSandboxMode = (_mode: CoworkExecutionMode): 'off' | 'non
  */
 export const OPENCLAW_AGENT_TIMEOUT_SECONDS = 3600;
 
-const mapApiTypeToOpenClawApi = (apiType: 'anthropic' | 'openai' | undefined): 'anthropic-messages' | 'openai-completions' => {
-  return apiType === 'openai' ? 'openai-completions' : 'anthropic-messages';
+function shouldUseOpenAIResponsesApi(providerName?: string, baseURL?: string): boolean {
+  if (providerName !== 'openai') return false;
+  if (!baseURL) return true;
+  const normalized = baseURL.trim().toLowerCase();
+  return !normalized || normalized.includes('api.openai.com');
+}
+
+const mapApiTypeToOpenClawApi = (
+  apiType: 'anthropic' | 'openai' | undefined,
+  providerName?: string,
+  baseURL?: string,
+): OpenClawProviderApi => {
+  if (apiType === 'openai') {
+    return shouldUseOpenAIResponsesApi(providerName, baseURL)
+      ? 'openai-responses'
+      : 'openai-completions';
+  }
+  return 'anthropic-messages';
 };
 
 const ensureDir = (dirPath: string): void => {
@@ -256,7 +274,7 @@ const sessionSnapshotContainsDisabledManagedSkill = (entry: Record<string, unkno
   return DISABLED_MANAGED_SKILL_NAMES.some((name) => prompt.includes(`<name>${name}</name>`));
 };
 
-type OpenClawProviderApi = 'anthropic-messages' | 'openai-completions';
+type OpenClawProviderApi = 'anthropic-messages' | 'openai-completions' | 'openai-responses' | 'google-generative-ai';
 
 type OpenClawProviderSelection = {
   providerId: string;
@@ -335,6 +353,18 @@ const normalizeKimiCodingBaseUrl = (rawBaseUrl: string): string => {
   return normalizeBaseUrlPath(trimmed, '/coding');
 };
 
+const normalizeGeminiBaseUrl = (rawBaseUrl: string): string => {
+  const trimmed = rawBaseUrl.trim();
+  if (!trimmed) {
+    return 'https://generativelanguage.googleapis.com/v1beta/openai';
+  }
+  const normalized = trimmed.replace(/\/+$/, '');
+  if (normalized.endsWith('/openai')) {
+    return normalized.slice(0, -'/openai'.length);
+  }
+  return normalized;
+};
+
 const buildProviderSelection = (options: {
   apiKey: string;
   baseURL: string;
@@ -346,17 +376,21 @@ const buildProviderSelection = (options: {
   modelName?: string;
 }): OpenClawProviderSelection => {
   const providerModelName = resolveModelDisplayName(options.modelId, options.modelName);
-  const providerApi = mapApiTypeToOpenClawApi(options.apiType);
+  const providerApi = mapApiTypeToOpenClawApi(options.apiType, options.providerName, options.baseURL);
   const modelInput: string[] = options.supportsImage ? ['text', 'image'] : ['text'];
   const providerName = options.providerName ?? '';
   const codingPlanEnabled = !!options.codingPlanEnabled;
 
-  // lobsterai-server: route through the LobsterAI server proxy
+  // lobsterai-server: route through the token proxy
   if (providerName === 'lobsterai-server') {
-    const strippedBaseUrl = stripChatCompletionsSuffix(options.baseURL);
+    const proxyPort = getOpenClawTokenProxyPort();
+    const proxyBaseUrl = proxyPort
+      ? `http://127.0.0.1:${proxyPort}/v1`
+      : stripChatCompletionsSuffix(options.baseURL);
     console.log('[OpenClawConfigSync] buildProviderSelection lobsterai-server:', {
       inputBaseURL: options.baseURL,
-      strippedBaseUrl,
+      proxyBaseUrl,
+      proxyPort,
       modelId: options.modelId,
       primaryModel: `lobsterai-server/${options.modelId}`,
       api: 'openai-completions',
@@ -367,9 +401,9 @@ const buildProviderSelection = (options: {
       sessionModelId: options.modelId,
       primaryModel: `lobsterai-server/${options.modelId}`,
       providerConfig: {
-        baseUrl: strippedBaseUrl,
+        baseUrl: proxyBaseUrl,
         api: 'openai-completions',
-        apiKey: `\${${providerApiKeyEnvVar('server')}}`,
+        apiKey: proxyPort ? 'proxy-managed' : `\${${providerApiKeyEnvVar('server')}}`,
         auth: 'api-key',
         models: [{
           id: options.modelId,
@@ -446,6 +480,29 @@ const buildProviderSelection = (options: {
     };
   }
 
+  if (providerName === 'gemini') {
+    const geminiApi: OpenClawProviderApi = 'google-generative-ai';
+    return {
+      providerId: 'google',
+      legacyModelId: options.modelId,
+      sessionModelId: options.modelId,
+      primaryModel: `google/${options.modelId}`,
+      providerConfig: {
+        baseUrl: normalizeGeminiBaseUrl(options.baseURL),
+        api: geminiApi,
+        apiKey: `\${${providerApiKeyEnvVar(providerName)}}`,
+        auth: 'api-key',
+        models: [{
+          id: options.modelId,
+          name: providerModelName,
+          api: geminiApi,
+          input: modelInput,
+          reasoning: true,
+        }],
+      },
+    };
+  }
+
   return {
     providerId: 'lobster',
     legacyModelId: options.modelId,
@@ -505,6 +562,7 @@ type OpenClawConfigSyncDeps = {
   getWecomConfig: () => WecomOpenClawConfig | null;
   getPopoConfig: () => PopoOpenClawConfig | null;
   getNimConfig: () => NimConfig | null;
+  getNeteaseBeeChanConfig: () => NeteaseBeeChanConfig | null;
   getWeixinConfig: () => WeixinOpenClawConfig | null;
   getIMSettings?: () => IMSettings | null;
   getMcpBridgeConfig?: () => McpBridgeConfig | null;
@@ -523,6 +581,7 @@ export class OpenClawConfigSync {
   private readonly getWecomConfig: () => WecomOpenClawConfig | null;
   private readonly getPopoConfig: () => PopoOpenClawConfig | null;
   private readonly getNimConfig: () => NimConfig | null;
+  private readonly getNeteaseBeeChanConfig: () => NeteaseBeeChanConfig | null;
   private readonly getWeixinConfig: () => WeixinOpenClawConfig | null;
   private readonly getIMSettings?: () => IMSettings | null;
   private readonly getMcpBridgeConfig?: () => McpBridgeConfig | null;
@@ -540,6 +599,7 @@ export class OpenClawConfigSync {
     this.getWecomConfig = deps.getWecomConfig;
     this.getPopoConfig = deps.getPopoConfig;
     this.getNimConfig = deps.getNimConfig;
+    this.getNeteaseBeeChanConfig = deps.getNeteaseBeeChanConfig;
     this.getWeixinConfig = deps.getWeixinConfig;
     this.getIMSettings = deps.getIMSettings;
     this.getMcpBridgeConfig = deps.getMcpBridgeConfig;
@@ -614,6 +674,8 @@ export class OpenClawConfigSync {
     const popoConfig = this.getPopoConfig();
 
     const nimConfig = this.getNimConfig();
+
+    const neteaseBeeChanConfig = this.getNeteaseBeeChanConfig();
 
     const weixinConfig = this.getWeixinConfig();
 
@@ -696,6 +758,7 @@ export class OpenClawConfigSync {
                 if (id === 'wecom-openclaw-plugin') return !!(wecomConfig?.enabled && wecomConfig.botId);
                 if (id === 'moltbot-popo') return !!(popoConfig?.enabled && popoConfig.appKey);
                 if (id === 'nim') return !!(nimConfig?.enabled && nimConfig.appKey && nimConfig.account && nimConfig.token);
+                if (id === 'openclaw-netease-bee') return !!(neteaseBeeChanConfig?.enabled && neteaseBeeChanConfig.clientId && neteaseBeeChanConfig.secret);
                 if (id === 'openclaw-weixin') return true; // Always keep enabled for QR login discovery
                 return true; // other plugins stay enabled
               })();
@@ -1003,6 +1066,15 @@ export class OpenClawConfigSync {
       managedConfig.channels = { ...(managedConfig.channels as Record<string, unknown> || {}), 'nim': nimChannel };
     }
 
+    // Sync NeteaseBee OpenClaw channel config (via openclaw-netease-bee plugin)
+    if (neteaseBeeChanConfig?.enabled && neteaseBeeChanConfig.clientId && neteaseBeeChanConfig.secret) {
+      managedConfig.channels = { ...(managedConfig.channels as Record<string, unknown> || {}), 'netease-bee': {
+        enabled: true,
+        clientId: neteaseBeeChanConfig.clientId,
+        secret: neteaseBeeChanConfig.secret,
+      }};
+    }
+
     // Sync Weixin OpenClaw channel config (via openclaw-weixin plugin)
     // Always write the channel entry — use enabled:false when disabled so the
     // Gateway stops the channel instead of falling back to plugin defaults.
@@ -1017,26 +1089,16 @@ export class OpenClawConfigSync {
     // forcing those channels to restart when the binding changes.  OpenClaw
     // channel plugins capture their config at startup and never refresh it,
     // so bindings-only config changes (kind: "none" in the reload plan) are
-    // invisible to running plugins.  By touching the channel config we trigger
-    // a "channels.*" diff path which forces the plugin to restart.
-    const platformBindingsForSentinel = this.getIMSettings?.()?.platformAgentBindings;
-    if (platformBindingsForSentinel) {
-      // Map openclaw channel key → platform key
-      const channelToPlatform: Record<string, string> = {
-        dingtalk: 'dingtalk',
-        feishu: 'feishu',
-        telegram: 'telegram',
-        discord: 'discord',
-        qqbot: 'qq',
-        wecom: 'wecom',
-        'moltbot-popo': 'popo',
-        nim: 'nim',
-        'openclaw-weixin': 'weixin',
-      };
-      const channels = (managedConfig.channels ?? {}) as Record<string, Record<string, unknown>>;
+     // invisible to running plugins.  By touching the channel config we trigger
+     // a "channels.*" diff path which forces the plugin to restart.
+     const platformBindingsForSentinel = this.getIMSettings?.()?.platformAgentBindings;
+     if (platformBindingsForSentinel) {
+       // Map openclaw channel key → platform key
+      const channelToPlatform = PlatformRegistry;
+       const channels = (managedConfig.channels ?? {}) as Record<string, Record<string, unknown>>;
       for (const channelKey of Object.keys(channels)) {
         if (!channels[channelKey] || typeof channels[channelKey] !== 'object') continue;
-        const platformKey = channelToPlatform[channelKey];
+        const platformKey = channelToPlatform.platformOfChannel(channelKey);
         const boundAgentId = platformKey ? platformBindingsForSentinel[platformKey] : undefined;
         if (boundAgentId && boundAgentId !== 'main') {
           channels[channelKey]._agentBinding = boundAgentId;
@@ -1509,6 +1571,7 @@ export class OpenClawConfigSync {
       { getter: () => this.getWecomConfig(), channel: 'wecom', platform: 'wecom' },
       { getter: () => this.getPopoConfig(), channel: 'moltbot-popo', platform: 'popo' },
       { getter: () => this.getNimConfig(), channel: 'nim', platform: 'nim' },
+      { getter: () => this.getNeteaseBeeChanConfig(), channel: 'netease-bee', platform: 'netease-bee' },
       { getter: () => this.getWeixinConfig(), channel: 'openclaw-weixin', platform: 'weixin' },
     ];
 

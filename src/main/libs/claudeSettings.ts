@@ -448,12 +448,8 @@ export function resolveRawApiConfig(): ApiConfigResolution {
 export function resolveAllProviderApiKeys(): Record<string, string> {
   const result: Record<string, string> = {};
 
-  // lobsterai-server: uses auth accessToken
-  const tokens = authTokensGetter?.();
-  const serverBaseUrl = serverBaseUrlGetter?.();
-  if (tokens?.accessToken && serverBaseUrl) {
-    result.SERVER = tokens.accessToken;
-  }
+  // lobsterai-server token is now managed by the token proxy
+  // (openclawTokenProxy.ts) — no longer injected as an env var.
 
   // All configured custom providers
   const sqliteStore = getStore();
