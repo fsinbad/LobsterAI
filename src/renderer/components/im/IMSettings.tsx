@@ -20,6 +20,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { ArrowPathIcon } from '@heroicons/react/24/outline';
 import { SchemaForm } from './SchemaForm';
 import type { UiHint } from './SchemaForm';
+import Modal from '../common/Modal';
 
 
 
@@ -3792,14 +3793,7 @@ const IMSettings: React.FC = () => {
         )}
 
         {connectivityModalPlatform && (
-          <div
-            className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
-            onClick={() => setConnectivityModalPlatform(null)}
-          >
-            <div
-              className="w-full max-w-2xl bg-surface rounded-2xl shadow-modal border border-border overflow-hidden"
-              onClick={(e) => e.stopPropagation()}
-            >
+          <Modal onClose={() => setConnectivityModalPlatform(null)} overlayClassName="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" className="w-full max-w-2xl bg-surface rounded-2xl shadow-modal border border-border overflow-hidden">
               <div className="px-4 py-3 border-b border-border flex items-center justify-between">
                 <div className="text-sm font-semibold text-foreground">
                   {`${i18nService.t(connectivityModalPlatform)} ${i18nService.t('imConnectivitySectionTitle')}`}
@@ -3868,8 +3862,7 @@ const IMSettings: React.FC = () => {
               <div className="px-4 py-3 border-t border-border flex items-center justify-end">
                 {renderConnectivityTestButton(connectivityModalPlatform)}
               </div>
-            </div>
-          </div>
+          </Modal>
         )}
       </div>
     </div>

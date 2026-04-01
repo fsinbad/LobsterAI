@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import Modal from './common/Modal';
 import { configService } from '../services/config';
 import { apiService } from '../services/api';
 import { checkForAppUpdate } from '../services/appUpdate';
@@ -504,6 +505,12 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, onUpda
   // Add state for providers configuration
   const [providers, setProviders] = useState<ProvidersConfig>(() => getDefaultProviders());
 
+
+  // Qwen OAuth state
+  const [qwenOAuthProgress, setQwenOAuthProgress] = useState<string | null>(null);
+  const [qwenOAuthLoading, setQwenOAuthLoading] = useState(false);
+  const [qwenAuthTab, setQwenAuthTab] = useState<'apikey' | 'oauth'>('apikey');
+  
   const isBaseUrlLocked = (activeProvider === 'zhipu' && providers.zhipu.codingPlanEnabled) || (activeProvider === 'qwen' && providers.qwen.codingPlanEnabled) || (activeProvider === 'volcengine' && providers.volcengine.codingPlanEnabled) || (activeProvider === 'moonshot' && providers.moonshot.codingPlanEnabled) || (activeProvider === 'minimax' && providers.minimax.authType === 'oauth');
   
   // 创建引用来确保内容区域的滚动
@@ -882,10 +889,19 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, onUpda
 
           return Object.fromEntries(
             Object.entries(merged).map(([providerKey, providerConfig]) => {
-              const models = providerConfig.models?.map(model => ({
-                ...model,
-                supportsImage: model.supportsImage ?? false,
-              }));
+              const models = providerConfig.models?.map((model, idx) => {
+                let id = model.id;
+                // Fix corrupted model IDs from previous OAuth mutation bug
+                if (providerKey === 'qwen' && (id === 'vision-model' || id === 'coder-model')) {
+                  const defaultModel = defaultConfig.providers?.qwen?.models?.[idx];
+                  id = defaultModel?.id || (model.supportsImage ? 'qwen3.5-plus' : 'qwen3-coder-plus');
+                }
+                return {
+                  ...model,
+                  id,
+                  supportsImage: model.supportsImage ?? false,
+                };
+              });
               return [
                 providerKey,
                 {
@@ -1126,6 +1142,61 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, onUpda
     });
   };
 
+  // Handle Qwen OAuth login
+  const handleQwenOAuthLogin = async () => {
+    if (qwenOAuthLoading) return;
+    
+    setQwenOAuthLoading(true);
+    setQwenOAuthProgress(null);
+    setError(null);
+
+    // Set up progress listener
+    const cleanupProgress = window.electron.qwen.onOAuthProgress((message: string) => {
+      setQwenOAuthProgress(message);
+    });
+
+    try {
+      const result = await window.electron.qwen.oauthLogin();
+      
+      if (result.success && result.data) {
+        // Update providers config with OAuth credentials
+        setProviders(prev => ({
+          ...prev,
+          qwen: {
+            ...prev.qwen,
+            oauthCredentials: result.data,
+            // Don't clear API key - let both coexist
+            // Don't change enabled state - keep current setting
+            // Store OAuth base URL separately so it doesn't pollute API Key's baseUrl
+            oauthBaseUrl: (prev.qwen as any).oauthBaseUrl || result?.data?.resourceUrl || 'https://portal.qwen.ai/v1',
+          },
+        }));
+        setQwenOAuthProgress(i18nService.t('qwenOAuthSuccess'));
+      } else {
+        setError(result.error || i18nService.t('qwenOAuthFailed'));
+      }
+    } catch (error) {
+      console.error('Qwen OAuth error:', error);
+      setError(error instanceof Error ? error.message : i18nService.t('qwenOAuthFailed'));
+    } finally {
+      // Clean up
+      cleanupProgress();
+      setQwenOAuthLoading(false);
+      setTimeout(() => setQwenOAuthProgress(null), 3000);
+    }
+  };
+
+  // Handle clearing Qwen OAuth credentials
+  const handleQwenOAuthLogout = () => {
+    setProviders(prev => ({
+      ...prev,
+      qwen: {
+        ...prev.qwen,
+        oauthCredentials: undefined,
+        // Don't change API key or enabled state - keep them as is
+      },
+    }));
+  };
   const handleMiniMaxDeviceLogin = async (region: MiniMaxRegion) => {
     minimaxOAuthCancelRef.current = false;
     setMinimaxOAuthPhase({ kind: 'requesting_code' });
@@ -1613,10 +1684,23 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, onUpda
       // 应用语言
       i18nService.setLanguage(language, { persist: false });
 
-      // Set API with the primary provider
+      // Set API with the primary provider - handle Qwen OAuth
+      let apiKeyToUse = primaryProvider.apiKey;
+      let baseUrlToUse = primaryProvider.baseUrl;
+
+      // For Qwen provider, check if OAuth should be used
+      if (firstEnabledProvider && firstEnabledProvider[0] === 'qwen') {
+        const qwenConfig = firstEnabledProvider[1] as any;
+        if (!qwenConfig.apiKey && qwenConfig.oauthCredentials) {
+          // Use OAuth token as API key placeholder
+          apiKeyToUse = 'qwen-oauth';
+          baseUrlToUse = qwenConfig.oauthCredentials.resourceUrl || qwenConfig.baseUrl;
+        }
+      }
+
       apiService.setConfig({
-        apiKey: primaryProvider.apiKey,
-        baseUrl: primaryProvider.baseUrl,
+        apiKey: apiKeyToUse,
+        baseUrl: baseUrlToUse,
       });
 
       // 更新 Redux store 中的可用模型列表
@@ -1835,19 +1919,25 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, onUpda
     setIsTestResultModalOpen(false);
     setTestResult(null);
 
-    if (providerRequiresApiKey(testingProvider) && !providerConfig.apiKey) {
+    // Check if provider has valid authentication (API Key or OAuth for Qwen)
+    const hasValidAuth = providerConfig.apiKey || 
+      (testingProvider === 'qwen' && (providerConfig as any).oauthCredentials);
+    
+    if (providerRequiresApiKey(testingProvider) && !hasValidAuth) {
       showTestResultModal({ success: false, message: i18nService.t('apiKeyRequired') }, testingProvider);
       setIsTesting(false);
       return;
     }
 
-    // 获取第一个可用模型
-    const firstModel = providerConfig.models?.[0];
-    if (!firstModel) {
+    // 获取第一个可用模型 - use a shallow copy to avoid mutating state
+    const originalModel = providerConfig.models?.[0];
+    if (!originalModel) {
       showTestResultModal({ success: false, message: i18nService.t('noModelsConfigured') }, testingProvider);
       setIsTesting(false);
       return;
     }
+
+    const firstModel = { ...originalModel };
 
     try {
       let response: Awaited<ReturnType<typeof window.electron.api.fetch>>;
@@ -1862,7 +1952,105 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, onUpda
         effectiveApiFormat = resolved.effectiveFormat;
       }
       
-      const normalizedBaseUrl = effectiveBaseUrl.replace(/\/+$/, '');
+      let normalizedBaseUrl = effectiveBaseUrl.replace(/\/+$/, '');
+
+      // Determine effective API key and OAuth-specific settings
+      let effectiveApiKey = providerConfig.apiKey;
+      let oauthBaseUrl = null;
+      
+      // For Qwen, check if we should use OAuth (when on OAuth tab and have credentials)
+      if (testingProvider === 'qwen' && qwenAuthTab === 'oauth' && (providerConfig as any).oauthCredentials) {
+        const oauthCreds = (providerConfig as any).oauthCredentials;
+        
+        // Check if token is expired and try to refresh
+        if (Date.now() >= oauthCreds.expires) {
+          if (oauthCreds.refresh) {
+            try {
+              console.log('Token过期，尝试自动刷新...');
+              const refreshResult = await window.electron.qwen.oauthRefresh(oauthCreds.refresh);
+              
+              if (refreshResult.success && refreshResult.data) {
+                // Update the providers config with new token
+                setProviders(prev => ({
+                  ...prev,
+                  qwen: {
+                    ...prev.qwen,
+                    oauthCredentials: refreshResult.data,
+                  },
+                }));
+                
+                // Use the new token for testing
+                effectiveApiKey = refreshResult.data.access;
+                console.log('Token刷新成功，继续测试连接');
+              } else {
+                showTestResultModal({ success: false, message: 'OAuth token已过期且刷新失败，请重新登录' }, testingProvider);
+                setIsTesting(false);
+                return;
+              }
+            } catch (error) {
+              console.error('Token刷新失败:', error);
+              showTestResultModal({ success: false, message: 'OAuth token已过期且刷新失败，请重新登录' }, testingProvider);
+              setIsTesting(false);
+              return;
+            }
+          } else {
+            showTestResultModal({ success: false, message: 'OAuth token已过期，请重新登录' }, testingProvider);
+            setIsTesting(false);
+            return;
+          }
+        }
+        
+        effectiveApiKey = oauthCreds.access;
+        
+        // Debug: Log OAuth test info
+        console.log('OAuth测试连接信息:', {
+          accessToken: effectiveApiKey?.slice(0, 20) + '...',
+          resourceUrl: oauthCreds.resourceUrl,
+          expires: new Date(oauthCreds.expires).toLocaleString(),
+          isExpired: Date.now() >= oauthCreds.expires
+        });
+        
+        // For OAuth, use the resourceUrl if available and switch to OpenAI format
+        if (oauthCreds.resourceUrl) {
+          // Normalize OAuth base URL similar to normalizeQwenBaseUrl
+          const raw = oauthCreds.resourceUrl.trim();
+          const withProtocol = raw.startsWith("http") ? raw : `https://${raw}`;
+          oauthBaseUrl = withProtocol.endsWith("/v1") ? withProtocol : `${withProtocol.replace(/\/+$/, "")}/v1`;
+          effectiveApiFormat = 'openai'; // OAuth endpoints use OpenAI format
+          effectiveBaseUrl = oauthBaseUrl; // Use OAuth base URL
+          
+          console.log('OAuth URL构建过程:', {
+            原始URL: oauthCreds.resourceUrl,
+            添加协议后: withProtocol,
+            最终URL: oauthBaseUrl,
+            使用的effectiveBaseUrl: effectiveBaseUrl
+          });
+          
+          // Re-compute normalizedBaseUrl after OAuth override
+          normalizedBaseUrl = effectiveBaseUrl.replace(/\/+$/, '');
+          
+          // Map model ID for OAuth compatibility
+          if (firstModel) {
+            if (firstModel.supportsImage) {
+              firstModel.id = 'vision-model';
+            } else {
+              firstModel.id = 'coder-model';
+            }
+          }
+        }
+      } else if (testingProvider === 'qwen' && qwenAuthTab === 'apikey') {
+        // Use regular API Key mode
+        effectiveApiKey = providerConfig.apiKey;
+        // Ensure model ID is not an OAuth-mapped name (vision-model/coder-model)
+        // This can happen if a previous OAuth test mutated the model in state and it got persisted
+        if (firstModel.id === 'vision-model' || firstModel.id === 'coder-model') {
+          // Restore from defaultConfig's first qwen model
+          const defaultQwenModel = defaultConfig.providers?.qwen?.models?.[0];
+          firstModel.id = defaultQwenModel?.id || 'qwen3.5-plus';
+        }
+      }
+
+      // Determine format after all overrides (OAuth may switch to openai)
       // 统一为两种协议格式：
       // - anthropic: /v1/messages
       // - openai provider: /v1/responses
@@ -1877,7 +2065,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, onUpda
           url: anthropicUrl,
           method: 'POST',
           headers: {
-            'x-api-key': providerConfig.apiKey,
+            'x-api-key': effectiveApiKey,
             'anthropic-version': '2023-06-01',
             'Content-Type': 'application/json',
           },
@@ -1895,8 +2083,8 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, onUpda
         const headers: Record<string, string> = {
           'Content-Type': 'application/json',
         };
-        if (providerConfig.apiKey) {
-          headers.Authorization = `Bearer ${providerConfig.apiKey}`;
+        if (effectiveApiKey) {
+          headers.Authorization = `Bearer ${effectiveApiKey}`;
         }
         if (testingProvider === 'github-copilot') {
                   headers['Copilot-Integration-Id'] = 'vscode-chat';
@@ -3094,39 +3282,182 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, onUpda
               {/* Standard API key section for non-MiniMax providers */}
               {providerRequiresApiKey(activeProvider) && activeProvider !== 'minimax' && (
                 <div>
-                  <label htmlFor={`${activeProvider}-apiKey`} className="block text-xs font-medium text-foreground mb-1">
-                    {i18nService.t('apiKey')}
-                  </label>
-                  <div className="relative">
-                    <input
-                      type={showApiKey ? 'text' : 'password'}
-                      id={`${activeProvider}-apiKey`}
-                      value={providers[activeProvider].apiKey}
-                      onChange={(e) => handleProviderConfigChange(activeProvider, 'apiKey', e.target.value)}
-                      className="block w-full rounded-xl bg-surface-inset border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-2 pr-16 text-xs"
-                      placeholder={i18nService.t('apiKeyPlaceholder')}
-                    />
-                    <div className="absolute right-2 inset-y-0 flex items-center gap-1">
-                      {providers[activeProvider].apiKey && (
+                  {/* Standard API Key input for non-Qwen providers */}
+                  {activeProvider !== 'qwen' && (
+                    <div>
+                      <label htmlFor={`${activeProvider}-apiKey`} className="block text-xs font-medium dark:text-claude-darkText text-claude-text mb-1">
+                        {i18nService.t('apiKey')}
+                      </label>
+                      <div className="relative">
+                        <input
+                          type={showApiKey ? 'text' : 'password'}
+                          id={`${activeProvider}-apiKey`}
+                          value={providers[activeProvider].apiKey}
+                          onChange={(e) => handleProviderConfigChange(activeProvider, 'apiKey', e.target.value)}
+                          className="block w-full rounded-xl bg-claude-surfaceInset dark:bg-claude-darkSurfaceInset dark:border-claude-darkBorder border-claude-border border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 pr-16 text-xs"
+                          placeholder={i18nService.t('apiKeyPlaceholder')}
+                        />
+                        <div className="absolute right-2 inset-y-0 flex items-center gap-1">
+                          {providers[activeProvider].apiKey && (
+                            <button
+                              type="button"
+                              onClick={() => handleProviderConfigChange(activeProvider, 'apiKey', '')}
+                              className="p-0.5 rounded text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-claude-accent transition-colors"
+                              title={i18nService.t('clear') || 'Clear'}
+                            >
+                              <XCircleIconSolid className="h-4 w-4" />
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setShowApiKey(!showApiKey)}
+                            className="p-0.5 rounded text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-claude-accent transition-colors"
+                            title={showApiKey ? (i18nService.t('hide') || 'Hide') : (i18nService.t('show') || 'Show')}
+                          >
+                            {showApiKey ? <EyeIcon className="h-4 w-4" /> : <EyeSlashIcon className="h-4 w-4" />}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Special Qwen section with both API Key and OAuth support */}
+                  {activeProvider === 'qwen' && (
+                    <div className="space-y-4">
+                      {/* Tab switching for authentication methods */}
+                      <div className="flex space-x-1 bg-claude-surface/50 dark:bg-claude-darkSurface/50 rounded-lg p-1">
                         <button
                           type="button"
-                          onClick={() => handleProviderConfigChange(activeProvider, 'apiKey', '')}
-                          className="p-0.5 rounded text-secondary hover:text-primary transition-colors"
-                          title={i18nService.t('clear') || 'Clear'}
+                          onClick={() => setQwenAuthTab('apikey')}
+                          className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-md relative ${
+                            qwenAuthTab === 'apikey'
+                              ? 'bg-white dark:bg-claude-darkSurface text-claude-text dark:text-claude-darkText'
+                              : 'text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-claude-text dark:hover:text-claude-darkText'
+                          }`}
                         >
-                          <XCircleIconSolid className="h-4 w-4" />
+                          API Key
+                          {qwenAuthTab === 'apikey' && (
+                            <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 w-6 h-0.5 bg-claude-accent rounded-full"></div>
+                          )}
                         </button>
+                        <button
+                          type="button"
+                          onClick={() => setQwenAuthTab('oauth')}
+                          className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-md relative ${
+                            qwenAuthTab === 'oauth'
+                              ? 'bg-white dark:bg-claude-darkSurface text-claude-text dark:text-claude-darkText'
+                              : 'text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-claude-text dark:hover:text-claude-darkText'
+                          }`}
+                        >
+                          {i18nService.t('qwenOAuthTab')}
+                          {providers.qwen.oauthCredentials && (
+                            <span className="ml-1 inline-block w-1.5 h-1.5 bg-green-500 rounded-full"></span>
+                          )}
+                          {qwenAuthTab === 'oauth' && (
+                            <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 w-6 h-0.5 bg-claude-accent rounded-full"></div>
+                          )}
+                        </button>
+                      </div>
+
+                      {/* API Key Tab */}
+                      {qwenAuthTab === 'apikey' && (
+                        <div>
+                          <label htmlFor="qwen-apiKey" className="block text-xs font-medium dark:text-claude-darkText text-claude-text mb-1">
+                            API Key
+                          </label>
+                          <div className="relative">
+                            <input
+                              type={showApiKey ? 'text' : 'password'}
+                              id="qwen-apiKey"
+                              value={providers.qwen.apiKey}
+                              onChange={(e) => handleProviderConfigChange('qwen', 'apiKey', e.target.value)}
+                              className="block w-full rounded-xl bg-claude-surfaceInset dark:bg-claude-darkSurfaceInset dark:border-claude-darkBorder border-claude-border border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 pr-16 text-xs"
+                              placeholder={i18nService.t('apiKeyPlaceholder')}
+                            />
+                            <div className="absolute right-2 inset-y-0 flex items-center gap-1">
+                              {providers.qwen.apiKey && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleProviderConfigChange('qwen', 'apiKey', '')}
+                                  className="p-0.5 rounded text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-claude-accent transition-colors"
+                                  title={i18nService.t('clear') || 'Clear'}
+                                >
+                                  <XCircleIconSolid className="h-4 w-4" />
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => setShowApiKey(!showApiKey)}
+                                className="p-0.5 rounded text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-claude-accent transition-colors"
+                                title={showApiKey ? (i18nService.t('hide') || 'Hide') : (i18nService.t('show') || 'Show')}
+                              >
+                                {showApiKey ? <EyeIcon className="h-4 w-4" /> : <EyeSlashIcon className="h-4 w-4" />}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
                       )}
-                      <button
-                        type="button"
-                        onClick={() => setShowApiKey(!showApiKey)}
-                        className="p-0.5 rounded text-secondary hover:text-primary transition-colors"
-                        title={showApiKey ? (i18nService.t('hide') || 'Hide') : (i18nService.t('show') || 'Show')}
-                      >
-                        {showApiKey ? <EyeIcon className="h-4 w-4" /> : <EyeSlashIcon className="h-4 w-4" />}
-                      </button>
+
+                      {/* OAuth Tab */}
+                      {qwenAuthTab === 'oauth' && (
+                        <div>
+                          <label className="block text-xs font-medium dark:text-claude-darkText text-claude-text mb-2">
+                            {i18nService.t('qwenOAuthLoginFree')}
+                          </label>
+                          
+                          {providers.qwen.oauthCredentials ? (
+                            <div className="p-3 rounded-xl bg-green-500/10 border border-green-500/30">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center space-x-2">
+                                  <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                                  <span className="text-xs text-green-600 dark:text-green-400 font-medium">
+                                    {i18nService.t('qwenOAuthLoggedIn')}
+                                  </span>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={handleQwenOAuthLogout}
+                                  className="px-2 py-1 text-xs text-green-600 dark:text-green-400 hover:text-white hover:bg-green-600 dark:hover:bg-green-500 rounded-md border border-green-500/30 hover:border-green-600 dark:hover:border-green-500 transition-all duration-200 shadow-sm hover:shadow-md"
+                                >
+                                  {i18nService.t('qwenOAuthLogout')}
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="space-y-2">
+                              <button
+                                type="button"
+                                onClick={handleQwenOAuthLogin}
+                                disabled={qwenOAuthLoading}
+                                className="w-full flex items-center justify-center space-x-2 px-4 py-2.5 rounded-xl bg-claude-accent hover:bg-claude-accent/80 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium text-sm transition-colors"
+                              >
+                                {qwenOAuthLoading ? (
+                                  <>
+                                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                                    <span>{i18nService.t('qwenOAuthLoggingIn')}</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <UserCircleIcon className="w-4 h-4" />
+                                    <span>{i18nService.t('qwenOAuthLogin')}</span>
+                                  </>
+                                )}
+                              </button>
+                              
+                              {qwenOAuthProgress && (
+                                <div className="p-2 rounded-lg bg-claude-accent/10 border border-claude-accent/20">
+                                  <p className="text-xs text-claude-accent dark:text-claude-accent">
+                                    {qwenOAuthProgress}
+                                  </p>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
                     </div>
-                  </div>
+                  )}
                 </div>
               )}
 
@@ -3257,28 +3588,59 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, onUpda
                     type="text"
                     id={`${activeProvider}-baseUrl`}
                     value={
-                      (() => {
-                        const fmt = getEffectiveApiFormat(activeProvider, providers[activeProvider].apiFormat);
-                        if (fmt !== 'gemini') {
-                          const cpUrl = (providers[activeProvider] as { codingPlanEnabled?: boolean }).codingPlanEnabled
-                            ? ProviderRegistry.getCodingPlanUrl(activeProvider, fmt)
-                            : undefined;
-                          if (cpUrl) return cpUrl;
-                        }
-                        return providers[activeProvider].baseUrl;
-                      })()
+                      activeProvider === 'zhipu' && providers.zhipu.codingPlanEnabled
+                        ? (getEffectiveApiFormat('zhipu', providers.zhipu.apiFormat) === 'anthropic'
+                            ? 'https://open.bigmodel.cn/api/anthropic'
+                            : 'https://open.bigmodel.cn/api/coding/paas/v4')
+                        : activeProvider === 'qwen' && qwenAuthTab === 'apikey' && providers.qwen.codingPlanEnabled
+                          ? (getEffectiveApiFormat('qwen', providers.qwen.apiFormat) === 'anthropic'
+                              ? 'https://coding.dashscope.aliyuncs.com/apps/anthropic'
+                              : 'https://coding.dashscope.aliyuncs.com/v1')
+                          : activeProvider === 'qwen' && qwenAuthTab === 'oauth'
+                            ? ((providers.qwen as any).oauthBaseUrl || 'https://portal.qwen.ai/v1')
+                          : activeProvider === 'qwen' && qwenAuthTab === 'apikey'
+                            ? (providers.qwen.baseUrl || getProviderDefaultBaseUrl('qwen', getEffectiveApiFormat('qwen', providers.qwen.apiFormat)) || 'https://dashscope.aliyuncs.com/apps/anthropic')
+                          : activeProvider === 'volcengine' && providers.volcengine.codingPlanEnabled
+                            ? (getEffectiveApiFormat('volcengine', providers.volcengine.apiFormat) === 'anthropic'
+                                ? 'https://ark.cn-beijing.volces.com/api/coding'
+                                : 'https://ark.cn-beijing.volces.com/api/coding/v3')
+                            : activeProvider === 'moonshot' && providers.moonshot.codingPlanEnabled
+                              ? (getEffectiveApiFormat('moonshot', providers.moonshot.apiFormat) === 'anthropic'
+                                  ? 'https://api.kimi.com/coding'
+                                  : 'https://api.kimi.com/coding/v1')
+                              : providers[activeProvider].baseUrl
                     }
-                    onChange={(e) => handleProviderConfigChange(activeProvider, 'baseUrl', e.target.value)}
+                    onChange={(e) => {
+                      if (activeProvider === 'qwen' && qwenAuthTab === 'oauth') {
+                        handleProviderConfigChange(activeProvider, 'oauthBaseUrl', e.target.value);
+                      } else {
+                        handleProviderConfigChange(activeProvider, 'baseUrl', e.target.value);
+                      }
+                    }}
                     disabled={isBaseUrlLocked}
-                    className={`block w-full rounded-xl bg-surface-inset border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-2 pr-8 text-xs ${isBaseUrlLocked ? 'opacity-50 cursor-not-allowed' : ''}`}
-                    placeholder={getProviderDefaultBaseUrl(activeProvider, getEffectiveApiFormat(activeProvider, providers[activeProvider].apiFormat)) || defaultConfig.providers?.[activeProvider]?.baseUrl || i18nService.t('baseUrlPlaceholder')}
+                    className={`block w-full rounded-xl bg-claude-surfaceInset dark:bg-claude-darkSurfaceInset dark:border-claude-darkBorder border-claude-border border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 pr-8 text-xs ${isBaseUrlLocked ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    placeholder={
+                      activeProvider === 'qwen' && qwenAuthTab === 'oauth'
+                        ? 'https://portal.qwen.ai/v1'
+                        : activeProvider === 'qwen' && qwenAuthTab === 'apikey'
+                          ? 'https://dashscope.aliyuncs.com/apps/anthropic'
+                          : getProviderDefaultBaseUrl(activeProvider, getEffectiveApiFormat(activeProvider, providers[activeProvider].apiFormat)) || defaultConfig.providers?.[activeProvider]?.baseUrl || i18nService.t('baseUrlPlaceholder')
+                    }
                   />
-                  {providers[activeProvider].baseUrl && !isBaseUrlLocked && (
+                  {((activeProvider === 'qwen' && qwenAuthTab === 'oauth' && (providers.qwen as any).oauthBaseUrl) || 
+                    (!(activeProvider === 'qwen' && qwenAuthTab === 'oauth') && providers[activeProvider].baseUrl)) && 
+                   !isBaseUrlLocked && (
                     <div className="absolute right-2 inset-y-0 flex items-center">
                       <button
                         type="button"
-                        onClick={() => handleProviderConfigChange(activeProvider, 'baseUrl', '')}
-                        className="p-0.5 rounded text-secondary hover:text-primary transition-colors"
+                        onClick={() => {
+                          if (activeProvider === 'qwen' && qwenAuthTab === 'oauth') {
+                            handleProviderConfigChange(activeProvider, 'oauthBaseUrl', '');
+                          } else {
+                            handleProviderConfigChange(activeProvider, 'baseUrl', '');
+                          }
+                        }}
+                        className="p-0.5 rounded text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-claude-accent transition-colors"
                         title={i18nService.t('clear') || 'Clear'}
                       >
                         <XCircleIconSolid className="h-4 w-4" />
@@ -3347,9 +3709,10 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, onUpda
                         type="radio"
                         name={`${activeProvider}-apiFormat`}
                         value="anthropic"
-                        checked={getEffectiveApiFormat(activeProvider, providers[activeProvider].apiFormat) !== 'openai'}
+                        checked={activeProvider === 'qwen' && qwenAuthTab === 'oauth' ? false : getEffectiveApiFormat(activeProvider, providers[activeProvider].apiFormat) !== 'openai'}
                         onChange={() => handleProviderConfigChange(activeProvider, 'apiFormat', 'anthropic')}
-                        className="h-3.5 w-3.5 text-primary focus:ring-primary bg-surface"
+                        disabled={activeProvider === 'qwen' && qwenAuthTab === 'oauth'}
+                        className="h-3.5 w-3.5 text-claude-accent focus:ring-claude-accent dark:bg-claude-darkSurface bg-claude-surface disabled:opacity-50"
                       />
                       <span className="ml-2 text-xs text-foreground">
                         {i18nService.t('apiFormatNative')}
@@ -3360,9 +3723,10 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, onUpda
                         type="radio"
                         name={`${activeProvider}-apiFormat`}
                         value="openai"
-                        checked={getEffectiveApiFormat(activeProvider, providers[activeProvider].apiFormat) === 'openai'}
+                        checked={activeProvider === 'qwen' && qwenAuthTab === 'oauth' ? true : getEffectiveApiFormat(activeProvider, providers[activeProvider].apiFormat) === 'openai'}
                         onChange={() => handleProviderConfigChange(activeProvider, 'apiFormat', 'openai')}
-                        className="h-3.5 w-3.5 text-primary focus:ring-primary bg-surface"
+                        disabled={activeProvider === 'qwen' && qwenAuthTab === 'oauth'}
+                        className="h-3.5 w-3.5 text-claude-accent focus:ring-claude-accent dark:bg-claude-darkSurface bg-claude-surface disabled:opacity-50"
                       />
                       <span className="ml-2 text-xs text-foreground">
                         {i18nService.t('apiFormatOpenAI')}
@@ -3493,8 +3857,8 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, onUpda
                 <button
                   type="button"
                   onClick={handleTestConnection}
-                  disabled={isTesting || (providerRequiresApiKey(activeProvider) && !providers[activeProvider].apiKey)}
-                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border border-border text-foreground hover:bg-surface-raised disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
+                  disabled={isTesting || (providerRequiresApiKey(activeProvider) && !providers[activeProvider].apiKey && !(activeProvider === 'qwen' && (providers.qwen as any).oauthCredentials))}
+                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
                 >
                   <SignalIcon className="h-3.5 w-3.5 mr-1.5" />
                   {isTesting ? i18nService.t('testing') : i18nService.t('testConnection')}
@@ -3813,10 +4177,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, onUpda
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 modal-backdrop flex items-center justify-center"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
-    >
+    <Modal onClose={onClose} overlayClassName="fixed inset-0 z-50 modal-backdrop flex items-center justify-center">
       <div
         className="relative flex w-[900px] h-[80vh] rounded-2xl border-border border shadow-modal overflow-hidden modal-content"
         onClick={handleSettingsClick}
@@ -4203,7 +4564,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, onUpda
             </div>
           )}
       </div>
-    </div>
+    </Modal>
   );
 };
 

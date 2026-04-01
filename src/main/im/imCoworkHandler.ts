@@ -520,6 +520,13 @@ export class IMCoworkHandler extends EventEmitter {
       || message.includes('bad_response_status_code')
       || message.includes('invalid chat setting')
       || message.includes('signature: field required')
+      || message.includes('too long')
+      || message.includes('context length')
+      || message.includes('range of input length')
+      || message.includes('payload too large')
+      || message.includes('entity too large')
+      || message.includes('maximum context length')
+      || message.includes('超过') || message.includes('上限')
     );
   }
 

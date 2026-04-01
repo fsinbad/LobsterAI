@@ -2603,6 +2603,7 @@ if (!gotTheLock) {
 
   ipcMain.handle('cowork:session:delete', async (_event, sessionId: string) => {
     try {
+      getCoworkEngineRouter().stopSession(sessionId);
       const coworkStoreInstance = getCoworkStore();
       coworkStoreInstance.deleteSession(sessionId);
       // Clean up IM session mapping so that new channel messages
@@ -2630,6 +2631,10 @@ if (!gotTheLock) {
 
   ipcMain.handle('cowork:session:deleteBatch', async (_event, sessionIds: string[]) => {
     try {
+      const runtime = getCoworkEngineRouter();
+      sessionIds.forEach((sessionId) => {
+        runtime.stopSession(sessionId);
+      });
       const coworkStoreInstance = getCoworkStore();
       coworkStoreInstance.deleteSessions(sessionIds);
       const router = getCoworkEngineRouter();
@@ -2893,6 +2898,47 @@ if (!gotTheLock) {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to save session image',
+      };
+    }
+  });
+
+  ipcMain.handle('cowork:session:exportText', async (
+    event,
+    options: {
+      content: string;
+      defaultFileName?: string;
+      fileExtension?: string;
+    }
+  ) => {
+    try {
+      const content = typeof options?.content === 'string' ? options.content : '';
+      if (!content) {
+        return { success: false, error: 'Export content is empty' };
+      }
+
+      const ext = options?.fileExtension || 'md';
+      const filterName = ext === 'json' ? 'JSON' : 'Markdown';
+      const defaultName = options?.defaultFileName || `session-export.${ext}`;
+      const ownerWindow = BrowserWindow.fromWebContents(event.sender);
+      const saveOptions = {
+        title: 'Export Session',
+        defaultPath: path.join(app.getPath('downloads'), defaultName),
+        filters: [{ name: filterName, extensions: [ext] }],
+      };
+      const saveResult = ownerWindow
+        ? await dialog.showSaveDialog(ownerWindow, saveOptions)
+        : await dialog.showSaveDialog(saveOptions);
+
+      if (saveResult.canceled || !saveResult.filePath) {
+        return { success: true, canceled: true };
+      }
+
+      await fs.promises.writeFile(saveResult.filePath, content, 'utf-8');
+      return { success: true, canceled: false, path: saveResult.filePath };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to export session',
       };
     }
   });
@@ -4038,6 +4084,53 @@ if (!gotTheLock) {
       return true;
     }
     return false;
+  });
+
+  // Qwen OAuth 登录
+  ipcMain.handle('qwen:oauth:login', async (event) => {
+    const { startQwenOAuth } = await import('./libs/qwenOAuth');
+    
+    const progressCallback = {
+      update: (message: string) => {
+        event.sender.send('qwen:oauth:progress', message);
+      },
+      stop: (message?: string) => {
+        if (message) {
+          event.sender.send('qwen:oauth:progress', message);
+        }
+      }
+    };
+
+    try {
+      const oauthToken = await startQwenOAuth(progressCallback);
+      return {
+        success: true,
+        data: oauthToken
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'OAuth login failed'
+      };
+    }
+  });
+
+  // Qwen OAuth 刷新 token
+  ipcMain.handle('qwen:oauth:refresh', async (_event, refreshToken: string) => {
+    const { refreshQwenOAuthToken } = await import('./libs/qwenOAuth');
+    
+    try {
+      const oauthToken = await refreshQwenOAuthToken(refreshToken);
+      return {
+        success: true,
+        data: oauthToken
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Token refresh failed'
+      };
+    }
   });
 
   // 企微 SDK 授权弹窗白名单域名

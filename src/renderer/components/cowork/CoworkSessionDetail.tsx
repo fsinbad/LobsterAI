@@ -11,6 +11,7 @@ import {
   CheckIcon,
   ChevronRightIcon,
   PhotoIcon,
+  DocumentArrowDownIcon,
 } from '@heroicons/react/24/outline';
 import { ShareIcon } from '@heroicons/react/20/solid';
 import InformationCircleIcon from '../icons/InformationCircleIcon';
@@ -28,11 +29,13 @@ import WindowTitleBar from '../window/WindowTitleBar';
 import { getCompactFolderName } from '../../utils/path';
 import { getScheduledReminderDisplayText } from '../../../scheduledTask/reminderText';
 import DiffView, { extractDiffFromToolInput } from './DiffView';
+import Modal from '../common/Modal';
 
 interface CoworkSessionDetailProps {
   onManageSkills?: () => void;
   onContinue: (prompt: string, skillPrompt?: string, imageAttachments?: CoworkImageAttachment[]) => boolean | void | Promise<boolean | void>;
   onStop: () => void;
+  onDeleteSession?: (sessionId: string) => Promise<void>;
   onNavigateHome?: () => void;
   isSidebarCollapsed?: boolean;
   onToggleSidebar?: () => void;
@@ -1324,6 +1327,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   onManageSkills,
   onContinue,
   onStop,
+  onDeleteSession,
   onNavigateHome,
   isSidebarCollapsed,
   onToggleSidebar,
@@ -1366,6 +1370,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const actionButtonRef = useRef<HTMLButtonElement>(null);
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
   const [isExportingImage, setIsExportingImage] = useState(false);
+  const [showExportOptions, setShowExportOptions] = useState(false);
 
   // Rename states
   const [isRenaming, setIsRenaming] = useState(false);
@@ -1543,6 +1548,91 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     setMenuPosition(null);
   };
 
+  const sessionToMarkdown = useCallback((): string => {
+    if (!currentSession) return '';
+    const lines: string[] = [];
+    lines.push(`# ${currentSession.title}`);
+    lines.push('');
+    lines.push(`> ${i18nService.t('coworkExportCreatedAt')}: ${new Date(currentSession.createdAt).toLocaleString()}`);
+    lines.push('');
+    lines.push('---');
+    lines.push('');
+    for (const msg of currentSession.messages) {
+      if (msg.type === 'user') {
+        lines.push(`## 🧑 User`);
+        lines.push('');
+        lines.push(msg.content);
+        lines.push('');
+      } else if (msg.type === 'assistant') {
+        lines.push(`## 🤖 Assistant`);
+        lines.push('');
+        lines.push(msg.content);
+        lines.push('');
+      } else if (msg.type === 'tool_use' && msg.metadata?.toolName) {
+        lines.push(`### 🔧 Tool: ${msg.metadata.toolName}`);
+        lines.push('');
+        if (msg.metadata.toolInput) {
+          lines.push('```json');
+          lines.push(JSON.stringify(msg.metadata.toolInput, null, 2));
+          lines.push('```');
+          lines.push('');
+        }
+      } else if (msg.type === 'tool_result') {
+        lines.push('#### Tool Result');
+        lines.push('');
+        lines.push('```');
+        lines.push(msg.content.slice(0, 2000) + (msg.content.length > 2000 ? '\n... (truncated)' : ''));
+        lines.push('```');
+        lines.push('');
+      }
+    }
+    return lines.join('\n');
+  }, [currentSession]);
+
+  const sessionToJSON = useCallback((): string => {
+    if (!currentSession) return '{}';
+    return JSON.stringify({
+      title: currentSession.title,
+      createdAt: new Date(currentSession.createdAt).toISOString(),
+      updatedAt: new Date(currentSession.updatedAt).toISOString(),
+      status: currentSession.status,
+      messages: currentSession.messages.map(msg => ({
+        type: msg.type,
+        content: msg.content,
+        timestamp: new Date(msg.timestamp).toISOString(),
+        ...(msg.metadata?.toolName ? { toolName: msg.metadata.toolName } : {}),
+        ...(msg.metadata?.toolInput ? { toolInput: msg.metadata.toolInput } : {}),
+      })),
+    }, null, 2);
+  }, [currentSession]);
+
+  const handleExportText = useCallback(async (format: 'md' | 'json') => {
+    if (!currentSession) return;
+    closeMenu();
+    const content = format === 'md' ? sessionToMarkdown() : sessionToJSON();
+    const timestamp = new Date().toISOString().slice(0, 10);
+    const fileName = sanitizeExportFileName(`${currentSession.title}-${timestamp}.${format}`);
+    try {
+      const result = await window.electron.cowork.exportSessionText({
+        content,
+        defaultFileName: fileName,
+        fileExtension: format,
+      });
+      if (result.success && !result.canceled) {
+        window.dispatchEvent(new CustomEvent('app:showToast', {
+          detail: i18nService.t('coworkExportTextSuccess'),
+        }));
+      } else if (!result.success) {
+        throw new Error(result.error || 'Export failed');
+      }
+    } catch (error) {
+      console.error('Failed to export session text:', error);
+      window.dispatchEvent(new CustomEvent('app:showToast', {
+        detail: i18nService.t('coworkExportTextFailed'),
+      }));
+    }
+  }, [currentSession, closeMenu, sessionToMarkdown, sessionToJSON]);
+
   const handleShareClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!currentSession || isExportingImage) return;
@@ -1701,7 +1791,11 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
 
   const handleConfirmDelete = async () => {
     if (!currentSession) return;
-    await coworkService.deleteSession(currentSession.id);
+    if (onDeleteSession) {
+      await onDeleteSession(currentSession.id);
+    } else {
+      await coworkService.deleteSession(currentSession.id);
+    }
     setShowConfirmDelete(false);
     if (onNavigateHome) {
       onNavigateHome();
@@ -2094,9 +2188,9 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
           </button>
           <button
             type="button"
-            onClick={handleShareClick}
+            onClick={(e) => { e.stopPropagation(); closeMenu(); setShowExportOptions(true); }}
             disabled={isExportingImage}
-            className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm text-foreground hover:bg-surface-raised transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
           >
             <ShareIcon className="h-4 w-4 text-secondary" />
             {i18nService.t('coworkShareSession')}
@@ -2112,16 +2206,64 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
         </div>
       )}
 
-      {/* Delete Confirmation Modal */}
-      {showConfirmDelete && (
+      {/* Export Options Modal */}
+      {showExportOptions && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center modal-backdrop"
-          onClick={handleCancelDelete}
+          onClick={() => setShowExportOptions(false)}
         >
           <div
-            className="w-full max-w-sm mx-4 bg-surface rounded-2xl shadow-modal overflow-hidden modal-content"
+            className="w-full max-w-xs mx-4 dark:bg-claude-darkSurface bg-claude-surface rounded-2xl shadow-modal overflow-hidden modal-content"
             onClick={(e) => e.stopPropagation()}
           >
+            <div className="px-5 py-4 border-b dark:border-claude-darkBorder border-claude-border">
+              <h3 className="text-base font-semibold dark:text-claude-darkText text-claude-text">
+                {i18nService.t('coworkExportAs')}
+              </h3>
+            </div>
+            <div className="py-1">
+              <button
+                type="button"
+                onClick={(e) => { setShowExportOptions(false); handleShareClick(e); }}
+                disabled={isExportingImage}
+                className="w-full flex items-center gap-3 px-5 py-3 text-left text-sm dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors disabled:opacity-50"
+              >
+                <PhotoIcon className="h-5 w-5 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
+                <div>
+                  <div className="font-medium">{i18nService.t('coworkExportImage')}</div>
+                  <div className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">{i18nService.t('coworkExportImageDesc')}</div>
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => { setShowExportOptions(false); handleExportText('md'); }}
+                className="w-full flex items-center gap-3 px-5 py-3 text-left text-sm dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+              >
+                <DocumentArrowDownIcon className="h-5 w-5 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
+                <div>
+                  <div className="font-medium">Markdown</div>
+                  <div className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">{i18nService.t('coworkExportMarkdownDesc')}</div>
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => { setShowExportOptions(false); handleExportText('json'); }}
+                className="w-full flex items-center gap-3 px-5 py-3 text-left text-sm dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+              >
+                <DocumentArrowDownIcon className="h-5 w-5 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
+                <div>
+                  <div className="font-medium">JSON</div>
+                  <div className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">{i18nService.t('coworkExportJSONDesc')}</div>
+                </div>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showConfirmDelete && (
+        <Modal onClose={handleCancelDelete} overlayClassName="fixed inset-0 z-50 flex items-center justify-center modal-backdrop" className="w-full max-w-sm mx-4 bg-surface rounded-2xl shadow-modal overflow-hidden modal-content">
             {/* Header */}
             <div className="flex items-center gap-3 px-5 py-4">
               <div className="p-2 rounded-full bg-red-100 dark:bg-red-900/30">
@@ -2154,11 +2296,8 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
                 {i18nService.t('deleteSession')}
               </button>
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
-
-      {/* Messages */}
       <div className="relative flex-1 min-h-0">
         <div
           ref={scrollContainerRef}

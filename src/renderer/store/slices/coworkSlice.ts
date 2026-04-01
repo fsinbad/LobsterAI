@@ -7,6 +7,7 @@ import type {
   CoworkPermissionRequest,
   CoworkSessionStatus,
 } from '../../types/cowork';
+import { removeSessionFromState, removeSessionsFromState } from './coworkDeleteState';
 
 export interface DraftAttachment {
   path: string;
@@ -197,25 +198,11 @@ const coworkSlice = createSlice({
     },
 
     deleteSession(state, action: PayloadAction<string>) {
-      const sessionId = action.payload;
-      state.sessions = state.sessions.filter(s => s.id !== sessionId);
-      state.unreadSessionIds = state.unreadSessionIds.filter((id) => id !== sessionId);
-
-      if (state.currentSessionId === sessionId) {
-        state.currentSessionId = null;
-        state.currentSession = null;
-      }
+      removeSessionFromState(state, action.payload);
     },
 
     deleteSessions(state, action: PayloadAction<string[]>) {
-      const sessionIds = new Set(action.payload);
-      state.sessions = state.sessions.filter(s => !sessionIds.has(s.id));
-      state.unreadSessionIds = state.unreadSessionIds.filter((id) => !sessionIds.has(id));
-
-      if (state.currentSessionId && sessionIds.has(state.currentSessionId)) {
-        state.currentSessionId = null;
-        state.currentSession = null;
-      }
+      removeSessionsFromState(state, action.payload);
     },
 
     addMessage(state, action: PayloadAction<{ sessionId: string; message: CoworkMessage }>) {

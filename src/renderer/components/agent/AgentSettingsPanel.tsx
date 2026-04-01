@@ -12,6 +12,7 @@ import { getVisibleIMPlatforms } from '../../utils/regionFilter';
 import { PlatformRegistry } from '@shared/platform';
 import AgentSkillSelector from './AgentSkillSelector';
 import EmojiPicker from './EmojiPicker';
+import Modal from '../common/Modal';
 
 type SettingsTab = 'basic' | 'skills' | 'im';
 
@@ -143,11 +144,7 @@ const AgentSettingsPanel: React.FC<AgentSettingsPanelProps> = ({ agentId, onClos
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div
-        className="w-full max-w-2xl mx-4 rounded-xl shadow-xl bg-surface border border-border max-h-[80vh] flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <Modal onClose={onClose} className="w-full max-w-2xl mx-4 rounded-xl shadow-xl bg-surface border border-border max-h-[80vh] flex flex-col">
         {/* Header: agent icon + name + close */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-border">
           <div className="flex items-center gap-2">
@@ -365,8 +362,7 @@ const AgentSettingsPanel: React.FC<AgentSettingsPanelProps> = ({ agentId, onClos
             </button>
           </div>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 };
 

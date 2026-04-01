@@ -103,6 +103,17 @@ export interface AppConfig {
       apiFormat?: 'anthropic' | 'openai' | 'gemini';
       /** 是否启用 Qwen Coding Plan 模式（使用专属 Coding API 端点） */
       codingPlanEnabled?: boolean;
+      /** OAuth 凭据 */
+      oauthCredentials?: {
+        access: string;
+        refresh: string;
+        expires: number;
+        resourceUrl?: string;
+      };
+      /** OAuth 专用 Base URL（与 API Key 的 baseUrl 独立） */
+      oauthBaseUrl?: string;
+      /** 是否使用OAuth方式而非API Key */
+      useOAuth?: boolean;
       models?: Array<{
         id: string;
         name: string;
@@ -216,6 +227,14 @@ export interface AppConfig {
       baseUrl: string;
       apiFormat?: 'anthropic' | 'openai' | 'gemini';
       codingPlanEnabled?: boolean;
+      oauthCredentials?: {
+        access: string;
+        refresh: string;
+        expires: number;
+        resourceUrl?: string;
+      };
+      oauthBaseUrl?: string;
+      useOAuth?: boolean;
       authType?: 'apikey' | 'oauth';
       oauthRefreshToken?: string;
       oauthTokenExpiresAt?: number;

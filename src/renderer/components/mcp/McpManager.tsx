@@ -13,6 +13,7 @@ import { mcpRegistry, mcpCategories } from '../../data/mcpRegistry';
 import ErrorMessage from '../ErrorMessage';
 import Tooltip from '../ui/Tooltip';
 import McpServerFormModal from './McpServerFormModal';
+import Modal from '../common/Modal';
 
 const TRANSPORT_BADGE_COLORS: Record<string, string> = {
   stdio: 'bg-blue-500/10 text-blue-600 dark:text-blue-400',
@@ -672,14 +673,7 @@ const McpManager: React.FC = () => {
 
       {/* Delete confirmation modal */}
       {pendingDelete && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-          onClick={handleCancelDelete}
-        >
-          <div
-            className="w-full max-w-sm mx-4 rounded-2xl bg-surface border border-border shadow-2xl p-5"
-            onClick={(event) => event.stopPropagation()}
-          >
+        <Modal onClose={handleCancelDelete} overlayClassName="fixed inset-0 z-50 flex items-center justify-center bg-black/60" className="w-full max-w-sm mx-4 rounded-2xl bg-surface border border-border shadow-2xl p-5">
             <div className="text-lg font-semibold text-foreground">
               {i18nService.t('deleteMcpServer')}
             </div>
@@ -709,8 +703,7 @@ const McpManager: React.FC = () => {
                 {i18nService.t('confirmDelete')}
               </button>
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
 
       {/* Edit / Registry-install form modal */}

@@ -125,6 +125,13 @@ interface AppUpdateDownloadProgress {
   speed: number | undefined;
 }
 
+interface QwenOAuthToken {
+  access: string;
+  refresh: string;
+  expires: number;
+  resourceUrl?: string;
+}
+
 interface WindowState {
   isMaximized: boolean;
   isFullscreen: boolean;
@@ -346,6 +353,11 @@ interface IElectronAPI {
       pngBase64: string;
       defaultFileName?: string;
     }) => Promise<{ success: boolean; canceled?: boolean; path?: string; error?: string }>;
+    exportSessionText: (options: {
+      content: string;
+      defaultFileName?: string;
+      fileExtension?: string;
+    }) => Promise<{ success: boolean; canceled?: boolean; path?: string; error?: string }>;
     respondToPermission: (options: { requestId: string; result: CoworkPermissionResult }) => Promise<{ success: boolean; error?: string }>;
     getConfig: () => Promise<{ success: boolean; config?: CoworkConfig; error?: string }>;
     setConfig: (config: CoworkConfigUpdate) => Promise<{ success: boolean; error?: string }>;
@@ -494,6 +506,11 @@ interface IElectronAPI {
   networkStatus: {
     send: (status: 'online' | 'offline') => void;
   };
+  qwen: {
+    oauthLogin: () => Promise<{ success: boolean; data?: QwenOAuthToken; error?: string }>;
+    oauthRefresh: (refreshToken: string) => Promise<{ success: boolean; data?: QwenOAuthToken; error?: string }>;
+    onOAuthProgress: (callback: (message: string) => void) => () => void;
+  },
   feishu: {
     install: {
       qrcode: (isLark: boolean) => Promise<{
