@@ -55,6 +55,8 @@ type TabType = 'general'| 'coworkAgentEngine' | 'model' | 'coworkMemory' | 'cowo
 export type SettingsOpenOptions = {
   initialTab?: TabType;
   notice?: string;
+  noticeI18nKey?: string;
+  noticeExtra?: string;
 };
 
 interface SettingsProps extends SettingsOpenOptions {
@@ -362,6 +364,7 @@ const CONNECTIVITY_TEST_TOKEN_BUDGET = 64;
 const getDefaultProviders = (): ProvidersConfig => {
   const providers = (defaultConfig.providers ?? {}) as ProvidersConfig;
   const entries = Object.entries(providers) as Array<[string, ProviderConfig]>;
+  const secureSuffix = i18nService.t('modelSuffixSecure');
   return Object.fromEntries(
     entries.map(([providerKey, providerConfig]) => [
       providerKey,
@@ -369,6 +372,7 @@ const getDefaultProviders = (): ProvidersConfig => {
         ...providerConfig,
         models: providerConfig.models?.map(model => ({
           ...model,
+          name: model.name.replace('(Secure)', secureSuffix),
           supportsImage: model.supportsImage ?? false,
         })),
       },
@@ -467,7 +471,7 @@ const ShortcutRecorder: React.FC<{ value: string; onChange: (v: string) => void 
   );
 };
 
-const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, onUpdateFound, enterpriseConfig }) => {
+const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, noticeI18nKey, noticeExtra, onUpdateFound, enterpriseConfig }) => {
   const dispatch = useDispatch();
   // 状态
   const [activeTab, setActiveTab] = useState<TabType>(initialTab ?? 'general');
@@ -481,7 +485,15 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, onUpda
   const [isUpdatingPreventSleep, setIsUpdatingPreventSleep] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [noticeMessage, setNoticeMessage] = useState<string | null>(notice ?? null);
+  const buildNoticeMessage = (): string | null => {
+    if (noticeI18nKey) {
+      const base = i18nService.t(noticeI18nKey);
+      return noticeExtra ? `${base} (${noticeExtra})` : base;
+    }
+    return notice ?? null;
+  };
+
+  const [noticeMessage, setNoticeMessage] = useState<string | null>(() => buildNoticeMessage());
   const [testResult, setTestResult] = useState<ProviderConnectionTestResult | null>(null);
   const [isTestResultModalOpen, setIsTestResultModalOpen] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
@@ -945,8 +957,8 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, onUpda
   }, [activeTab]);
 
   useEffect(() => {
-    setNoticeMessage(notice ?? null);
-  }, [notice]);
+    setNoticeMessage(buildNoticeMessage());
+  }, [notice, noticeI18nKey, noticeExtra]);
 
   useEffect(() => {
     if (initialTab) {
@@ -958,9 +970,14 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, onUpda
   useEffect(() => {
     const unsubscribe = i18nService.subscribe(() => {
       setLanguage(i18nService.getLanguage());
+      // Re-translate notice message on language change
+      if (noticeI18nKey) {
+        const base = i18nService.t(noticeI18nKey);
+        setNoticeMessage(noticeExtra ? `${base} (${noticeExtra})` : base);
+      }
     });
     return unsubscribe;
-  }, []);
+  }, [noticeI18nKey, noticeExtra]);
 
   // Compute visible providers based on language, including active custom_N entries
   const visibleProviders = useMemo(() => {
@@ -3776,7 +3793,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, onUpda
                         Coding Plan
                       </span>
                       <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-primary-muted text-primary">
-                        订阅套餐
+                        {i18nService.t('codingPlanSubscriptionBadge')}
                       </span>
                     </div>
                     <p className="mt-0.5 text-[11px] text-secondary">
@@ -4081,7 +4098,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, onUpda
                   </button>
                   {emailCopied && (
                     <span className="text-[11px] leading-4 text-emerald-600 dark:text-emerald-400">
-                      {language === 'zh' ? '已复制' : 'Copied'}
+                      {i18nService.t('copied')}
                     </span>
                   )}
                 </div>
@@ -4162,7 +4179,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, onUpda
               </div>
 
               <p className="mt-5 text-xs text-secondary">
-                {language === 'zh' ? '网易有道 版权所有' : 'NetEase Youdao. All rights reserved.'}
+                {i18nService.t('copyrightHolder')}
               </p>
               <p className="mt-1 text-xs text-secondary">
                 Copyright &copy; {new Date().getFullYear()} NetEase Youdao. All Rights Reserved.

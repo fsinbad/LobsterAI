@@ -22,7 +22,8 @@ export type McpBridgeConfig = {
   tools: McpToolManifestEntry[];
 };
 
-const mapExecutionModeToSandboxMode = (mode: CoworkExecutionMode): 'off' | 'non-main' | 'all' => {
+const mapExecutionModeToSandboxMode = (mode: CoworkExecutionMode, isEnterprise: boolean): 'off' | 'non-main' | 'all' => {
+  if (!isEnterprise) return 'off';
   switch (mode) {
     case 'sandbox': return 'all';
     case 'auto': return 'non-main';
@@ -669,6 +670,7 @@ export type OpenClawConfigSyncResult = {
 type OpenClawConfigSyncDeps = {
   engineManager: OpenClawEngineManager;
   getCoworkConfig: () => CoworkConfig;
+  isEnterprise: () => boolean;
   getTelegramOpenClawConfig?: () => TelegramOpenClawConfig | null;
   getDiscordOpenClawConfig?: () => DiscordOpenClawConfig | null;
   getDingTalkConfig: () => DingTalkOpenClawConfig | null;
@@ -688,6 +690,7 @@ type OpenClawConfigSyncDeps = {
 export class OpenClawConfigSync {
   private readonly engineManager: OpenClawEngineManager;
   private readonly getCoworkConfig: () => CoworkConfig;
+  private readonly isEnterprise: () => boolean;
   private readonly getTelegramOpenClawConfig?: () => TelegramOpenClawConfig | null;
   private readonly getDiscordOpenClawConfig?: () => DiscordOpenClawConfig | null;
   private readonly getDingTalkConfig: () => DingTalkOpenClawConfig | null;
@@ -706,6 +709,7 @@ export class OpenClawConfigSync {
   constructor(deps: OpenClawConfigSyncDeps) {
     this.engineManager = deps.engineManager;
     this.getCoworkConfig = deps.getCoworkConfig;
+    this.isEnterprise = deps.isEnterprise;
     this.getTelegramOpenClawConfig = deps.getTelegramOpenClawConfig;
     this.getDiscordOpenClawConfig = deps.getDiscordOpenClawConfig;
     this.getDingTalkConfig = deps.getDingTalkConfig;
@@ -828,8 +832,8 @@ export class OpenClawConfigSync {
       allProvidersMap[OpenClawProviderId.LobsteraiServer] = lobsteraiProviderConfig;
     }
 
-    const sandboxMode = mapExecutionModeToSandboxMode(coworkConfig.executionMode || 'auto');
-    console.log(`[OpenClawConfigSync] sandbox mode: ${sandboxMode} (executionMode: ${coworkConfig.executionMode || 'auto'})`);
+    const sandboxMode = mapExecutionModeToSandboxMode(coworkConfig.executionMode || 'local', this.isEnterprise());
+    console.log(`[OpenClawConfigSync] sandbox mode: ${sandboxMode} (executionMode: ${coworkConfig.executionMode || 'local'}, enterprise: ${this.isEnterprise()})`);
 
     const workspaceDir = (coworkConfig.workingDirectory || '').trim();
 

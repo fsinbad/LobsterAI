@@ -60,19 +60,19 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
   const selectedActionId = useSelector((state: RootState) => state.quickAction.selectedActionId);
   const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
 
-  const buildApiConfigNotice = (error?: string) => {
-    const baseNotice = i18nService.t('coworkModelSettingsRequired');
+  const buildApiConfigNotice = (error?: string): { noticeI18nKey: string; noticeExtra?: string } => {
+    const key = 'coworkModelSettingsRequired';
     if (!error) {
-      return baseNotice;
+      return { noticeI18nKey: key };
     }
     const normalizedError = error.trim();
     if (
       normalizedError.startsWith('No enabled provider found for model:')
       || normalizedError === 'No available model configured in enabled providers.'
     ) {
-      return baseNotice;
+      return { noticeI18nKey: key };
     }
-    return `${baseNotice} (${error})`;
+    return { noticeI18nKey: key, noticeExtra: error };
   };
 
   const resolveEngineStatusText = (status: OpenClawEngineStatus): string => {
@@ -130,7 +130,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
         if (apiConfig && !apiConfig.hasConfig) {
           onRequestAppSettings?.({
             initialTab: 'model',
-            notice: buildApiConfigNotice(apiConfig.error),
+            ...buildApiConfigNotice(apiConfig.error),
           });
         }
       } catch (error) {
@@ -188,7 +188,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
         if (apiConfig && !apiConfig.hasConfig) {
           onRequestAppSettings?.({
             initialTab: 'model',
-            notice: buildApiConfigNotice(apiConfig.error),
+            ...buildApiConfigNotice(apiConfig.error),
           });
           isStartingRef.current = false;
           return;
