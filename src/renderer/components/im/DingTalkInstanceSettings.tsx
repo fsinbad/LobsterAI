@@ -214,7 +214,7 @@ const DingTalkInstanceSettings: React.FC<DingTalkInstanceSettingsProps> = ({
           type="button"
           onClick={onToggleEnabled}
           className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${
-            instance.enabled ? 'bg-primary' : 'bg-surface'
+            instance.enabled ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-600'
           }`}
           title={instance.enabled
             ? (language === 'zh' ? '禁用此实例' : 'Disable this instance')
