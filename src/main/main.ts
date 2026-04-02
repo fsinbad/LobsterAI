@@ -2506,18 +2506,22 @@ if (!gotTheLock) {
         imageAttachments: options.imageAttachments,
         agentId: options.agentId,
       }).catch(error => {
-        console.error('Cowork session error:', error);
-        // The engine router already emits an 'error' event (handled at line ~990)
-        // which sends cowork:stream:error to the renderer. Only send here if the
-        // session hasn't been marked as error yet, to avoid duplicate messages.
-        const existing = coworkStoreInstance.getSession(session.id);
-        if (existing?.status === 'error') return;
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        const windows = BrowserWindow.getAllWindows();
-        windows.forEach((win) => {
-          if (win.isDestroyed()) return;
-          win.webContents.send('cowork:stream:error', { sessionId: session.id, error: errorMessage });
-        });
+        console.error('[Cowork] session error:', error);
+        try {
+          // The engine router already emits an 'error' event (handled at line ~990)
+          // which sends cowork:stream:error to the renderer. Only send here if the
+          // session hasn't been marked as error yet, to avoid duplicate messages.
+          const existing = coworkStoreInstance.getSession(session.id);
+          if (existing?.status === 'error') return;
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          const windows = BrowserWindow.getAllWindows();
+          windows.forEach((win) => {
+            if (win.isDestroyed()) return;
+            win.webContents.send('cowork:stream:error', { sessionId: session.id, error: errorMessage });
+          });
+        } catch (handlerError) {
+          console.error('[Cowork] failed to send error notification to renderer:', handlerError);
+        }
       });
 
       const sessionWithMessages = coworkStoreInstance.getSession(session.id) || {
@@ -2559,18 +2563,22 @@ if (!gotTheLock) {
         skillIds: options.activeSkillIds,
         imageAttachments: options.imageAttachments,
       }).catch(error => {
-        console.error('Cowork continue error:', error);
-        // The engine router already emits an 'error' event (handled at line ~990)
-        // which sends cowork:stream:error to the renderer. Only send here if the
-        // session hasn't been marked as error yet, to avoid duplicate messages.
-        const existing = getCoworkStore().getSession(options.sessionId);
-        if (existing?.status === 'error') return;
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        const windows = BrowserWindow.getAllWindows();
-        windows.forEach((win) => {
-          if (win.isDestroyed()) return;
-          win.webContents.send('cowork:stream:error', { sessionId: options.sessionId, error: errorMessage });
-        });
+        console.error('[Cowork] continue error:', error);
+        try {
+          // The engine router already emits an 'error' event (handled at line ~990)
+          // which sends cowork:stream:error to the renderer. Only send here if the
+          // session hasn't been marked as error yet, to avoid duplicate messages.
+          const existing = getCoworkStore().getSession(options.sessionId);
+          if (existing?.status === 'error') return;
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          const windows = BrowserWindow.getAllWindows();
+          windows.forEach((win) => {
+            if (win.isDestroyed()) return;
+            win.webContents.send('cowork:stream:error', { sessionId: options.sessionId, error: errorMessage });
+          });
+        } catch (handlerError) {
+          console.error('[Cowork] failed to send error notification to renderer:', handlerError);
+        }
       });
 
       const session = getCoworkStore().getSession(options.sessionId);
