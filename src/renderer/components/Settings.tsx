@@ -1,8 +1,7 @@
 import { EyeIcon, EyeSlashIcon, XCircleIcon as XCircleIconSolid } from '@heroicons/react/20/solid';
-import { ArrowTopRightOnSquareIcon,ChatBubbleLeftIcon, CheckCircleIcon, Cog6ToothIcon, CpuChipIcon, CubeIcon, EnvelopeIcon, InformationCircleIcon, KeyIcon, ShieldCheckIcon, SignalIcon, UserCircleIcon, XCircleIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { ArrowTopRightOnSquareIcon, ChatBubbleLeftIcon, CheckCircleIcon, Cog6ToothIcon, CpuChipIcon, CubeIcon, EnvelopeIcon, InformationCircleIcon, KeyIcon, ShieldCheckIcon,SignalIcon, UserCircleIcon, XCircleIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import React, { useCallback,useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-
 import { ProviderName, ProviderRegistry, resolveCodingPlanBaseUrl } from '../../shared/providers';
 import { type AppConfig, defaultConfig, getCustomProviderDefaultName, getProviderDisplayName, getVisibleProviders, isCustomProvider } from '../config';
 import { APP_ID, EXPORT_FORMAT_TYPE, EXPORT_PASSWORD } from '../constants/app';
@@ -121,6 +120,20 @@ interface ProvidersImportPayload {
 }
 
 const providerRequiresApiKey = (provider: ProviderType) => provider !== 'ollama' && provider !== 'github-copilot';
+const hasProviderAuthConfigured = (provider: ProviderType, config: ProviderConfig): boolean => {
+  if (provider === 'ollama') {
+    return true;
+  }
+
+  if (provider === 'minimax') {
+    if (config.authType === 'apikey') {
+      return config.apiKey.trim().length > 0;
+    }
+    return (config.oauthAccessToken?.trim().length ?? 0) > 0;
+  }
+
+  return config.apiKey.trim().length > 0;
+};
 const normalizeBaseUrl = (baseUrl: string): string => baseUrl.trim().replace(/\/+$/, '').toLowerCase();
 const normalizeApiFormat = (value: unknown): 'anthropic' | 'openai' => (
   value === 'openai' ? 'openai' : 'anthropic'
@@ -1334,6 +1347,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
       ...prev,
       minimax: {
         ...prev.minimax,
+        enabled: false,
         oauthAccessToken: undefined,
         oauthBaseUrl: undefined,
         oauthRefreshToken: undefined,
@@ -1501,16 +1515,16 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
   const toggleProviderEnabled = (provider: ProviderType) => {
     const providerConfig = providers[provider];
     const isEnabling = !providerConfig.enabled;
-    const missingApiKey = providerRequiresApiKey(provider) && !providerConfig.apiKey.trim();
-
-    if (isEnabling && missingApiKey) {
-      setError(i18nService.t('apiKeyRequired'));
-      return;
-    }
+    const hasValidAuth = hasProviderAuthConfigured(provider, providerConfig);
 
     // GitHub Copilot requires device code auth — redirect to sign-in flow
     if (provider === 'github-copilot' && isEnabling && !providerConfig.apiKey.trim()) {
       handleCopilotSignIn();
+      return;
+    }
+
+    if (isEnabling && !hasValidAuth) {
+      setError(i18nService.t('apiKeyRequired'));
       return;
     }
 
@@ -1620,10 +1634,12 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
       const normalizedProviders = Object.fromEntries(
         Object.entries(providers).map(([providerKey, providerConfig]) => {
           const apiFormat = getEffectiveApiFormat(providerKey, providerConfig.apiFormat);
+          const hasValidAuth = hasProviderAuthConfigured(providerKey as ProviderType, providerConfig);
           return [
             providerKey,
             {
               ...providerConfig,
+              enabled: providerConfig.enabled && hasValidAuth,
               apiFormat,
               baseUrl: resolveBaseUrl(providerKey as ProviderType, providerConfig.baseUrl, apiFormat),
             },
@@ -2902,8 +2918,9 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
               {Object.entries(visibleProviders).map(([provider, config]) => {
                 const providerKey = provider as ProviderType;
                 const isCustom = isCustomProvider(provider);
-                const missingApiKey = providerRequiresApiKey(providerKey) && !config.apiKey.trim();
-                const canToggleProvider = config.enabled || !missingApiKey;
+                const hasValidAuth = hasProviderAuthConfigured(providerKey, config);
+                const effectiveEnabled = config.enabled && hasValidAuth;
+                const canToggleProvider = effectiveEnabled || hasValidAuth;
                 const displayLabel = isCustom
                   ? ((config as ProviderConfig).displayName || getCustomProviderDefaultName(provider))
                   : (ProviderRegistry.get(providerKey)?.label ?? getProviderDisplayName(provider));
@@ -2957,7 +2974,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
                       <div
                         title={!canToggleProvider ? i18nService.t('configureApiKey') : undefined}
                         className={`w-7 h-4 rounded-full flex items-center transition-colors ${
-                          config.enabled ? 'bg-primary' : 'bg-gray-400 dark:bg-gray-600'
+                          effectiveEnabled ? 'bg-primary' : 'bg-gray-400 dark:bg-gray-600'
                         } ${
                           canToggleProvider ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'
                         }`}
@@ -2971,7 +2988,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
                       >
                         <div
                           className={`w-3 h-3 rounded-full bg-white shadow-md transform transition-transform ${
-                            config.enabled ? 'translate-x-3.5' : 'translate-x-0.5'
+                            effectiveEnabled ? 'translate-x-3.5' : 'translate-x-0.5'
                           }`}
                         />
                       </div>
@@ -3015,12 +3032,14 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
                 </div>
                 <div
                   className={`px-2 py-0.5 rounded-lg text-xs font-medium ${
-                    providers[activeProvider].enabled
+                    providers[activeProvider].enabled && hasProviderAuthConfigured(activeProvider, providers[activeProvider])
                       ? 'bg-green-500/20 text-green-600 dark:text-green-400'
                       : 'bg-red-500/20 text-red-600 dark:text-red-400'
                   }`}
                 >
-                  {providers[activeProvider].enabled ? i18nService.t('providerStatusOn') : i18nService.t('providerStatusOff')}
+                  {providers[activeProvider].enabled && hasProviderAuthConfigured(activeProvider, providers[activeProvider])
+                    ? i18nService.t('providerStatusOn')
+                    : i18nService.t('providerStatusOff')}
                 </div>
               </div>
 
@@ -3036,7 +3055,14 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
                       <button
                         type="button"
                         onClick={() => {
-                          setProviders(prev => ({ ...prev, minimax: { ...prev.minimax, authType: 'apikey' } }));
+                          setProviders(prev => ({
+                            ...prev,
+                            minimax: {
+                              ...prev.minimax,
+                              authType: 'apikey',
+                              enabled: prev.minimax.enabled && prev.minimax.apiKey.trim().length > 0,
+                            },
+                          }));
                           setMinimaxOAuthPhase({ kind: 'idle' });
                         }}
                         className={`flex-1 p-3 rounded-xl border-2 text-left transition-all ${!minimaxIsOAuthMode ? 'border-primary bg-primary/5' : 'border-border opacity-60 hover:opacity-80'}`}
@@ -3050,7 +3076,14 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
                       </button>
                       <button
                         type="button"
-                        onClick={() => setProviders(prev => ({ ...prev, minimax: { ...prev.minimax, authType: 'oauth' } }))}
+                        onClick={() => setProviders(prev => ({
+                          ...prev,
+                          minimax: {
+                            ...prev.minimax,
+                            authType: 'oauth',
+                            enabled: prev.minimax.enabled && (prev.minimax.oauthAccessToken?.trim().length ?? 0) > 0,
+                          },
+                        }))}
                         className={`flex-1 p-3 rounded-xl border-2 text-left transition-all ${minimaxIsOAuthMode ? 'border-primary bg-primary/5' : 'border-border opacity-60 hover:opacity-80'}`}
                       >
                         <div className="flex items-start justify-between">

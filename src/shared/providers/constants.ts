@@ -87,6 +87,7 @@ export type ApiFormat = typeof ApiFormat[keyof typeof ApiFormat];
 // ─── Auth Type ──────────────────────────────────────────────────────────
 export const AuthType = {
   ApiKey: 'api-key',
+  OAuth: 'oauth',
 } as const;
 export type AuthType = typeof AuthType[keyof typeof AuthType];
 

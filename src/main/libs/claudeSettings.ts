@@ -27,6 +27,7 @@ export type ApiConfigResolution = {
   error?: string;
   providerMetadata?: {
     providerName: string;
+    authType?: ProviderConfig['authType'];
     codingPlanEnabled: boolean;
     supportsImage?: boolean;
     modelName?: string;
@@ -421,6 +422,7 @@ export function resolveRawApiConfig(): ApiConfigResolution {
     },
     providerMetadata: {
       providerName: matched.providerName,
+      authType: matched.providerConfig.authType,
       codingPlanEnabled: !!matched.providerConfig.codingPlanEnabled,
       supportsImage: matched.supportsImage,
       modelName: matched.modelName,
@@ -488,6 +490,7 @@ export type ProviderRawConfig = {
   baseURL: string;
   apiKey: string;
   apiType: 'anthropic' | 'openai';
+  authType?: ProviderConfig['authType'];
   codingPlanEnabled: boolean;
   models: Array<{ id: string; name?: string; supportsImage?: boolean }>;
 };
@@ -514,7 +517,15 @@ export function resolveAllEnabledProviderConfigs(): ProviderRawConfig[] {
       if (!oauthBaseUrl) continue;
       const models = (providerConfig.models ?? []).filter((m) => m.id?.trim());
       if (models.length === 0) continue;
-      result.push({ providerName, baseURL: oauthBaseUrl, apiKey: oauthToken, apiType: 'anthropic', codingPlanEnabled: false, models });
+      result.push({
+        providerName,
+        baseURL: oauthBaseUrl,
+        apiKey: oauthToken,
+        apiType: 'anthropic',
+        authType: providerConfig.authType,
+        codingPlanEnabled: false,
+        models,
+      });
       continue;
     }
 
@@ -542,6 +553,7 @@ export function resolveAllEnabledProviderConfigs(): ProviderRawConfig[] {
       baseURL: effectiveBaseURL,
       apiKey: apiKey || 'sk-lobsterai-local',
       apiType: effectiveApiFormat === 'anthropic' ? 'anthropic' : 'openai',
+      authType: providerConfig.authType,
       codingPlanEnabled: !!providerConfig.codingPlanEnabled,
       models,
     });
