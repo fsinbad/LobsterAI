@@ -6,7 +6,7 @@ import fs from 'fs';
 import net from 'net';
 import path from 'path';
 import { getElectronNodeRuntimePath, ensureElectronNodeShim, getSkillsRoot } from './coworkUtil';
-import { syncLocalOpenClawExtensionsIntoRuntime, cleanupStaleThirdPartyPluginsFromBundledDir } from './openclawLocalExtensions';
+import { syncLocalOpenClawExtensionsIntoRuntime, cleanupStaleThirdPartyPluginsFromBundledDir, listLocalOpenClawExtensionIds } from './openclawLocalExtensions';
 import { appendPythonRuntimeToEnv } from './pythonRuntime';
 import { isSystemProxyEnabled, resolveSystemProxyUrl } from './systemProxy';
 
@@ -295,9 +295,11 @@ export class OpenClawEngineManager extends EventEmitter {
       const thirdPartyIds: string[] = (pkg.openclaw?.plugins ?? [])
         .map((p: { id?: string }) => p.id)
         .filter((id: unknown): id is string => typeof id === 'string');
-      const cleaned = cleanupStaleThirdPartyPluginsFromBundledDir(runtime.root, thirdPartyIds);
+      const localIds = listLocalOpenClawExtensionIds();
+      const allNonBundledIds = [...new Set([...thirdPartyIds, ...localIds])];
+      const cleaned = cleanupStaleThirdPartyPluginsFromBundledDir(runtime.root, allNonBundledIds);
       if (cleaned.length > 0) {
-        console.log(`[OpenClaw] cleaned stale third-party plugins from dist/extensions/: ${cleaned.join(', ')}`);
+        console.log(`[OpenClaw] cleaned stale plugins from bundled scan dirs: ${cleaned.join(', ')}`);
       }
     } catch {
       // Best-effort cleanup; don't block startup.

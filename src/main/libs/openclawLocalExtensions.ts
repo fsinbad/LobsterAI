@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 
 const LOCAL_EXTENSIONS_DIR = 'openclaw-extensions';
+const THIRD_PARTY_EXTENSIONS_DIR = 'third-party-extensions';
 
 const findLocalExtensionsSourceDir = (): string | null => {
   if (app.isPackaged) {
@@ -29,10 +30,10 @@ const findLocalExtensionsSourceDir = (): string | null => {
 
 const findBundledExtensionsDir = (): string | null => {
   const candidates = app.isPackaged
-    ? [path.join(process.resourcesPath, 'cfmind', 'extensions')]
+    ? [path.join(process.resourcesPath, 'cfmind', THIRD_PARTY_EXTENSIONS_DIR)]
     : [
-        path.join(app.getAppPath(), 'vendor', 'openclaw-runtime', 'current', 'extensions'),
-        path.join(process.cwd(), 'vendor', 'openclaw-runtime', 'current', 'extensions'),
+        path.join(app.getAppPath(), 'vendor', 'openclaw-runtime', 'current', THIRD_PARTY_EXTENSIONS_DIR),
+        path.join(process.cwd(), 'vendor', 'openclaw-runtime', 'current', THIRD_PARTY_EXTENSIONS_DIR),
       ];
 
   for (const candidate of candidates) {
@@ -56,7 +57,7 @@ export const syncLocalOpenClawExtensionsIntoRuntime = (
     return { sourceDir: null, copied: [] };
   }
 
-  const targetExtensionsDir = path.join(runtimeRoot, 'extensions');
+  const targetExtensionsDir = path.join(runtimeRoot, THIRD_PARTY_EXTENSIONS_DIR);
   try {
     if (!fs.statSync(targetExtensionsDir).isDirectory()) {
       return { sourceDir, copied: [] };
@@ -139,28 +140,37 @@ export const findThirdPartyExtensionsDir = (): string | null => {
 };
 
 /**
- * Remove third-party plugins that may linger in `dist/extensions/` after an
- * overlay upgrade from a version that placed them there.  Without this cleanup,
- * the gateway discovers the stale copies as bundled (rank 3) which shadows the
- * new copies in `extensions/` (rank 0 via load.paths), and the bundled copies
- * fail the bundled-channel-entry contract check.
+ * Remove third-party plugins that may linger in directories scanned by the
+ * gateway's bundled-channel metadata loader.  Two locations are cleaned:
+ *
+ * 1. `dist/extensions/{id}` — legacy overlay installs placed plugins here.
+ * 2. `extensions/{id}` — prior versions of LobsterAI installed plugins here.
+ *    Because gateway-bundle.mjs runs from the package root (not dist/),
+ *    `RUNNING_FROM_BUILT_ARTIFACT` is false and `resolveBundledPluginScanDir`
+ *    falls back to `extensions/`.  Third-party plugins there fail the
+ *    bundled-channel-entry contract check and waste startup time.
  */
 export const cleanupStaleThirdPartyPluginsFromBundledDir = (
   runtimeRoot: string,
   thirdPartyPluginIds: readonly string[],
 ): string[] => {
-  const bundledDir = path.join(runtimeRoot, 'dist', 'extensions');
+  const staleDirs = [
+    path.join(runtimeRoot, 'dist', 'extensions'),
+    path.join(runtimeRoot, 'extensions'),
+  ];
   const removed: string[] = [];
 
   for (const id of thirdPartyPluginIds) {
-    const staleDir = path.join(bundledDir, id);
-    try {
-      if (fs.statSync(staleDir).isDirectory()) {
-        fs.rmSync(staleDir, { recursive: true, force: true });
-        removed.push(id);
+    for (const baseDir of staleDirs) {
+      const staleDir = path.join(baseDir, id);
+      try {
+        if (fs.statSync(staleDir).isDirectory()) {
+          fs.rmSync(staleDir, { recursive: true, force: true });
+          removed.push(id);
+        }
+      } catch {
+        // Directory doesn't exist or can't be accessed — nothing to clean up.
       }
-    } catch {
-      // Directory doesn't exist or can't be accessed — nothing to clean up.
     }
   }
 

@@ -159,13 +159,15 @@ for (const plugin of plugins) {
 const forceInstall = process.env.OPENCLAW_FORCE_PLUGIN_INSTALL === '1';
 const pluginCacheBase = path.join(rootDir, 'vendor', 'openclaw-plugins');
 const runtimeCurrentDir = path.join(rootDir, 'vendor', 'openclaw-runtime', 'current');
-// Third-party plugins go into a separate `extensions/` directory (NOT `dist/extensions/`).
-// OpenClaw v2026.4.x requires bundled plugins in `dist/extensions/` to satisfy the
-// `bundled-channel-entry` contract (defineBundledChannelEntry wrapper).  Third-party
-// plugins don't have this wrapper, so we place them in `extensions/` and tell the
-// gateway to discover them via `plugins.load.paths` (origin="config"), which bypasses
-// the bundled contract check entirely.  See openclaw/openclaw#60196.
-const runtimeExtensionsDir = path.join(runtimeCurrentDir, 'extensions');
+// Third-party plugins go into `third-party-extensions/` — a directory the gateway's
+// bundled-channel metadata scan never touches.  When the gateway runs from
+// `gateway-bundle.mjs` (root, not dist/), `RUNNING_FROM_BUILT_ARTIFACT` is false
+// and `resolveBundledPluginScanDir` falls back to `extensions/`.  Placing our
+// plugins there caused them to fail the `bundled-channel-entry` contract check
+// and wasted ~30s on serial load failures.  `third-party-extensions/` is discovered
+// solely via `plugins.load.paths` (origin="config"), bypassing the bundled contract.
+// See openclaw/openclaw#60196.
+const runtimeExtensionsDir = path.join(runtimeCurrentDir, 'third-party-extensions');
 
 ensureDir(runtimeExtensionsDir);
 ensureDir(pluginCacheBase);
@@ -311,6 +313,23 @@ for (const plugin of plugins) {
 }
 
 log(`All ${plugins.length} plugin(s) installed successfully.`);
+
+// --- Post-install: remove third-party plugins from old `extensions/` directory ---
+// Prior versions installed plugins into `extensions/` which the gateway's bundled
+// channel metadata scan picks up (because gateway-bundle.mjs runs from the package
+// root, making RUNNING_FROM_BUILT_ARTIFACT=false).  Plugins there fail the
+// bundled-channel-entry contract check and waste startup time.  Now that plugins
+// live in `third-party-extensions/`, clean up the old location.
+{
+  const oldExtensionsDir = path.join(runtimeCurrentDir, 'extensions');
+  for (const plugin of plugins) {
+    const staleDir = path.join(oldExtensionsDir, plugin.id);
+    if (fs.existsSync(staleDir)) {
+      fs.rmSync(staleDir, { recursive: true, force: true });
+      log(`Removed stale plugin from old location: extensions/${plugin.id}`);
+    }
+  }
+}
 
 // --- Post-install: clean up any stale openclaw SDK stubs ---
 // Previous versions of this script created a shared openclaw stub at
