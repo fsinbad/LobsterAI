@@ -1,4 +1,3 @@
-import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { WebContents } from 'electron';
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, net, powerMonitor, powerSaveBlocker, protocol, session, shell } from 'electron';
 import fs from 'fs';
@@ -28,10 +27,10 @@ import {
   registerScheduledTaskHandlers,
 } from './ipcHandlers/scheduledTask';
 import {
-  ClaudeRuntimeAdapter,
   type CoworkAgentEngine,
   CoworkEngineRouter,
   OpenClawRuntimeAdapter,
+  type PermissionResult,
 } from './libs/agentEngine';
 import { cancelActiveDownload, downloadUpdate, installUpdate } from './libs/appUpdateInstaller';
 import { clearServerModelMetadata, getCurrentApiConfig, resolveAllEnabledProviderConfigs, resolveCurrentApiConfig, resolveRawApiConfig, setAuthTokensGetter, setServerBaseUrlGetter, setStoreGetter, updateServerModelMetadata } from './libs/claudeSettings';
@@ -44,7 +43,6 @@ import {
 import { saveCoworkApiConfig } from './libs/coworkConfigStore';
 import { getCoworkLogPath } from './libs/coworkLogger';
 import { registerProxyTokenRefresher, startCoworkOpenAICompatProxy, stopCoworkOpenAICompatProxy } from './libs/coworkOpenAICompatProxy';
-import { CoworkRunner } from './libs/coworkRunner';
 import { generateSessionTitle, probeCoworkModelReadiness } from './libs/coworkUtil';
 import { getServerApiBaseUrl, refreshEndpointsTestMode } from './libs/endpoints';
 import { mergeEnterpriseOpenclawConfig, resolveEnterpriseConfigPath, syncEnterpriseConfig } from './libs/enterpriseConfigSync';
@@ -84,6 +82,8 @@ import {
 import { getLogFilePath, getRecentMainLogEntries, initLogger } from './logger';
 import type { McpServerFormData } from './mcpStore';
 import { McpStore } from './mcpStore';
+import { OpenClawSessionPolicyIpc } from './openclawSessionPolicy/constants';
+import { loadOpenClawSessionPolicyConfig, saveOpenClawSessionPolicyConfig } from './openclawSessionPolicy/store';
 import { SkillManager } from './skillManager';
 import { getSkillServiceManager } from './skillServices';
 import { SqliteStore } from './sqliteStore';
@@ -645,8 +645,6 @@ process.on('exit', (code) => {
 
 let store: SqliteStore | null = null;
 let coworkStore: CoworkStore | null = null;
-let coworkRunner: CoworkRunner | null = null;
-let claudeRuntimeAdapter: ClaudeRuntimeAdapter | null = null;
 let openClawRuntimeAdapter: OpenClawRuntimeAdapter | null = null;
 let coworkEngineRouter: CoworkEngineRouter | null = null;
 let skillManager: SkillManager | null = null;
@@ -858,8 +856,7 @@ const getAgentManager = () => {
 };
 
 const resolveCoworkAgentEngine = (): CoworkAgentEngine => {
-  const configured = getCoworkStore().getConfig().agentEngine;
-  return configured === 'openclaw' ? 'openclaw' : 'yd_cowork';
+  return getCoworkStore().getConfig().agentEngine;
 };
 
 const getOpenClawConfigSync = (): OpenClawConfigSync => {
@@ -868,6 +865,7 @@ const getOpenClawConfigSync = (): OpenClawConfigSync => {
       engineManager: getOpenClawEngineManager(),
       getCoworkConfig: () => getCoworkStore().getConfig(),
       isEnterprise: () => !!getStore().get('enterprise_config'),
+      getOpenClawSessionPolicy: () => loadOpenClawSessionPolicyConfig(getStore()),
       getSkillsList: () => getSkillManager().listSkills().map(s => ({ id: s.id, enabled: s.enabled })),
       getTelegramOpenClawConfig: () => {
         try {
@@ -1113,18 +1111,6 @@ const syncOpenClawConfig = async (
   };
 };
 
-const getCoworkRunner = () => {
-  if (!coworkRunner) {
-    coworkRunner = new CoworkRunner(getCoworkStore());
-
-    // Provide MCP server configuration to the runner
-    coworkRunner.setMcpServerProvider(() => {
-      return getMcpStore().getEnabledServers();
-    });
-  }
-  return coworkRunner;
-};
-
 const bindCoworkRuntimeForwarder = (): void => {
   if (coworkRuntimeForwarderBound) return;
   const runtime = getCoworkEngineRouter();
@@ -1211,9 +1197,6 @@ const bindCoworkRuntimeForwarder = (): void => {
 
 const getCoworkEngineRouter = () => {
   if (!coworkEngineRouter) {
-    if (!claudeRuntimeAdapter) {
-      claudeRuntimeAdapter = new ClaudeRuntimeAdapter(getCoworkRunner());
-    }
     if (!openClawRuntimeAdapter) {
       openClawRuntimeAdapter = new OpenClawRuntimeAdapter(getCoworkStore(), getOpenClawEngineManager());
       // Wire up channel session sync for IM conversations via OpenClaw
@@ -1236,7 +1219,6 @@ const getCoworkEngineRouter = () => {
     coworkEngineRouter = new CoworkEngineRouter({
       getCurrentEngine: resolveCoworkAgentEngine,
       openclawRuntime: openClawRuntimeAdapter,
-      claudeRuntime: claudeRuntimeAdapter,
     });
   }
   return coworkEngineRouter;
@@ -3132,6 +3114,32 @@ if (!gotTheLock) {
     }
   });
 
+  ipcMain.handle(OpenClawSessionPolicyIpc.Get, async () => {
+    try {
+      const config = loadOpenClawSessionPolicyConfig(getStore());
+      return { success: true, config };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to get OpenClaw session policy',
+      };
+    }
+  });
+
+  ipcMain.handle(OpenClawSessionPolicyIpc.Set, async (_event, config: unknown) => {
+    try {
+      const saved = saveOpenClawSessionPolicyConfig(getStore(), config);
+      // Persist first and let the caller decide when to perform a unified sync/restart.
+      await syncOpenClawConfig({ reason: 'session-policy-updated', restartGatewayIfRunning: false });
+      return { success: true, config: saved };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to save OpenClaw session policy',
+      };
+    }
+  });
+
   ipcMain.handle('cowork:memory:listEntries', async (_event, input: {
     query?: string;
     status?: 'created' | 'stale' | 'deleted' | 'all';
@@ -3288,17 +3296,16 @@ if (!gotTheLock) {
     memoryLlmJudgeEnabled?: boolean;
     memoryGuardLevel?: 'strict' | 'standard' | 'relaxed';
     memoryUserMemoriesMaxItems?: number;
+    skipMissedJobs?: boolean;
   }) => {
     try {
       const normalizedExecutionMode =
         config.executionMode && String(config.executionMode) === 'container'
           ? 'local'
           : config.executionMode;
-      const normalizedAgentEngine = config.agentEngine === 'yd_cowork'
-        ? 'yd_cowork'
-        : config.agentEngine === 'openclaw'
-          ? 'openclaw'
-          : undefined;
+      const normalizedAgentEngine = config.agentEngine === 'openclaw'
+        ? 'openclaw'
+        : undefined;
       const normalizedMemoryEnabled = typeof config.memoryEnabled === 'boolean'
         ? config.memoryEnabled
         : undefined;
@@ -3320,6 +3327,9 @@ if (!gotTheLock) {
             Math.min(MAX_MEMORY_USER_MEMORIES_MAX_ITEMS, Math.floor(config.memoryUserMemoriesMaxItems))
           )
         : undefined;
+      const normalizedSkipMissedJobs = typeof config.skipMissedJobs === 'boolean'
+        ? config.skipMissedJobs
+        : undefined;
       const normalizedConfig: Parameters<CoworkStore['setConfig']>[0] = {
         ...config,
         executionMode: normalizedExecutionMode,
@@ -3329,6 +3339,7 @@ if (!gotTheLock) {
         memoryLlmJudgeEnabled: normalizedMemoryLlmJudgeEnabled,
         memoryGuardLevel: normalizedMemoryGuardLevel,
         memoryUserMemoriesMaxItems: normalizedMemoryUserMemoriesMaxItems,
+        skipMissedJobs: normalizedSkipMissedJobs,
       };
       const previousConfig = getCoworkStore().getConfig();
       const previousWorkingDir = previousConfig.workingDirectory;
@@ -3628,6 +3639,25 @@ if (!gotTheLock) {
       return { success: true, ...result };
     } catch (error) {
       return { success: false, connected: false, message: error instanceof Error ? error.message : 'Weixin QR login failed' };
+    }
+  });
+
+  // POPO QR login
+  ipcMain.handle('im:popo:qr-login-start', async () => {
+    try {
+      const result = getIMGatewayManager().popoQrLoginStart();
+      return { success: true, ...result };
+    } catch (error) {
+      return { success: false, message: error instanceof Error ? error.message : 'Failed to start POPO QR login' };
+    }
+  });
+
+  ipcMain.handle('im:popo:qr-login-poll', async (_event, taskToken: string) => {
+    try {
+      const result = await getIMGatewayManager().popoQrLoginPoll(taskToken);
+      return result;
+    } catch (error) {
+      return { success: false, message: error instanceof Error ? error.message : 'POPO QR login poll failed' };
     }
   });
 

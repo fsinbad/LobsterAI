@@ -1,6 +1,9 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { contextBridge, ipcRenderer } from 'electron';
+
 import { IpcChannel as ScheduledTaskIpc } from '../scheduledTask/constants';
 import type { Platform } from '../shared/platform';
+import { OpenClawSessionPolicyIpc } from './openclawSessionPolicy/constants';
 
 // 暴露安全的 API 到渲染进程
 contextBridge.exposeInMainWorld('electron', {
@@ -148,6 +151,11 @@ contextBridge.exposeInMainWorld('electron', {
         return () => ipcRenderer.removeListener('openclaw:engine:onProgress', handler);
       },
     },
+    sessionPolicy: {
+      get: () => ipcRenderer.invoke(OpenClawSessionPolicyIpc.Get),
+      set: (config: { keepAlive: '1d' | '7d' | '30d' | '365d' }) =>
+        ipcRenderer.invoke(OpenClawSessionPolicyIpc.Set, config),
+    },
   },
   agents: {
     list: async () => {
@@ -226,6 +234,7 @@ contextBridge.exposeInMainWorld('electron', {
       memoryLlmJudgeEnabled?: boolean;
       memoryGuardLevel?: 'strict' | 'standard' | 'relaxed';
       memoryUserMemoriesMaxItems?: number;
+      skipMissedJobs?: boolean;
     }) =>
       ipcRenderer.invoke('cowork:config:set', config),
     listMemoryEntries: (input: {
@@ -362,6 +371,10 @@ contextBridge.exposeInMainWorld('electron', {
     // Weixin QR login
     weixinQrLoginStart: () => ipcRenderer.invoke('im:weixin:qr-login-start'),
     weixinQrLoginWait: (accountId?: string) => ipcRenderer.invoke('im:weixin:qr-login-wait', accountId),
+
+    // POPO QR login
+    popoQrLoginStart: () => ipcRenderer.invoke('im:popo:qr-login-start'),
+    popoQrLoginPoll: (taskToken: string) => ipcRenderer.invoke('im:popo:qr-login-poll', taskToken),
 
     // Pairing
     listPairingRequests: (platform: string) => ipcRenderer.invoke('im:pairing:list', platform),

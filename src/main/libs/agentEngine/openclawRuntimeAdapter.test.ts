@@ -1,4 +1,4 @@
-import { test, expect, vi } from 'vitest';
+import { expect, test, vi } from 'vitest';
 
 vi.mock('electron', () => ({
   app: {
@@ -327,6 +327,21 @@ function createHistoryStore(messages: Array<Record<string, unknown>>) {
         };
         session.messages.push(created);
         return created;
+      },
+      replaceConversationMessages: (sessionId: string, authoritative: Array<{ role: string; text: string }>) => {
+        expect(sessionId).toBe(session.id);
+        session.messages = session.messages.filter(
+          (message) => message.type !== 'user' && message.type !== 'assistant',
+        );
+        for (const entry of authoritative) {
+          session.messages.push({
+            id: `msg-${nextId++}`,
+            type: entry.role,
+            content: entry.text,
+            metadata: { isStreaming: false, isFinal: true },
+            timestamp: nextId,
+          });
+        }
       },
       updateSession: () => {},
     },

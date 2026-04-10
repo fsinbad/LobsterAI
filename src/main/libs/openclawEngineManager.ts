@@ -1,12 +1,13 @@
-import { app, utilityProcess, type UtilityProcess } from 'electron';
-import { spawn, type ChildProcess } from 'child_process';
+import { type ChildProcess,spawn } from 'child_process';
 import crypto from 'crypto';
+import { app, type UtilityProcess,utilityProcess } from 'electron';
 import { EventEmitter } from 'events';
 import fs from 'fs';
 import net from 'net';
 import path from 'path';
-import { getElectronNodeRuntimePath, ensureElectronNodeShim, getSkillsRoot } from './coworkUtil';
-import { syncLocalOpenClawExtensionsIntoRuntime, cleanupStaleThirdPartyPluginsFromBundledDir, listLocalOpenClawExtensionIds } from './openclawLocalExtensions';
+
+import { ensureElectronNodeShim, getElectronNodeRuntimePath, getSkillsRoot } from './coworkUtil';
+import { cleanupStaleThirdPartyPluginsFromBundledDir, listLocalOpenClawExtensionIds,syncLocalOpenClawExtensionsIntoRuntime } from './openclawLocalExtensions';
 import { appendPythonRuntimeToEnv } from './pythonRuntime';
 import { isSystemProxyEnabled, resolveSystemProxyUrl } from './systemProxy';
 
@@ -51,10 +52,6 @@ type RuntimeMetadata = {
   root: string | null;
   version: string | null;
   expectedPathHint: string;
-};
-
-const sleep = async (ms: number): Promise<void> => {
-  await new Promise((resolve) => setTimeout(resolve, ms));
 };
 
 const parseJsonFile = <T>(filePath: string): T | null => {
