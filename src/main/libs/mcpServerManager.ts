@@ -33,7 +33,14 @@ interface ManagedMcpServer {
 }
 
 const log = (level: string, msg: string) => {
-  console.log(`[McpBridge][${level}] ${msg}`);
+  const formatted = `[McpBridge:SDK][${level}] ${msg}`;
+  if (level === 'ERROR') {
+    console.error(formatted);
+  } else if (level === 'WARN') {
+    console.warn(formatted);
+  } else {
+    console.log(formatted);
+  }
 };
 
 // ── Windows hidden-subprocess init script ────────────────────────
@@ -433,6 +440,13 @@ export class McpServerManager {
       const content = Array.isArray(result.content)
         ? (result.content as Array<{ type: string; text?: string }>)
         : [{ type: 'text', text: String(result.content) }];
+      if (result.isError === true) {
+        const preview = content
+          .map((c) => c.text ?? '')
+          .join(' ')
+          .slice(0, 300);
+        log('WARN', `Tool "${toolName}" on "${serverName}" returned isError: ${preview}`);
+      }
       return { content, isError: result.isError === true };
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
