@@ -28,6 +28,7 @@ const IM_PLATFORMS: { key: IMPlatform; logo: string }[] = [
   { key: 'weixin', logo: 'weixin.png' },
   { key: 'wecom', logo: 'wecom.png' },
   { key: 'popo', logo: 'popo.png' },
+  { key: 'email', logo: 'email.svg' },
 ];
 
 interface AgentCreateModalProps {
