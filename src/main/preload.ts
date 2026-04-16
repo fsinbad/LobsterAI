@@ -401,6 +401,12 @@ contextBridge.exposeInMainWorld('electron', {
     setDingTalkInstanceConfig: (instanceId: string, config: any, options?: { syncGateway?: boolean }) =>
       ipcRenderer.invoke('im:dingtalk:instance:config:set', instanceId, config, options),
 
+    // NIM Multi-Instance
+    addNimInstance: (name: string) => ipcRenderer.invoke('im:nim:instance:add', name),
+    deleteNimInstance: (instanceId: string) => ipcRenderer.invoke('im:nim:instance:delete', instanceId),
+    setNimInstanceConfig: (instanceId: string, config: any, options?: { syncGateway?: boolean }) =>
+      ipcRenderer.invoke('im:nim:instance:config:set', instanceId, config, options),
+
     // QQ Multi-Instance
     addQQInstance: (name: string) => ipcRenderer.invoke('im:qq:instance:add', name),
     deleteQQInstance: (instanceId: string) => ipcRenderer.invoke('im:qq:instance:delete', instanceId),
@@ -455,7 +461,12 @@ contextBridge.exposeInMainWorld('electron', {
 
     // Delivery channels
     listChannels: () => ipcRenderer.invoke(ScheduledTaskIpc.ListChannels),
-    listChannelConversations: (channel: string, accountId?: string) => ipcRenderer.invoke(ScheduledTaskIpc.ListChannelConversations, channel, accountId),
+    listChannelConversations: (channel: string, accountId?: string, filterAccountId?: string) => ipcRenderer.invoke(
+      ScheduledTaskIpc.ListChannelConversations,
+      channel,
+      accountId,
+      filterAccountId,
+    ),
 
     // Stream event listeners
     onStatusUpdate: (callback: (data: any) => void) => {

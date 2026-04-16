@@ -3,6 +3,7 @@ import { IMStore } from './imStore';
 
 class FakeDb {
   private store: Map<string, string> = new Map();
+  private deletedPlatforms: string[] = [];
   writeCount = 0;
 
   pragma(_name: string) {
@@ -40,10 +41,24 @@ class FakeDb {
         }
         return undefined;
       },
-      all(..._params: unknown[]) {
+      all(...params: unknown[]) {
+        if (sql.includes('SELECT key, value FROM im_config WHERE key LIKE ?')) {
+          const prefix = String(params[0]).replace('%', '');
+          return Array.from(self.store.entries())
+            .filter(([key]) => key.startsWith(prefix))
+            .map(([key, value]) => ({ key, value }));
+        }
         return [];
       },
     };
+  }
+
+  getValue(key: string) {
+    return this.store.get(key);
+  }
+
+  getDeletedPlatforms() {
+    return this.deletedPlatforms;
   }
 }
 
@@ -66,4 +81,85 @@ test('IMStore persists conversation reply routes by platform and conversation ID
   });
   expect(store.getConversationReplyRoute('telegram', '__default__:conv-1')).toBe(null);
   expect(db.writeCount >= 2).toBeTruthy();
+});
+
+test('IMStore stores and reads nim instances from nim:{instanceId}', () => {
+  const db = new FakeDb();
+  const store = new IMStore(db as unknown as ConstructorParameters<typeof IMStore>[0]);
+
+  store.setNimInstanceConfig('nim-1', {
+    instanceId: 'nim-1',
+    instanceName: 'NIM Bot 1',
+    enabled: true,
+    appKey: 'app-key',
+    account: 'bot-1',
+    token: 'token-1',
+  });
+
+  const config = store.getNimMultiInstanceConfig();
+
+  expect(config.instances).toHaveLength(1);
+  expect(config.instances[0]).toMatchObject({
+    instanceId: 'nim-1',
+    instanceName: 'NIM Bot 1',
+    enabled: true,
+    appKey: 'app-key',
+    account: 'bot-1',
+    token: 'token-1',
+  });
+});
+
+test('IMStore migrates legacy nim config into a generated nim instance', () => {
+  const db = new FakeDb();
+  const store = new IMStore(db as unknown as ConstructorParameters<typeof IMStore>[0]);
+
+  store.setNimConfig({
+    enabled: true,
+    appKey: 'legacy-app',
+    account: 'legacy-bot',
+    token: 'legacy-token',
+  });
+
+  const config = store.getNimMultiInstanceConfig();
+
+  expect(config.instances).toHaveLength(1);
+  expect(config.instances[0]).toMatchObject({
+    instanceName: 'NIM Bot 1',
+    enabled: true,
+    appKey: 'legacy-app',
+    account: 'legacy-bot',
+    token: 'legacy-token',
+  });
+  expect(config.instances[0].instanceId).toBeTruthy();
+  expect(db.getValue(`nim:${config.instances[0].instanceId}`)).toBeTruthy();
+});
+
+test('IMStore prefers nim:* records over legacy nim config', () => {
+  const db = new FakeDb();
+  const store = new IMStore(db as unknown as ConstructorParameters<typeof IMStore>[0]);
+
+  store.setNimConfig({
+    enabled: true,
+    appKey: 'legacy-app',
+    account: 'legacy-bot',
+    token: 'legacy-token',
+  });
+  store.setNimInstanceConfig('nim-2', {
+    instanceId: 'nim-2',
+    instanceName: 'NIM Bot 2',
+    enabled: true,
+    appKey: 'new-app',
+    account: 'new-bot',
+    token: 'new-token',
+  });
+
+  const config = store.getNimMultiInstanceConfig();
+
+  expect(config.instances).toHaveLength(1);
+  expect(config.instances[0]).toMatchObject({
+    instanceId: 'nim-2',
+    instanceName: 'NIM Bot 2',
+    appKey: 'new-app',
+    account: 'new-bot',
+  });
 });
