@@ -38,26 +38,61 @@
   ; Copy non-bundled skills to %APPDATA%\LobsterAI\skills-backup\ so they are
   ; preserved when NSIS extracts the new version over the existing install.
   ; The backup is restored in customInstall after extraction completes.
-  nsExec::ExecToLog 'powershell -NoProfile -NonInteractive -Command "\
-    $$src    = [IO.Path]::Combine($\"$INSTDIR$\",  $\"resources$\", $\"SKILLs$\");\
-    $$backup = [IO.Path]::Combine($\"$APPDATA$\", $\"LobsterAI$\", $\"skills-backup$\");\
-    $$config = [IO.Path]::Combine($$src, $\"skills.config.json$\");\
+  ;
+  ; Quoting note: paths use \"..\" (backslash-escaped quote) — NOT $\"..$\" —
+  ; because $\"..$\" produces raw quotes that Windows CRT argv parsing consumes,
+  ; leaving the path unquoted and causing PowerShell method calls to fail.
+  CreateDirectory "$APPDATA\LobsterAI"
+  ClearErrors
+  FileOpen $R0 "$APPDATA\LobsterAI\skill-migrate.log" w
+  IfErrors BackupLogOpenFailed
+    FileWrite $R0 "backup-start INSTDIR=$INSTDIR APPDATA=$APPDATA$\r$\n"
+    Goto BackupDoExec
+  BackupLogOpenFailed:
+    StrCpy $R0 ""
+  BackupDoExec:
+
+  nsExec::ExecToStack 'powershell -NoProfile -NonInteractive -Command "\
+    $$src    = \"$INSTDIR\resources\SKILLs\";\
+    $$backup = \"$APPDATA\LobsterAI\skills-backup\";\
+    $$config = \"$$src\skills.config.json\";\
+    if (Test-Path $$backup) { Remove-Item -Path $$backup -Recurse -Force -ErrorAction SilentlyContinue };\
     if (Test-Path $$src) {\
       $$bundled = @(try {\
         if (Test-Path $$config) {\
           (Get-Content $$config -Raw | ConvertFrom-Json).defaults.PSObject.Properties.Name\
         }\
       } catch { });\
-      Remove-Item -Path $$backup -Recurse -Force -ErrorAction SilentlyContinue;\
-      New-Item -ItemType Directory -Path $$backup -Force | Out-Null;\
-      Get-ChildItem -Path $$src -Directory | ForEach-Object {\
-        if ($$bundled -notcontains $$_.Name) {\
-          Copy-Item -Path $$_.FullName -Destination (Join-Path $$backup $$_.Name)\
-            -Recurse -Force -ErrorAction SilentlyContinue\
+      $$userSkills = @(Get-ChildItem -Path $$src -Directory | Where-Object { $$bundled -notcontains $$_.Name });\
+      if ($$userSkills.Count -gt 0) {\
+        New-Item -ItemType Directory -Path $$backup -Force | Out-Null;\
+        $$userSkills | ForEach-Object {\
+          Copy-Item -Path $$_.FullName -Destination (Join-Path $$backup $$_.Name) -Recurse -Force\
         }\
       }\
     }"'
   Pop $0
+  Pop $1
+
+  StrCmp $R0 "" BackupSkipCloseLog
+    FileWrite $R0 "backup-end exit=$0$\r$\n"
+    FileWrite $R0 "output: $1$\r$\n"
+    FileClose $R0
+  BackupSkipCloseLog:
+
+  ; ── Remove old installation directory ──
+  ; Rename $INSTDIR so the old uninstaller exe disappears from its registered
+  ; path — electron-builder cannot invoke it and the "app cannot be closed"
+  ; dialog (present in old uninstallers that lack customUnInit) is never shown.
+  ; User skills are already safe in the AppData backup above, so skill
+  ; preservation does not depend on this rename succeeding.
+  IfFileExists "$INSTDIR\*.*" 0 SkipOldDirRemoval
+    Rename "$INSTDIR" "$INSTDIR.old"
+    IfErrors 0 RenameOK
+      Goto SkipOldDirRemoval
+    RenameOK:
+      nsExec::Exec 'cmd /c rd /s /q "$INSTDIR.old"'
+  SkipOldDirRemoval:
 !macroend
 
 !macro customInstall
@@ -103,21 +138,22 @@
     ${GetTime} "" "L" $3 $4 $5 $6 $7 $8 $9
     FileWrite $2 "skill-restore-start: $5-$4-$3 $6:$7:$8$\r$\n"
 
-    nsExec::ExecToLog 'powershell -NoProfile -NonInteractive -Command "\
-      $$backup    = [IO.Path]::Combine($\"$APPDATA$\", $\"LobsterAI$\", $\"skills-backup$\");\
-      $$newSkills = [IO.Path]::Combine($\"$INSTDIR$\",  $\"resources$\", $\"SKILLs$\");\
+    nsExec::ExecToStack 'powershell -NoProfile -NonInteractive -Command "\
+      $$backup    = \"$APPDATA\LobsterAI\skills-backup\";\
+      $$newSkills = \"$INSTDIR\resources\SKILLs\";\
       Get-ChildItem -Path $$backup -Directory | ForEach-Object {\
-        $$target = [IO.Path]::Combine($$newSkills, $$_.Name);\
+        $$target = Join-Path $$newSkills $$_.Name;\
         if (-not (Test-Path $$target)) {\
           Copy-Item -Path $$_.FullName -Destination $$target -Recurse -Force\
-            -ErrorAction SilentlyContinue\
         }\
       };\
       Remove-Item -Path $$backup -Recurse -Force -ErrorAction SilentlyContinue"'
     Pop $0
+    Pop $1
 
     ${GetTime} "" "L" $3 $4 $5 $6 $7 $8 $9
     FileWrite $2 "skill-restore-done: $5-$4-$3 $6:$7:$8 exit=$0$\r$\n"
+    FileWrite $2 "skill-restore-output: $1$\r$\n"
   SkipSkillRestore:
 
   System::Call 'Kernel32::SetEnvironmentVariable(t "ELECTRON_RUN_AS_NODE", t "")i'
