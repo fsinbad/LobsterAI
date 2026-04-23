@@ -97,7 +97,9 @@ const PACKAGES_TO_STUB = [
   '@napi-rs',
   'pdfjs-dist',
   '@matrix-org',
-  '@img'
+  // NOTE: @img is intentionally NOT stubbed — it contains platform-specific sharp
+  // native bindings (e.g. @img/sharp-win32-x64) required by openclaw's image-ops
+  // module and by exec-tool scripts that use require('sharp').
 ];
 
 const GENERIC_STUB_INDEX_CJS = `// Stub (CJS): this package is not needed for headless gateway operation.
