@@ -8,6 +8,7 @@ import {
   getCoworkOpenAICompatProxyStatus,
   type OpenAICompatProxyTarget,
 } from './coworkOpenAICompatProxy';
+import { readOpenAICodexAuthFile } from './openaiCodexAuth';
 
 type LocalProviderConfig = Omit<ProviderConfig, 'apiFormat'> & { apiFormat?: ApiFormat | 'native' };
 
@@ -111,6 +112,19 @@ function providerRequiresApiKey(providerName: string): boolean {
   return providerName !== ProviderName.Ollama && providerName !== ProviderName.LmStudio;
 }
 
+function shouldUseOpenAICodexOAuth(providerName: string, providerConfig: LocalProviderConfig): boolean {
+  if (providerName !== ProviderName.OpenAI) {
+    return false;
+  }
+  if (providerConfig.authType === 'oauth') {
+    return true;
+  }
+  if (providerConfig.apiKey?.trim()) {
+    return false;
+  }
+  return readOpenAICodexAuthFile() !== null;
+}
+
 function tryLobsteraiServerFallback(modelId?: string): MatchedProvider | null {
   const tokens = authTokensGetter?.();
   const serverBaseUrl = serverBaseUrlGetter?.();
@@ -209,7 +223,10 @@ function resolveMatchedProvider(appConfig: AppConfig): { matched: MatchedProvide
     }
   }
 
-  const [providerName, providerConfig] = providerEntry;
+  const [providerName, storedProviderConfig] = providerEntry;
+  const providerConfig = shouldUseOpenAICodexOAuth(providerName, storedProviderConfig)
+    ? { ...storedProviderConfig, authType: 'oauth' as const }
+    : storedProviderConfig;
 
   // MiniMax OAuth mode guard: if OAuth is selected but login has not been completed
   // (no access token), do not use the stale API key as an OAuth token.
@@ -237,7 +254,8 @@ function resolveMatchedProvider(appConfig: AppConfig): { matched: MatchedProvide
    // Check for API key or OAuth credentials
   const hasApiKey = providerConfig.apiKey?.trim();
   const hasOAuthCreds =
-    (providerName === ProviderName.Minimax && (providerConfig as any).authType === 'oauth' && !!(providerConfig as any).oauthAccessToken?.trim());
+    (providerName === ProviderName.Minimax && (providerConfig as any).authType === 'oauth' && !!(providerConfig as any).oauthAccessToken?.trim())
+    || shouldUseOpenAICodexOAuth(providerName, providerConfig);
   if (apiFormat === 'anthropic' && providerRequiresApiKey(providerName) && !providerConfig.apiKey?.trim() && !hasApiKey && !hasOAuthCreds) {
     const serverFallback = tryLobsteraiServerFallback(modelId);
     if (serverFallback) return { matched: serverFallback };
@@ -444,6 +462,9 @@ export function resolveAllProviderApiKeys(): Record<string, string> {
 
     for (const [providerName, providerConfig] of Object.entries(appConfig.providers)) {
       if (!providerConfig?.enabled) continue;
+      if (shouldUseOpenAICodexOAuth(providerName, providerConfig)) {
+        continue;
+      }
       // For MiniMax OAuth, inject oauthAccessToken instead of apiKey
       let apiKey = providerConfig.apiKey?.trim();
       if (providerName === ProviderName.Minimax && (providerConfig as any).authType === 'oauth') {
@@ -512,6 +533,22 @@ export function resolveAllEnabledProviderConfigs(): ProviderRawConfig[] {
         apiKey: oauthToken,
         apiType: 'anthropic',
         authType: providerConfig.authType,
+        codingPlanEnabled: false,
+        models,
+      });
+      continue;
+    }
+
+    if (shouldUseOpenAICodexOAuth(providerName, providerConfig)) {
+      const baseURL = providerConfig.baseUrl?.trim() || 'https://api.openai.com/v1';
+      const models = (providerConfig.models ?? []).filter((m) => m.id?.trim());
+      if (models.length === 0) continue;
+      result.push({
+        providerName,
+        baseURL,
+        apiKey: '',
+        apiType: 'openai',
+        authType: 'oauth',
         codingPlanEnabled: false,
         models,
       });

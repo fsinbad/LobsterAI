@@ -13,6 +13,7 @@ import { RootState } from '../../store';
 import { selectDraftPrompts } from '../../store/selectors/coworkSelectors';
 import { addDraftAttachment, clearDraftAttachments, type DraftAttachment, setDraftAttachments, setDraftPrompt } from '../../store/slices/coworkSlice';
 import { setSkills, toggleActiveSkill } from '../../store/slices/skillSlice';
+import type { Model } from '../../store/slices/modelSlice';
 import { CoworkImageAttachment } from '../../types/cowork';
 import { Skill } from '../../types/skill';
 import { toOpenClawModelRef } from '../../utils/openclawModelRef';
@@ -915,16 +916,25 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   <div className="flex flex-col items-start gap-1">
                     <ModelSelector
                       dropdownDirection="up"
-                      value={coworkAgentEngine === 'openclaw' ? agentSelectedModel : null}
+                      value={coworkAgentEngine === 'openclaw'
+                        ? (agentModelIsInvalid && currentSession?.modelOverride
+                          ? { id: '__invalid__', name: currentSession.modelOverride.split('/').pop() || currentSession.modelOverride } as Model
+                          : agentSelectedModel)
+                        : null}
                       onChange={coworkAgentEngine === 'openclaw'
                         ? async (nextModel) => {
+                            if (!nextModel) return;
+                            const modelRef = toOpenClawModelRef(nextModel);
                             if (sessionId) {
-                              if (!nextModel) return;
-                              await coworkService.patchSession(sessionId, { model: toOpenClawModelRef(nextModel) });
+                              await coworkService.patchSession(sessionId, { model: modelRef });
+                              if (currentAgent && agentModelIsInvalid) {
+                                console.log('[CoworkPromptInput] auto-fixing invalid agent model:', currentAgent.id, currentAgent.model, '->', modelRef);
+                                agentService.updateAgent(currentAgent.id, { model: modelRef });
+                              }
                               return;
                             }
-                            if (!currentAgent || !nextModel) return;
-                            await agentService.updateAgent(currentAgent.id, { model: toOpenClawModelRef(nextModel) });
+                            if (!currentAgent) return;
+                            agentService.updateAgent(currentAgent.id, { model: modelRef });
                           }
                         : undefined}
                     />

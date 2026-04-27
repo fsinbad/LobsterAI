@@ -25,6 +25,7 @@ import {
   getCoworkOpenAICompatProxyToken,
 } from './coworkOpenAICompatProxy';
 import type { McpToolManifestEntry } from './mcpServerManager';
+import { readOpenAICodexAuthFile } from './openaiCodexAuth';
 import {
   buildAgentEntry,
   buildManagedAgentEntries,
@@ -420,6 +421,7 @@ type OpenClawProviderApi =
   | 'anthropic-messages'
   | 'openai-completions'
   | 'openai-responses'
+  | 'openai-codex-responses'
   | 'google-generative-ai';
 
 type OpenClawProviderSelection = {
@@ -430,8 +432,9 @@ type OpenClawProviderSelection = {
   providerConfig: {
     baseUrl: string;
     api: OpenClawProviderApi;
-    apiKey: string;
+    apiKey?: string;
     auth: typeof AuthType[keyof typeof AuthType];
+    headers?: Record<string, string>;
     request?: {
       proxy: {
         mode: 'env-proxy';
@@ -454,6 +457,8 @@ type OpenClawProviderSelection = {
     }>;
   };
 };
+
+const OPENAI_CODEX_BASE_URL = 'https://chatgpt.com/backend-api/codex';
 
 const normalizeBaseUrlPath = (rawBaseUrl: string, pathName: string): string => {
   const trimmed = rawBaseUrl.trim();
@@ -504,6 +509,18 @@ const shouldUseEnvProxyForProviderBaseUrl = (rawBaseUrl: string): boolean => (
   isSystemProxyEnabled() && !isLoopbackProviderBaseUrl(rawBaseUrl)
 );
 
+const buildOpenAICodexHeaders = (): Record<string, string> | undefined => {
+  const accountId = readOpenAICodexAuthFile()?.accountId;
+  if (!accountId) {
+    return undefined;
+  }
+  return {
+    'chatgpt-account-id': accountId,
+    originator: 'pi',
+    'OpenAI-Beta': 'responses=experimental',
+  };
+};
+
 const normalizeGeminiBaseUrl = (rawBaseUrl: string): string => {
   return normalizeBaseUrlPath(
     rawBaseUrl.trim() || 'https://generativelanguage.googleapis.com',
@@ -522,7 +539,7 @@ type ProviderDescriptor = {
     baseURL: string;
   }) => OpenClawProviderApi;
   normalizeBaseUrl: (rawBaseUrl: string) => string;
-  resolveApiKey?: (ctx: { apiKey: string; providerName: string }) => string;
+  resolveApiKey?: (ctx: { apiKey: string; providerName: string }) => string | undefined;
   resolveSessionModelId?: (modelId: string) => string;
   /**
    * 动态计算 baseUrl，完全覆盖 normalizeBaseUrl 的结果。
@@ -590,6 +607,13 @@ const PROVIDER_REGISTRY: Record<string, ProviderDescriptor> = {
         ? (OpenClawApiConst.OpenAIResponses as OpenClawProviderApi)
         : (OpenClawApiConst.OpenAICompletions as OpenClawProviderApi),
     normalizeBaseUrl: stripChatCompletionsSuffix,
+  },
+
+  [`${ProviderName.OpenAI}:oauth`]: {
+    providerId: OpenClawProviderId.OpenAICodex,
+    resolveApi: () => OpenClawApiConst.OpenAICodexResponses as OpenClawProviderApi,
+    normalizeBaseUrl: () => OPENAI_CODEX_BASE_URL,
+    resolveApiKey: () => undefined,
   },
 
   [ProviderName.DeepSeek]: {
@@ -679,7 +703,11 @@ const DEFAULT_DESCRIPTOR: ProviderDescriptor = {
 const resolveDescriptor = (
   providerName: string,
   codingPlanEnabled: boolean,
+  authType?: 'apikey' | 'oauth',
 ): ProviderDescriptor => {
+  if (providerName === ProviderName.OpenAI && authType === 'oauth') {
+    return PROVIDER_REGISTRY[`${ProviderName.OpenAI}:oauth`];
+  }
   if (codingPlanEnabled) {
     const compositeKey = `${providerName}:codingPlan`;
     if (compositeKey in PROVIDER_REGISTRY) {
@@ -707,7 +735,7 @@ export const buildProviderSelection = (options: {
   modelName?: string;
 }): OpenClawProviderSelection => {
   const providerName = options.providerName ?? '';
-  const descriptor = resolveDescriptor(providerName, !!options.codingPlanEnabled);
+  const descriptor = resolveDescriptor(providerName, !!options.codingPlanEnabled, options.authType);
 
   let baseUrl =
     descriptor.resolveRuntimeBaseUrl?.() ?? descriptor.normalizeBaseUrl(options.baseURL);
@@ -730,7 +758,10 @@ export const buildProviderSelection = (options: {
 
   const providerModelName = resolveModelDisplayName(sessionModelId, options.modelName);
   const modelInput: string[] = options.supportsImage ? ['text', 'image'] : ['text'];
-  const auth = options.providerName === ProviderName.Minimax && options.authType === 'oauth'
+  const auth = (
+    (options.providerName === ProviderName.Minimax || options.providerName === ProviderName.OpenAI)
+    && options.authType === 'oauth'
+  )
     ? AuthType.OAuth
     : AuthType.ApiKey;
 
@@ -741,6 +772,10 @@ export const buildProviderSelection = (options: {
   const request = shouldUseEnvProxyForProviderBaseUrl(baseUrl)
     ? { proxy: { mode: 'env-proxy' as const } }
     : undefined;
+  const headers =
+    descriptor.providerId === OpenClawProviderId.OpenAICodex
+      ? buildOpenAICodexHeaders()
+      : undefined;
 
   return {
     providerId: descriptor.providerId,
@@ -750,8 +785,9 @@ export const buildProviderSelection = (options: {
     providerConfig: {
       baseUrl,
       api,
-      apiKey,
+      ...(apiKey ? { apiKey } : {}),
       auth,
+      ...(headers ? { headers } : {}),
       ...(request ? { request } : {}),
       models: [
         {
@@ -772,6 +808,43 @@ export const buildProviderSelection = (options: {
     },
   };
 };
+
+const buildOpenAICodexSystemProxyModelOverrides = (
+  providers: Record<string, OpenClawProviderSelection['providerConfig']>,
+): Record<string, { params: { transport: 'sse' } }> => {
+  if (!isSystemProxyEnabled()) {
+    return {};
+  }
+
+  const codexProvider = providers[OpenClawProviderId.OpenAICodex];
+  if (!codexProvider) {
+    return {};
+  }
+
+  const overrides: Record<string, { params: { transport: 'sse' } }> = {};
+  for (const model of codexProvider.models) {
+    if (!model.id?.trim()) {
+      continue;
+    }
+    overrides[`${OpenClawProviderId.OpenAICodex}/${model.id.trim()}`] = {
+      params: { transport: 'sse' },
+    };
+  }
+  return overrides;
+};
+
+const buildProviderModelCatalog = (
+  providers: Record<string, OpenClawProviderSelection['providerConfig']>,
+): Record<string, { models: Array<{ id: string }> }> => Object.fromEntries(
+  Object.entries(providers).map(([providerId, providerConfig]) => [
+    providerId,
+    {
+      models: providerConfig.models
+        .map((model) => ({ id: model.id?.trim() ?? '' }))
+        .filter((model) => model.id),
+    },
+  ]),
+);
 
 const readPreinstalledPluginIds = (): string[] => {
   try {
@@ -906,6 +979,35 @@ export class OpenClawConfigSync {
     this.getMcpBridgeSecret = deps.getMcpBridgeSecret;
     this.getSkillsList = deps.getSkillsList;
     this.getAgents = deps.getAgents;
+  }
+
+  /**
+   * Stamp the `meta` field onto an openclaw config object before writing.
+   *
+   * OpenClaw's config health monitor (`observeConfigSnapshot`) compares every
+   * read against a "last known good" fingerprint.  One of the checks is
+   * `hasConfigMeta` — if the previous good config had `meta` but the current
+   * one doesn't, an anomaly is logged and the file content is persisted as a
+   * `.clobbered.<timestamp>` snapshot.  Because LobsterAI writes openclaw.json
+   * directly (bypassing OpenClaw's own `writeConfigFile` which calls
+   * `stampConfigVersion`), we need to stamp `meta` ourselves.
+   */
+  private stampConfigMeta(config: Record<string, unknown>): Record<string, unknown> {
+    let version: string | null = null;
+    try {
+      version =
+        this.engineManager.getStatus().version ||
+        this.engineManager.getDesiredVersion();
+    } catch {
+      // Engine manager may not be fully initialised (e.g. in tests).
+    }
+    return {
+      ...config,
+      meta: {
+        ...(version ? { lastTouchedVersion: version } : {}),
+        lastTouchedAt: new Date().toISOString(),
+      },
+    };
   }
 
   private buildSessionConfig(): Record<string, unknown> {
@@ -1046,6 +1148,8 @@ export class OpenClawConfigSync {
       coworkConfig.executionMode || 'local',
       this.isEnterprise(),
     );
+    const availableProviders = buildProviderModelCatalog(allProvidersMap);
+    const defaultModelOverrides = buildOpenAICodexSystemProxyModelOverrides(allProvidersMap);
     console.log(
       `[OpenClawConfigSync] sandbox mode: ${sandboxMode} (executionMode: ${coworkConfig.executionMode || 'local'}, enterprise: ${this.isEnterprise()})`,
     );
@@ -1148,6 +1252,7 @@ export class OpenClawConfigSync {
           model: {
             primary: primaryModel,
           },
+          ...(Object.keys(defaultModelOverrides).length > 0 ? { models: defaultModelOverrides } : {}),
           sandbox: {
             mode: sandboxMode,
           },
@@ -1177,7 +1282,7 @@ export class OpenClawConfigSync {
             },
           } : {}),
         },
-        ...this.buildAgentsList(primaryModel, this.engineManager.getStateDir()),
+        ...this.buildAgentsList(primaryModel, this.engineManager.getStateDir(), availableProviders),
       },
       ...this.currentBindingsObj,
       session: this.buildSessionConfig(),
@@ -1804,7 +1909,20 @@ export class OpenClawConfigSync {
       currentContent = '';
     }
 
-    const configChanged = currentContent !== nextContent;
+    // Compare ignoring `meta` — it contains timestamps that change on every
+    // write and should not trigger a gateway restart.
+    const configChanged = (() => {
+      if (!currentContent) return true;
+      try {
+        const cur = JSON.parse(currentContent);
+        delete cur.meta;
+        const nxt = JSON.parse(nextContent);
+        delete nxt.meta;
+        return JSON.stringify(cur) !== JSON.stringify(nxt);
+      } catch {
+        return currentContent !== nextContent;
+      }
+    })();
 
     // Detect mcp-bridge config changes (callbackUrl, tools) separately.
     // Even when the overall plugins section appears "UNCHANGED" in the
@@ -1863,8 +1981,9 @@ export class OpenClawConfigSync {
       } catch { /* ignore parse errors in diag */ }
       try {
         ensureDir(path.dirname(configPath));
+        const stampedContent = `${JSON.stringify(this.stampConfigMeta(managedConfig), null, 2)}\n`;
         const tmpPath = `${configPath}.tmp-${Date.now()}`;
-        fs.writeFileSync(tmpPath, nextContent, 'utf8');
+        fs.writeFileSync(tmpPath, stampedContent, 'utf8');
         fs.renameSync(tmpPath, configPath);
       } catch (error) {
         return {
@@ -2399,13 +2518,17 @@ export class OpenClawConfigSync {
    * Per-agent `identity` (name, emoji) is set from the agent database so
    * OpenClaw picks it up natively.
    */
-  private buildAgentsList(defaultPrimaryModel: string, stateDir?: string): { list?: Array<Record<string, unknown>> } {
+  private buildAgentsList(
+    defaultPrimaryModel: string,
+    stateDir?: string,
+    availableProviders?: Record<string, { models: Array<{ id: string }> }>,
+  ): { list?: Array<Record<string, unknown>> } {
     const agents = this.getAgents?.() ?? [];
     const mainAgent = agents.find(agent => agent.id === 'main');
 
     const list: Array<Record<string, unknown>> = [
       mainAgent
-        ? buildAgentEntry(mainAgent, defaultPrimaryModel)
+        ? buildAgentEntry(mainAgent, defaultPrimaryModel, { availableProviders })
         : {
             id: 'main',
             default: true,
@@ -2417,6 +2540,7 @@ export class OpenClawConfigSync {
         agents,
         fallbackPrimaryModel: defaultPrimaryModel,
         stateDir,
+        availableProviders,
       }),
     ];
 
@@ -2640,14 +2764,28 @@ export class OpenClawConfigSync {
 
     const nextContent = `${JSON.stringify(mergedConfig, null, 2)}\n`;
 
-    if (currentContent === nextContent) {
+    // Compare ignoring `meta` timestamps to avoid unnecessary writes.
+    const unchanged = (() => {
+      if (!currentContent) return false;
+      try {
+        const cur = JSON.parse(currentContent);
+        delete cur.meta;
+        const nxt = JSON.parse(nextContent);
+        delete nxt.meta;
+        return JSON.stringify(cur) === JSON.stringify(nxt);
+      } catch {
+        return currentContent === nextContent;
+      }
+    })();
+    if (unchanged) {
       return { ok: true, changed: false, configPath };
     }
 
     try {
       ensureDir(path.dirname(configPath));
+      const stampedContent = `${JSON.stringify(this.stampConfigMeta(mergedConfig), null, 2)}\n`;
       const tmpPath = `${configPath}.tmp-${Date.now()}`;
-      fs.writeFileSync(tmpPath, nextContent, 'utf8');
+      fs.writeFileSync(tmpPath, stampedContent, 'utf8');
       fs.renameSync(tmpPath, configPath);
       return { ok: true, changed: true, configPath };
     } catch (error) {

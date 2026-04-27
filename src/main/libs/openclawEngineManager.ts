@@ -8,6 +8,7 @@ import os from 'os';
 import path from 'path';
 
 import { ensureElectronNodeShim, getElectronNodeRuntimePath, getSkillsRoot } from './coworkUtil';
+import { getCodexHomeDir } from './openaiCodexAuth';
 import { cleanupStaleThirdPartyPluginsFromBundledDir, listLocalOpenClawExtensionIds,syncLocalOpenClawExtensionsIntoRuntime } from './openclawLocalExtensions';
 import { appendPythonRuntimeToEnv } from './pythonRuntime';
 
@@ -464,6 +465,10 @@ export class OpenClawEngineManager extends EventEmitter {
       OPENCLAW_HOME: this.baseDir,
       OPENCLAW_STATE_DIR: this.stateDir,
       OPENCLAW_CONFIG_PATH: this.configPath,
+      // Point the OpenAI provider's ChatGPT/Codex auth lookup at our app-managed
+      // directory so it doesn't fight with a system Codex CLI install
+      // (~/.codex/auth.json).  See src/main/libs/openaiCodexAuth.ts.
+      CODEX_HOME: getCodexHomeDir(),
       OPENCLAW_GATEWAY_TOKEN: token,
       OPENCLAW_GATEWAY_PORT: String(port),
       OPENCLAW_NO_RESPAWN: '1',
