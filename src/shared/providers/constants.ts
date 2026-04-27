@@ -247,6 +247,7 @@ const PROVIDER_DEFINITIONS = [
     region: 'china',
     enPriority: 0,
     defaultModels: [
+      { id: 'qwen3.6-plus', name: 'Qwen3.6 Plus', supportsImage: true },
       { id: 'qwen3.5-plus', name: 'Qwen3.5 Plus', supportsImage: true },
       { id: 'qwen3-coder-plus', name: 'Qwen3 Coder Plus', supportsImage: false },
     ],
@@ -316,10 +317,10 @@ const PROVIDER_DEFINITIONS = [
     region: 'china',
     enPriority: 0,
     defaultModels: [
-      { id: 'ark-code-latest', name: 'Auto', supportsImage: false },
-      { id: 'doubao-seed-2-0-pro-260215', name: 'Doubao-Seed-2.0-pro', supportsImage: false },
-      { id: 'doubao-seed-2-0-lite-260215', name: 'Doubao-Seed-2.0-lite', supportsImage: false },
-      { id: 'doubao-seed-2-0-mini-260215', name: 'Doubao-Seed-2.0-mini', supportsImage: false },
+      { id: 'doubao-seed-2-0-pro-260215', name: 'Doubao-Seed-2.0-pro', supportsImage: true },
+      { id: 'ark-code-latest', name: 'Auto', supportsImage: true },
+      { id: 'doubao-seed-2-0-lite-260215', name: 'Doubao-Seed-2.0-lite', supportsImage: true },
+      { id: 'doubao-seed-2-0-mini-260215', name: 'Doubao-Seed-2.0-mini', supportsImage: true },
     ],
   },
   {
