@@ -8,7 +8,7 @@ import type { Model } from '../store/slices/modelSlice';
 import { getModelIdentityKey,isSameModelIdentity, setSelectedModel } from '../store/slices/modelSlice';
 
 interface ModelSelectorProps {
-  dropdownDirection?: 'up' | 'down';
+  dropdownDirection?: 'up' | 'down' | 'auto';
   /**
    * Controlled mode: the currently selected Model (or `null` for "default").
    * When provided, the component does NOT read/write Redux global state.
@@ -20,14 +20,17 @@ interface ModelSelectorProps {
   defaultLabel?: string;
 }
 
+const DROPDOWN_MAX_HEIGHT = 256; // matches max-h-64
+
 const ModelSelector: React.FC<ModelSelectorProps> = ({
-  dropdownDirection = 'down',
+  dropdownDirection = 'auto',
   value,
   onChange,
   defaultLabel,
 }) => {
   const dispatch = useDispatch();
   const [isOpen, setIsOpen] = React.useState(false);
+  const [resolvedDirection, setResolvedDirection] = React.useState<'up' | 'down'>('down');
   const containerRef = React.useRef<HTMLDivElement>(null);
 
   const controlled = onChange !== undefined;
@@ -52,6 +55,21 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
     };
   }, [isOpen]);
 
+  const resolveDirection = React.useCallback(() => {
+    if (dropdownDirection !== 'auto') return dropdownDirection;
+    if (!containerRef.current) return 'down';
+    const rect = containerRef.current.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom;
+    return spaceBelow < DROPDOWN_MAX_HEIGHT && rect.top > spaceBelow ? 'up' : 'down';
+  }, [dropdownDirection]);
+
+  const toggleOpen = () => {
+    if (!isOpen) {
+      setResolvedDirection(resolveDirection());
+    }
+    setIsOpen(!isOpen);
+  };
+
   const handleModelSelect = (model: Model | null) => {
     if (controlled) {
       onChange(model);
@@ -70,7 +88,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
     );
   }
 
-  const dropdownPositionClass = dropdownDirection === 'up'
+  const dropdownPositionClass = resolvedDirection === 'up'
     ? 'bottom-full mb-1'
     : 'top-full mt-1';
 
@@ -121,7 +139,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
     <div ref={containerRef} className="relative cursor-pointer">
       <button
         type="button"
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={toggleOpen}
         className={`flex items-center space-x-2 px-3 py-1.5 rounded-xl hover:bg-surface-raised text-foreground transition-colors cursor-pointer ${isOpen ? 'bg-surface-raised' : ''}`}
       >
         <span className="font-medium text-sm">{selectedModel?.name ?? defaultLabel ?? ''}</span>
