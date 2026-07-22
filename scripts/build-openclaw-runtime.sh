@@ -239,6 +239,12 @@ npm_config_platform="$NPM_TARGET_PLATFORM" \
 npm_config_arch="$NPM_TARGET_ARCH" \
 npm install --omit=dev --no-audit --no-fund
 
+# Work around npm's optional-dependencies bug (npm/cli#4828): when building
+# for a different platform than the host, platform-specific native bindings
+# declared as optionalDependencies are skipped. Install them explicitly.
+echo "[openclaw-runtime] Installing cross-platform native bindings for $NPM_TARGET_PLATFORM-$NPM_TARGET_ARCH"
+node "$ELECTRON_ROOT/scripts/install-cross-platform-native-bindings.cjs" "$OUT_DIR" "$NPM_TARGET_PLATFORM" "$NPM_TARGET_ARCH"
+
 # Runtime sanity checks before packing gateway.asar
 [[ -f "openclaw.mjs" ]]
 [[ -f "dist/control-ui/index.html" ]]
