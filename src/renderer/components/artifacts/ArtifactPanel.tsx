@@ -38,15 +38,8 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
 
-import { authService } from '@/services/auth';
 import { copyTextToClipboard } from '@/services/clipboard';
-import { getPortalPricingUrl, PortalPricingKeyfrom } from '@/services/endpoints';
 import { i18nService } from '@/services/i18n';
-import {
-  readLocalServiceProjectDirectory as readNodeDeploymentProjectDirectory,
-  readLocalServiceProjectDirectoryCandidate as readNodeDeploymentProjectDirectoryCandidate,
-  writeLocalServiceProjectDirectory as writeNodeDeploymentProjectDirectory,
-} from '@/services/localServiceProjectDirectoryCache';
 import type { RootState } from '@/store';
 import {
   addArtifact,
@@ -685,7 +678,6 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   const activePreviewTab = useSelector((state: RootState) =>
     selectActivePreviewTab(state, sessionId),
   );
-  const authState = useSelector((state: RootState) => state.auth);
   const [showFileListDrawer, setShowFileListDrawer] = useState(false);
   const [isFileListDrawerVisible, setIsFileListDrawerVisible] = useState(false);
   const [localBrowserAddress, setLocalBrowserAddress] = useState('');
@@ -816,7 +808,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
       browserLocalServiceOrigin === contextLocalServiceOrigin,
   );
   const rememberedNodeDeploymentProjectDirectory = browserLocalServiceUrl
-    ? readNodeDeploymentProjectDirectory(sessionId, browserLocalServiceUrl)
+    ? ''
     : '';
   const contextNodeDeploymentProjectDirectory =
     browserLocalServiceOrigin && browserLocalServiceContextMatches
@@ -935,13 +927,6 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   ) => {
     const normalizedProjectDirectory = projectDirectory.trim();
     if (!normalizedProjectDirectory) return;
-
-    writeNodeDeploymentProjectDirectory(
-      sessionId,
-      localServiceUrl,
-      normalizedProjectDirectory,
-      ShareDeploymentCandidateSource.ArtifactMetadata,
-    );
 
     const localServiceOrigin = normalizeLocalServiceOriginForCompare(localServiceUrl);
     const contextArtifactId =
@@ -1141,9 +1126,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   useEffect(() => {
     if (
       !browserLocalServiceUrl ||
-      !selectedNodeDeploymentLookupKey ||
-      !authState.isLoggedIn ||
-      authState.quota?.subscriptionStatus !== 'active'
+      !selectedNodeDeploymentLookupKey
     ) {
       setNodeDeploymentLookup(null);
       return;
@@ -1219,8 +1202,6 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
       isCancelled = true;
     };
   }, [
-    authState.isLoggedIn,
-    authState.quota?.subscriptionStatus,
     browserLocalServiceUrl,
     browserLocalServiceProjectDirectory,
     selectedNodeDeploymentLookupKey,
@@ -1552,7 +1533,6 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   }, [onOpenHtmlFileInBrowser, reportSelectedArtifactAction, selectedArtifact]);
 
   const openSubscriptionPage = useCallback(() => {
-    window.electron?.shell?.openExternal(getPortalPricingUrl(PortalPricingKeyfrom.HtmlShare));
     setHtmlShareDialog(null);
     if (localServiceDeploymentRequest?.requestId) {
       onLocalServiceDeploymentRequestConsumed?.(localServiceDeploymentRequest.requestId);
@@ -1580,33 +1560,8 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   }, []);
 
   const ensureHtmlShareAllowed = useCallback(async (): Promise<boolean> => {
-    let latestIsLoggedIn = authState.isLoggedIn;
-    let latestQuota = authState.quota;
-
-    if (!latestIsLoggedIn || latestQuota?.subscriptionStatus !== 'active') {
-      const refreshed = await authService.refreshAuthState();
-      latestIsLoggedIn = refreshed.isLoggedIn;
-      latestQuota = refreshed.quota;
-    }
-
-    if (!latestIsLoggedIn) {
-      setHtmlShareDialog({
-        kind: HtmlShareDialogKind.Subscription,
-        title: t('htmlShareLoginRequiredTitle'),
-        message: t('htmlShareLoginRequiredMessage'),
-      });
-      return false;
-    }
-    if (latestQuota?.subscriptionStatus !== 'active') {
-      setHtmlShareDialog({
-        kind: HtmlShareDialogKind.Subscription,
-        title: t('htmlShareSubscriptionRequiredTitle'),
-        message: t('htmlShareSubscriptionRequiredMessage'),
-      });
-      return false;
-    }
     return true;
-  }, [authState.isLoggedIn, authState.quota]);
+  }, []);
 
   const handleCopyShareLink = useCallback(
     async (url?: string, shareCode?: string) => {
@@ -1858,7 +1813,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
         });
       }
       hintCandidates.push(...projectCandidates);
-      const cachedCandidate = readNodeDeploymentProjectDirectoryCandidate(sessionId, localService.url);
+      const cachedCandidate: { directory?: string } | undefined = undefined;
       if (cachedCandidate) {
         hintCandidates.push(cachedCandidate);
       }
@@ -1867,7 +1822,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
         localServiceUrl: localService.url,
         workingDirectory,
         projectCandidates: hintCandidates,
-        cachedProjectDirectory: cachedCandidate?.directory,
+        cachedProjectDirectory: undefined,
       });
 
       for (const candidate of detected?.candidates ?? []) {

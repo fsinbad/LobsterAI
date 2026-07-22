@@ -1,7 +1,8 @@
 import React from 'react';
+
 import { i18nService } from '@/services/i18n';
 
-const PRIVACY_URL = 'https://c.youdao.com/dict/hardware/lobsterai/lobsterai_service.html';
+const PRIVACY_URL = '';
 
 interface PrivacyDialogProps {
   onAccept: () => void;
@@ -11,6 +12,7 @@ interface PrivacyDialogProps {
 const PrivacyDialog: React.FC<PrivacyDialogProps> = ({ onAccept, onReject }) => {
   const handleLinkClick = async (e: React.MouseEvent) => {
     e.preventDefault();
+    if (!PRIVACY_URL) return;
     await window.electron.shell.openExternal(PRIVACY_URL);
   };
 

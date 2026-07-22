@@ -5,7 +5,6 @@ import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
 
 import { getProviderIcon, ProviderIconId } from '../providers/uiRegistry';
-import { authService } from '../services/auth';
 import { i18nService } from '../services/i18n';
 import { RootState } from '../store';
 import type { Model } from '../store/slices/modelSlice';
@@ -61,7 +60,6 @@ export interface ModelSelectorChangeMeta {
 }
 
 export const ModelAccessPromptKind = {
-  Login: 'login',
   Subscribe: 'subscribe',
 } as const;
 export type ModelAccessPromptKind = typeof ModelAccessPromptKind[keyof typeof ModelAccessPromptKind];
@@ -76,30 +74,21 @@ interface ModelAccessPromptModalProps {
 }
 
 export const ModelAccessPromptModal: React.FC<ModelAccessPromptModalProps> = ({
-  promptKind,
   onClose,
   titleKey,
   descriptionKey,
   primaryButtonKey,
   showLearnMore = true,
 }) => {
-  const loginPrompt = promptKind === ModelAccessPromptKind.Login;
-  const resolvedTitleKey = titleKey ?? (loginPrompt ? 'modelSelectorLoginTitle' : 'modelSelectorSubscribeTitle');
-  const resolvedDescriptionKey = descriptionKey ?? (loginPrompt ? 'modelSelectorLoginDesc' : 'modelSelectorSubscribeDesc');
-  const resolvedPrimaryButtonKey = primaryButtonKey ?? (loginPrompt ? 'modelSelectorLoginBtn' : 'modelSelectorSubscribeBtn');
+  const resolvedTitleKey = titleKey ?? 'modelSelectorSubscribeTitle';
+  const resolvedDescriptionKey = descriptionKey ?? 'modelSelectorSubscribeDesc';
+  const resolvedPrimaryButtonKey = primaryButtonKey ?? 'modelSelectorSubscribeBtn';
 
   const openSubscriptionPage = async () => {
     onClose();
-    const { getPortalPricingUrl } = await import('../services/endpoints');
-    await window.electron.shell.openExternal(getPortalPricingUrl());
   };
 
   const handlePrimary = async () => {
-    if (promptKind === ModelAccessPromptKind.Login) {
-      onClose();
-      await authService.login();
-      return;
-    }
     await openSubscriptionPage();
   };
 
@@ -134,7 +123,7 @@ export const ModelAccessPromptModal: React.FC<ModelAccessPromptModalProps> = ({
       >
         {i18nService.t(resolvedPrimaryButtonKey)}
       </button>
-      {loginPrompt && showLearnMore && (
+      {showLearnMore && (
         <button
           type="button"
           onClick={() => { void openSubscriptionPage(); }}
@@ -211,7 +200,6 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   const controlled = onChange !== undefined;
   const globalSelectedModel = useSelector((state: RootState) => state.model.defaultSelectedModel);
   const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
-  const isLoggedIn = useSelector((state: RootState) => state.auth.isLoggedIn);
   const selectedModel = controlled ? value ?? null : globalSelectedModel;
   const selectedModelKey = selectedModel ? getModelIdentityKey(selectedModel) : '';
   const availableModels = useSelector((state: RootState) => state.model.availableModels);
@@ -382,7 +370,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   const handleModelSelect = (model: Model | null) => {
     if (disabled) return;
     if (model && model.accessible === false) {
-      setRestrictedPrompt(isLoggedIn ? ModelAccessPromptKind.Subscribe : ModelAccessPromptKind.Login);
+      setRestrictedPrompt(ModelAccessPromptKind.Subscribe);
       setHoveredModel(null);
       setIsOpen(false);
       return;
@@ -435,7 +423,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   };
   const resolveModelIconProviderKey = (model: Model): string => {
     const providerKey = model.providerKey?.trim();
-    if (providerKey && providerKey !== ProviderName.LobsteraiServer) return providerKey;
+    if (providerKey) return providerKey;
 
     const searchableText = `${model.name} ${model.id}`;
     return MODEL_ICON_PROVIDER_HINTS.find(({ pattern }) => pattern.test(searchableText))?.providerName

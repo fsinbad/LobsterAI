@@ -41,7 +41,6 @@ export const ProviderName = {
   Ollama: 'ollama',
   LmStudio: 'lm-studio',
   Custom: 'custom',
-  LobsteraiServer: 'lobsterai-server',
   Copilot: 'github-copilot',
 } as const;
 export type ProviderName = typeof ProviderName[keyof typeof ProviderName];
@@ -49,7 +48,6 @@ export type ProviderName = typeof ProviderName[keyof typeof ProviderName];
 // ─── OpenClaw Provider ID ───────────────────────────────────────────────
 // OpenClaw gateway provider identifiers. May differ from ProviderName.
 export const OpenClawProviderId = {
-  LobsteraiServer: 'lobsterai-server',
   Moonshot: 'moonshot',
   Google: 'google',
   Xai: 'xai',

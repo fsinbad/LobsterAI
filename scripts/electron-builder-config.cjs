@@ -7,10 +7,10 @@ const { readBuildKeyfrom } = require('./build-keyfrom.cjs');
 
 // Opt-in web installer (small NSIS stub that downloads the app package from a
 // CDN at install time). Default builds are full offline installers; nothing
-// changes unless LOBSTERAI_WEB_INSTALLER=1 is set explicitly.
-const WEB_INSTALLER_ENV = 'LOBSTERAI_WEB_INSTALLER';
-const WEB_PKG_BASE_URL_ENV = 'LOBSTERAI_WEB_PKG_BASE_URL';
-const WEB_PKG_URL_ENV = 'LOBSTERAI_WEB_PKG_URL';
+// changes unless NUKEMAI_WEB_INSTALLER=1 is set explicitly.
+const WEB_INSTALLER_ENV = 'NUKEMAI_WEB_INSTALLER';
+const WEB_PKG_BASE_URL_ENV = 'NUKEMAI_WEB_PKG_BASE_URL';
+const WEB_PKG_URL_ENV = 'NUKEMAI_WEB_PKG_URL';
 
 function isWebInstallerEnabled() {
   const value = (process.env[WEB_INSTALLER_ENV] || '').trim().toLowerCase();
@@ -50,7 +50,7 @@ function resolveWebPackageUrl(keyfrom) {
   if (!raw) {
     throw new Error(
       `[WebInstaller] either ${WEB_PKG_URL_ENV} (exact package URL from object storage) or ` +
-        `${WEB_PKG_BASE_URL_ENV} (CDN base directory, e.g. https://cdn.example.com/lobsterai/win) ` +
+        `${WEB_PKG_BASE_URL_ENV} (CDN base directory, e.g. https://cdn.example.com/nukemai/win) ` +
         `is required when ${WEB_INSTALLER_ENV}=1.`,
     );
   }
@@ -94,7 +94,7 @@ for (const platformName of ['mac', 'win', 'linux']) {
   mergeExtraResources(platformName);
 }
 
-// Sign every Windows binary electron-builder produces (LobsterAI.exe, the
+// Sign every Windows binary electron-builder produces (NukemAI.exe, the
 // uninstaller, the installer) through the internal Youdao signing service,
 // not just the final Setup.exe: the unsigned inner exe is what security
 // software freezes on first execution. The hook skips with a warning when
@@ -108,12 +108,12 @@ delete config.extraResources;
 
 config.dmg = {
   ...(config.dmg || {}),
-  artifactName: `LobsterAI-darwin-\${arch}-\${version}-${keyfrom}.\${ext}`,
+  artifactName: `NukemAI-darwin-\${arch}-\${version}-${keyfrom}.\${ext}`,
 };
 
 config.nsis = {
   ...(config.nsis || {}),
-  artifactName: `LobsterAI-Setup-\${arch}-\${version}-${keyfrom}.\${ext}`,
+  artifactName: `NukemAI-Setup-\${arch}-\${version}-${keyfrom}.\${ext}`,
 };
 
 if (isWebInstallerEnabled()) {
@@ -126,7 +126,7 @@ if (isWebInstallerEnabled()) {
   };
   config.nsisWeb = {
     appPackageUrl: resolveWebPackageUrl(keyfrom),
-    artifactName: `LobsterAI-WebSetup-\${arch}-\${version}-${keyfrom}.\${ext}`,
+    artifactName: `NukemAI-WebSetup-\${arch}-\${version}-${keyfrom}.\${ext}`,
   };
   console.log(`[WebInstaller] nsis-web target enabled, app package url: ${config.nsisWeb.appPackageUrl}`);
 }

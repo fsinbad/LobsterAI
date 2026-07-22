@@ -1,5 +1,5 @@
 import { ArrowTopRightOnSquareIcon } from '@heroicons/react/20/solid';
-import { ChevronDownIcon, FolderIcon, ShareIcon } from '@heroicons/react/24/outline';
+import { ChevronDownIcon, FolderIcon } from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useDispatch } from 'react-redux';
@@ -11,8 +11,6 @@ import { revealLocalPathWithToast, showShellFailureToast } from '@/utils/localFi
 
 import ServiceDeploymentIcon from '../icons/ServiceDeploymentIcon';
 import { reportArtifactPreviewAction } from './artifactAnalytics';
-import { useOptionalArtifactFileShare } from './ArtifactFileShareController';
-import { isArtifactFileShareable } from './artifactFileSharePolicy';
 import ArtifactPreviewIdentity, { ArtifactPreviewGlobeIcon } from './ArtifactPreviewIdentity';
 import { getPreviewCardDescriptor } from './previewCardPolicy';
 
@@ -355,7 +353,6 @@ const ArtifactPreviewCard: React.FC<ArtifactPreviewCardProps> = ({
   onOpenPreview,
 }) => {
   const dispatch = useDispatch();
-  const artifactFileShare = useOptionalArtifactFileShare();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownAnchorRef = useRef<HTMLButtonElement>(null);
 
@@ -385,11 +382,6 @@ const ArtifactPreviewCard: React.FC<ArtifactPreviewCardProps> = ({
     dispatch(openArtifactPreviewTab({ sessionId: artifact.sessionId, artifactId: artifact.id }));
   }, [artifact, dispatch, onOpenHtmlFile, onOpenLocalService, onOpenPreview]);
 
-  const handleShareClick = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
-    event.stopPropagation();
-    void artifactFileShare?.openShare(artifact);
-  }, [artifact, artifactFileShare]);
-
   const handleDeployClick = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
     onDeployLocalService?.(artifact);
@@ -397,9 +389,6 @@ const ArtifactPreviewCard: React.FC<ArtifactPreviewCardProps> = ({
 
   const descriptor = getPreviewCardDescriptor(artifact);
   const supportsOpenMenu = descriptor.supportsOpenMenu;
-  const canShare = artifact.type !== ArtifactTypeValue.LocalService &&
-    Boolean(artifactFileShare) &&
-    isArtifactFileShareable(artifact);
   const canDeploy = artifact.type === ArtifactTypeValue.LocalService &&
     Boolean(onDeployLocalService);
   const cardClassName = 'artifact-preview-card-row group flex min-h-[58px] items-center gap-3 px-4 py-3 transition-colors w-full text-left';
@@ -470,17 +459,6 @@ const ArtifactPreviewCard: React.FC<ArtifactPreviewCardProps> = ({
           <span>{t('artifactPreviewCardOpenWith')}</span>
           <ChevronDownIcon className="w-3.5 h-3.5" />
         </button>
-        {canShare && (
-          <button
-            type="button"
-            onClick={handleShareClick}
-            className="inline-flex h-9 min-w-[82px] flex-shrink-0 items-center justify-center gap-1.5 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover"
-            aria-label={t('htmlShare')}
-          >
-            <ShareIcon className="h-4 w-4" />
-            <span>{t('htmlShare')}</span>
-          </button>
-        )}
         {canDeploy && (
           <button
             type="button"
@@ -540,17 +518,6 @@ const ArtifactPreviewCard: React.FC<ArtifactPreviewCardProps> = ({
           <span>{t('artifactOpen')}</span>
         </div>
       </button>
-      {canShare && (
-        <button
-          type="button"
-          onClick={handleShareClick}
-          className="inline-flex h-9 min-w-[82px] flex-shrink-0 items-center justify-center gap-1.5 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover"
-          aria-label={t('htmlShare')}
-        >
-          <ShareIcon className="h-4 w-4" />
-          <span>{t('htmlShare')}</span>
-        </button>
-      )}
     </div>
   );
 };

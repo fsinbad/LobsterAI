@@ -1,5 +1,4 @@
 import { PlatformRegistry } from '@shared/platform';
-import { ProviderName } from '@shared/providers/constants';
 
 import { ScheduleKind } from '../../../scheduledTask/constants';
 import type {
@@ -68,7 +67,7 @@ export function getModelAnalyticsParams(
   }
 
   const modelSource =
-    resolvedModel.isServerModel || resolvedModel.providerKey === ProviderName.LobsteraiServer
+    resolvedModel.isServerModel
       ? 'package'
       : 'custom';
 

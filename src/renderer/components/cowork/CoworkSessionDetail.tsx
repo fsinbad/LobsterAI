@@ -36,7 +36,6 @@ import {
 import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
 import { getInstalledKitSkillIds } from '../../services/kitCapability';
-import { readLocalServiceProjectDirectoryCandidate } from '../../services/localServiceProjectDirectoryCache';
 import { RootState } from '../../store';
 import {
   selectCurrentMessagesLength,
@@ -88,7 +87,6 @@ import {
   type CoworkCollaborationMode as CoworkCollaborationModeType,
   CoworkSessionStatusValue,
 } from '../../types/cowork';
-import type { MediaAttachmentRef } from '../../types/mediaGeneration';
 import { parseUserMessageForDisplay } from '../../utils/userMessageDisplay';
 import {
   ArtifactPanel,
@@ -97,7 +95,6 @@ import {
   SubagentPanelContent,
 } from '../artifacts';
 import { reportArtifactPreviewAction } from '../artifacts/artifactAnalytics';
-import { ArtifactFileShareProvider } from '../artifacts/ArtifactFileShareController';
 import {
   ArtifactAutoPreviewOpenTarget,
   getAutoPreviewOpenTarget,
@@ -156,7 +153,6 @@ interface CoworkSessionDetailProps {
     prompt: string,
     skillPrompt?: string,
     imageAttachments?: CoworkImageAttachment[],
-    mediaReferences?: MediaAttachmentRef[],
     selectedTextSnippets?: CoworkSelectedTextSnippet[],
     collaborationMode?: CoworkCollaborationModeType,
   ) => boolean | void | Promise<boolean | void>;
@@ -431,9 +427,9 @@ const buildRailItems = (
       messageId: primaryMessageId,
       turnIndex: index,
       absoluteIndex: messageOffsetById.get(primaryMessageId) ?? items.length,
-      label: turn.userMessage ? getRailLabel(userContent, `Turn ${index + 1}`) : 'LobsterAI',
+      label: turn.userMessage ? getRailLabel(userContent, `Turn ${index + 1}`) : 'NukemAI',
       summary: assistantContent
-        ? getRailLabel(assistantContent, 'LobsterAI', COWORK_RAIL_TOOLTIP_PREVIEW_MAX_LENGTH)
+        ? getRailLabel(assistantContent, 'NukemAI', COWORK_RAIL_TOOLTIP_PREVIEW_MAX_LENGTH)
         : '',
       contentLen: userContent.length + assistantContent.length,
       isUser: false,
@@ -501,7 +497,7 @@ const buildRailItemsFromIndex = (
       messageId: current.messageId,
       turnIndex: loadedTurnIndex,
       absoluteIndex: current.messageOffset,
-      label: 'LobsterAI',
+      label: 'NukemAI',
       summary: current.preview,
       contentLen: current.contentLen,
       isUser: false,
@@ -990,11 +986,11 @@ const composeExportCanvas = async (
 
   ctx.fillStyle = brandColor;
   ctx.font = `600 ${brandFontSize}px ${fontStack}`;
-  ctx.fillText('LobsterAI — 全场景个人助理 Agent', textX, footerCenterY - taglineFontSize / 2 - 2);
+  ctx.fillText('NukemAI — 全场景个人助理 Agent', textX, footerCenterY - taglineFontSize / 2 - 2);
 
   ctx.fillStyle = subtitleColor;
   ctx.font = `400 ${taglineFontSize}px ${fontStack}`;
-  ctx.fillText('7×24 小时帮你干活的全场景个人助理，由网易有道开发', textX, footerCenterY + brandFontSize / 2 + 3);
+  ctx.fillText('7×24 小时帮你干活的全场景个人助理', textX, footerCenterY + brandFontSize / 2 + 3);
 
   ctx.restore(); // card clip
 
@@ -1636,7 +1632,6 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     const result = await onContinue(
       i18nService.t('coworkPlanConfirmExecutionPrompt'),
       confirmExecutionSkillPrompt,
-      undefined,
       undefined,
       undefined,
       CoworkCollaborationMode.Default,
@@ -3031,11 +3026,10 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       if (artifact.type !== ArtifactTypeValue.LocalService) continue;
       const localServiceUrl = artifact.url || artifact.content;
       if (!localServiceUrl) continue;
-      const cachedCandidate = readLocalServiceProjectDirectoryCandidate(sessionId, localServiceUrl);
       const inputKey = getLocalServiceProjectResolutionInputKey(
         artifact,
         workingDirectory,
-        cachedCandidate?.directory,
+        undefined,
       );
       if (localServiceProjectResolutionKeysRef.current.get(artifact.id) === inputKey) continue;
       localServiceProjectResolutionKeysRef.current.set(artifact.id, inputKey);
@@ -3051,9 +3045,6 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
           localServiceUrl,
           workingDirectory,
           projectCandidates: getLocalServiceContextCandidates(artifact),
-          ...(cachedCandidate?.directory
-            ? { cachedProjectDirectory: cachedCandidate.directory }
-            : {}),
         },
       });
     }
@@ -4485,8 +4476,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   };
 
   return (
-    <ArtifactFileShareProvider sessionId={currentSession.id}>
-      <div className="flex-1 flex flex-col h-full overflow-hidden">
+    <div className="flex-1 flex flex-col h-full overflow-hidden">
       {/* Header — spans full width */}
       <div
         data-skin-session-titlebar="true"
@@ -5414,8 +5404,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       </div>
     )}
       </div>
-      </div>
-    </ArtifactFileShareProvider>
+    </div>
   );
 };
 

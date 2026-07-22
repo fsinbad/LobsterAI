@@ -21,7 +21,7 @@ const WelcomeDialog: React.FC<WelcomeDialogProps> = ({ onLogin, onCustomModel })
         {/* logo */}
         <img
           src="logo.png"
-          alt="LobsterAI"
+          alt="NukemAI"
           width={72}
           height={72}
           className="rounded-2xl mb-5 select-none"

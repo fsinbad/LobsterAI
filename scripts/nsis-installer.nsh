@@ -34,8 +34,8 @@
 
 ; -- Stop every process that might hold file handles in the install dir --
 ;
-; 1. LobsterAI.exe -- the main app AND the OpenClaw gateway (ELECTRON_RUN_AS_NODE)
-; 2. node.exe whose binary lives inside the LobsterAI install tree
+; 1. NukemAI.exe -- the main app AND the OpenClaw gateway (ELECTRON_RUN_AS_NODE)
+; 2. node.exe whose binary lives inside the NukemAI install tree
 ;    (Web Search bridge server, MCP servers spawned with detached:true)
 ;
 ; Stop-Process -Force is equivalent to taskkill /F -- the processes have no
@@ -44,16 +44,16 @@
 ; remains before proceeding.
 ;
 ; Shared between the installer and the uninstaller via customCheckAppRunning.
-!macro stopLobsterAIProcesses
-  DetailPrint "[Installer] Stopping running LobsterAI processes"
+!macro stopNukemAIProcesses
+  DetailPrint "[Installer] Stopping running NukemAI processes"
   System::Call 'kernel32::GetTickCount()i .r7'
   nsExec::ExecToLog 'powershell -NoProfile -NonInteractive -Command "\
-    Stop-Process -Name LobsterAI -Force -ErrorAction SilentlyContinue;\
-    Get-Process node -ErrorAction SilentlyContinue | Where-Object { $$_.Path -like \"*LobsterAI*\" } | Stop-Process -Force -ErrorAction SilentlyContinue;\
+    Stop-Process -Name NukemAI -Force -ErrorAction SilentlyContinue;\
+    Get-Process node -ErrorAction SilentlyContinue | Where-Object { $$_.Path -like \"*NukemAI*\" } | Stop-Process -Force -ErrorAction SilentlyContinue;\
     for ($$i = 0; $$i -lt 15; $$i++) {\
       $$procs = @();\
-      $$procs += Get-Process -Name LobsterAI -ErrorAction SilentlyContinue;\
-      $$procs += Get-Process node -ErrorAction SilentlyContinue | Where-Object { $$_.Path -like \"*LobsterAI*\" };\
+      $$procs += Get-Process -Name NukemAI -ErrorAction SilentlyContinue;\
+      $$procs += Get-Process node -ErrorAction SilentlyContinue | Where-Object { $$_.Path -like \"*NukemAI*\" };\
       if ($$procs.Count -eq 0) { break };\
       Start-Sleep -Milliseconds 500;\
     }"'
@@ -61,8 +61,8 @@
   StrCpy $R2 $0
   System::Call 'kernel32::GetTickCount()i .r6'
   IntOp $5 $6 - $7
-  CreateDirectory "$APPDATA\LobsterAI"
-  FileOpen $9 "$APPDATA\LobsterAI\install-timing.log" a
+  CreateDirectory "$APPDATA\NukemAI"
+  FileOpen $9 "$APPDATA\NukemAI\install-timing.log" a
   FileSeek $9 0 END
   !insertmacro GetTimestamp $8
   FileWrite $9 "$8 phase=process-stop-complete exit=$R2 elapsed_ms=$5$\r$\n"
@@ -72,8 +72,8 @@
 !macro customInit
   ; Diagnostics only -- .onInit runs before the user has confirmed anything,
   ; so this macro must stay non-destructive.
-  CreateDirectory "$APPDATA\LobsterAI"
-  FileOpen $9 "$APPDATA\LobsterAI\install-timing.log" w
+  CreateDirectory "$APPDATA\NukemAI"
+  FileOpen $9 "$APPDATA\NukemAI\install-timing.log" w
   !insertmacro GetTimestamp $8
   FileWrite $9 "$8 phase=custom-init-start instdir=$INSTDIR appdata=$APPDATA$\r$\n"
   FileClose $9
@@ -84,11 +84,11 @@
 ;    before uninstallOldVersion and file extraction
 ;  - uninstaller: un.install section (assisted) or un.onInit (silent /S)
 !macro customCheckAppRunning
-  !insertmacro stopLobsterAIProcesses
+  !insertmacro stopNukemAIProcesses
 
   !ifndef BUILD_UNINSTALLER
     ; -- Backup user-created skills to AppData before extraction overwrites them --
-    ; Copy non-bundled skills to %APPDATA%\LobsterAI\skills-backup\ so they are
+    ; Copy non-bundled skills to %APPDATA%\NukemAI\skills-backup\ so they are
     ; preserved when NSIS extracts the new version over the existing install.
     ; The backup is restored in customInstall after extraction completes.
     ; Must run before the $INSTDIR rename below -- it reads from $INSTDIR.
@@ -99,7 +99,7 @@
     DetailPrint "[Installer] Backing up user-created skills"
     System::Call 'kernel32::GetTickCount()i .r7'
     ClearErrors
-    FileOpen $R0 "$APPDATA\LobsterAI\skill-migrate.log" w
+    FileOpen $R0 "$APPDATA\NukemAI\skill-migrate.log" w
     IfErrors BackupLogOpenFailed
       !insertmacro GetTimestamp $8
       FileWrite $R0 "$8 phase=backup-start instdir=$INSTDIR appdata=$APPDATA$\r$\n"
@@ -110,7 +110,7 @@
 
     nsExec::ExecToStack 'powershell -NoProfile -NonInteractive -Command "\
       $$src    = \"$INSTDIR\resources\SKILLs\";\
-      $$backup = \"$APPDATA\LobsterAI\skills-backup\";\
+      $$backup = \"$APPDATA\NukemAI\skills-backup\";\
       $$config = \"$$src\skills.config.json\";\
       if (Test-Path $$backup) { Remove-Item -Path $$backup -Recurse -Force -ErrorAction SilentlyContinue };\
       if (Test-Path $$src) {\
@@ -139,7 +139,7 @@
       FileWrite $R0 "$8 phase=backup-output text=$1$\r$\n"
       FileClose $R0
     BackupSkipCloseLog:
-    FileOpen $9 "$APPDATA\LobsterAI\install-timing.log" a
+    FileOpen $9 "$APPDATA\NukemAI\install-timing.log" a
     FileSeek $9 0 END
     !insertmacro GetTimestamp $8
     FileWrite $9 "$8 phase=skill-backup-complete exit=$R2 elapsed_ms=$5$\r$\n"
@@ -175,7 +175,7 @@
     SkipOldDirRemoval:
     System::Call 'kernel32::GetTickCount()i .r6'
     IntOp $5 $6 - $7
-    FileOpen $9 "$APPDATA\LobsterAI\install-timing.log" a
+    FileOpen $9 "$APPDATA\NukemAI\install-timing.log" a
     FileSeek $9 0 END
     !insertmacro GetTimestamp $8
     FileWrite $9 "$8 phase=old-install-cleanup-complete elapsed_ms=$5 renamed_path=$3 cleanup_mode=async$\r$\n"
@@ -186,10 +186,10 @@
 !macro customInstall
   ; -- Install Timing Log --
   ; Write timestamps to help diagnose slow installation phases.
-  ; Log file: %APPDATA%\LobsterAI\install-timing.log
+  ; Log file: %APPDATA%\NukemAI\install-timing.log
 
-  CreateDirectory "$APPDATA\LobsterAI"
-  FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+  CreateDirectory "$APPDATA\NukemAI"
+  FileOpen $2 "$APPDATA\NukemAI\install-timing.log" a
   FileSeek $2 0 END
   !insertmacro GetTimestamp $8
   FileWrite $2 "$8 phase=nsis-extract-complete$\r$\n"
@@ -209,7 +209,7 @@
   CreateDirectory "$INSTDIR\resources\SKILLs"
   DetailPrint "[Installer] Preparing resource directories"
   DetailPrint "[Installer] Adding Windows Defender exclusions before extraction"
-  FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+  FileOpen $2 "$APPDATA\NukemAI\install-timing.log" a
   FileSeek $2 0 END
   !insertmacro GetTimestamp $8
   FileWrite $2 "$8 phase=defender-exclusion-start$\r$\n"
@@ -220,7 +220,7 @@
   StrCpy $R2 $0
   System::Call 'kernel32::GetTickCount()i .r6'
   IntOp $5 $6 - $7
-  FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+  FileOpen $2 "$APPDATA\NukemAI\install-timing.log" a
   FileSeek $2 0 END
   !insertmacro GetTimestamp $8
   FileWrite $2 "$8 phase=defender-exclusion-complete exit=$R2 elapsed_ms=$5$\r$\n"
@@ -240,7 +240,7 @@
   ; execution (the root cause of installers hanging at this phase).
   IfFileExists "$SYSDIR\tar.exe" 0 TarExtractElectron
   StrCpy $R3 "system-tar"
-  FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+  FileOpen $2 "$APPDATA\NukemAI\install-timing.log" a
   FileSeek $2 0 END
   !insertmacro GetTimestamp $8
   FileWrite $2 "$8 phase=tar-extract-start extractor=system-tar tar=$INSTDIR\resources\win-resources.tar dest=$INSTDIR\resources$\r$\n"
@@ -251,7 +251,7 @@
   StrCpy $R2 $0
   System::Call 'kernel32::GetTickCount()i .r6'
   IntOp $5 $6 - $7
-  FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+  FileOpen $2 "$APPDATA\NukemAI\install-timing.log" a
   FileSeek $2 0 END
   !insertmacro GetTimestamp $8
   FileWrite $2 "$8 phase=tar-extract-exit extractor=system-tar exit=$R2 elapsed_ms=$5$\r$\n"
@@ -266,19 +266,19 @@
   ; forever (a killed installer leaves a half-installed app behind).
   StrCpy $R3 "electron"
   DetailPrint "[Installer] Launching bundled extractor"
-  FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+  FileOpen $2 "$APPDATA\NukemAI\install-timing.log" a
   FileSeek $2 0 END
   !insertmacro GetTimestamp $8
   FileWrite $2 "$8 phase=tar-extract-start extractor=electron tar=$INSTDIR\resources\win-resources.tar dest=$INSTDIR\resources$\r$\n"
   FileClose $2
   System::Call 'kernel32::GetTickCount()i .r7'
 
-  nsExec::ExecToLog 'powershell -NoProfile -NonInteractive -Command "$$p = Start-Process -FilePath \"$INSTDIR\${APP_EXECUTABLE_FILENAME}\" -ArgumentList \"`\"$INSTDIR\resources\unpack-cfmind.cjs`\" `\"$INSTDIR\resources\win-resources.tar`\" `\"$INSTDIR\resources`\" `\"$APPDATA\LobsterAI\install-timing.log`\"\" -NoNewWindow -PassThru; if ($$p.WaitForExit(600000)) { $$p.WaitForExit(); if ($$p.ExitCode -eq $$null) { exit 125 }; exit $$p.ExitCode } else { Stop-Process -Id $$p.Id -Force -ErrorAction SilentlyContinue; exit 124 }"'
+  nsExec::ExecToLog 'powershell -NoProfile -NonInteractive -Command "$$p = Start-Process -FilePath \"$INSTDIR\${APP_EXECUTABLE_FILENAME}\" -ArgumentList \"`\"$INSTDIR\resources\unpack-cfmind.cjs`\" `\"$INSTDIR\resources\win-resources.tar`\" `\"$INSTDIR\resources`\" `\"$APPDATA\NukemAI\install-timing.log`\"\" -NoNewWindow -PassThru; if ($$p.WaitForExit(600000)) { $$p.WaitForExit(); if ($$p.ExitCode -eq $$null) { exit 125 }; exit $$p.ExitCode } else { Stop-Process -Id $$p.Id -Force -ErrorAction SilentlyContinue; exit 124 }"'
   Pop $0
   StrCpy $R2 $0
   System::Call 'kernel32::GetTickCount()i .r6'
   IntOp $5 $6 - $7
-  FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+  FileOpen $2 "$APPDATA\NukemAI\install-timing.log" a
   FileSeek $2 0 END
   !insertmacro GetTimestamp $8
   FileWrite $2 "$8 phase=tar-extract-exit extractor=electron exit=$R2 elapsed_ms=$5$\r$\n"
@@ -296,45 +296,45 @@
   ; code alone must never trigger deletion of the only recovery source.
   IfFileExists "$INSTDIR\resources\cfmind\gateway-bundle.mjs" TarExtractSucceeded
   IfFileExists "$INSTDIR\resources\cfmind\openclaw.mjs" TarExtractSucceeded
-  FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+  FileOpen $2 "$APPDATA\NukemAI\install-timing.log" a
   FileSeek $2 0 END
   !insertmacro GetTimestamp $8
   FileWrite $2 "$8 phase=tar-extract-error extractor=$R3 exit=$R2 reason=entry-missing-after-extract$\r$\n"
   FileClose $2
   ; A bogus system-tar success still gets a shot at the bundled extractor.
   StrCmp $R3 "system-tar" TarExtractElectron
-  MessageBox MB_OK|MB_ICONEXCLAMATION "Resource extraction finished but the AI runtime files are still missing. LobsterAI will retry the extraction automatically on first launch. If the app still reports missing runtime files, add the install directory to your antivirus allowlist and reinstall. Details: $APPDATA\LobsterAI\install-timing.log"
+  MessageBox MB_OK|MB_ICONEXCLAMATION "Resource extraction finished but the AI runtime files are still missing. NukemAI will retry the extraction automatically on first launch. If the app still reports missing runtime files, add the install directory to your antivirus allowlist and reinstall. Details: $APPDATA\NukemAI\install-timing.log"
   Goto TarExtractFailed
 
   TarExtractProcessFailed:
-    FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+    FileOpen $2 "$APPDATA\NukemAI\install-timing.log" a
     FileSeek $2 0 END
     !insertmacro GetTimestamp $8
     FileWrite $2 "$8 phase=tar-extract-error extractor=$R3 exit=$R2 elapsed_ms=$5 reason=process-start-failed$\r$\n"
     FileClose $2
-    MessageBox MB_OK|MB_ICONEXCLAMATION "Resource extraction failed: could not start the extractor process (exit=$R2). This is usually caused by antivirus software. LobsterAI will retry the extraction automatically on first launch; if that fails too, add the install directory to your antivirus allowlist and reinstall. Details: $APPDATA\LobsterAI\install-timing.log"
+    MessageBox MB_OK|MB_ICONEXCLAMATION "Resource extraction failed: could not start the extractor process (exit=$R2). This is usually caused by antivirus software. NukemAI will retry the extraction automatically on first launch; if that fails too, add the install directory to your antivirus allowlist and reinstall. Details: $APPDATA\NukemAI\install-timing.log"
     Goto TarExtractFailed
 
   TarExtractTimeout:
-    FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+    FileOpen $2 "$APPDATA\NukemAI\install-timing.log" a
     FileSeek $2 0 END
     !insertmacro GetTimestamp $8
     FileWrite $2 "$8 phase=tar-extract-error extractor=$R3 exit=$R2 elapsed_ms=$5 reason=timeout$\r$\n"
     FileClose $2
-    MessageBox MB_OK|MB_ICONEXCLAMATION "Resource extraction timed out after 10 minutes -- the extractor process appears to be blocked, usually by antivirus software. LobsterAI will retry the extraction automatically on first launch; if that fails too, add the install directory to your antivirus allowlist and reinstall. Details: $APPDATA\LobsterAI\install-timing.log"
+    MessageBox MB_OK|MB_ICONEXCLAMATION "Resource extraction timed out after 10 minutes -- the extractor process appears to be blocked, usually by antivirus software. NukemAI will retry the extraction automatically on first launch; if that fails too, add the install directory to your antivirus allowlist and reinstall. Details: $APPDATA\NukemAI\install-timing.log"
     Goto TarExtractFailed
 
   TarExtractNonZero:
-    FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+    FileOpen $2 "$APPDATA\NukemAI\install-timing.log" a
     FileSeek $2 0 END
     !insertmacro GetTimestamp $8
     FileWrite $2 "$8 phase=tar-extract-error extractor=$R3 exit=$R2 elapsed_ms=$5 reason=nonzero-exit$\r$\n"
     FileClose $2
-    MessageBox MB_OK|MB_ICONEXCLAMATION "Resource extraction failed (exit code $R2). LobsterAI will retry the extraction automatically on first launch; if that fails too, add the install directory to your antivirus allowlist and reinstall. Details: $APPDATA\LobsterAI\install-timing.log"
+    MessageBox MB_OK|MB_ICONEXCLAMATION "Resource extraction failed (exit code $R2). NukemAI will retry the extraction automatically on first launch; if that fails too, add the install directory to your antivirus allowlist and reinstall. Details: $APPDATA\NukemAI\install-timing.log"
     Goto TarExtractFailed
 
   TarExtractSucceeded:
-  FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+  FileOpen $2 "$APPDATA\NukemAI\install-timing.log" a
   FileSeek $2 0 END
   !insertmacro GetTimestamp $8
   FileWrite $2 "$8 phase=tar-extract-complete extractor=$R3 exit=$R2$\r$\n"
@@ -352,7 +352,7 @@
   Goto TarExtractDone
 
   TarExtractFailed:
-  FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+  FileOpen $2 "$APPDATA\NukemAI\install-timing.log" a
   FileSeek $2 0 END
   !insertmacro GetTimestamp $8
   FileWrite $2 "$8 phase=tar-extract-failed-archive-preserved extractor=$R3 exit=$R2$\r$\n"
@@ -363,9 +363,9 @@
   ; The backup was created in customCheckAppRunning before extraction began.
   ; Restore any skills not already present in the new install, then clean up
   ; the backup.
-  IfFileExists "$APPDATA\LobsterAI\skills-backup\*.*" 0 SkipSkillRestore
+  IfFileExists "$APPDATA\NukemAI\skills-backup\*.*" 0 SkipSkillRestore
     DetailPrint "[Installer] Restoring user-created skills"
-    FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+    FileOpen $2 "$APPDATA\NukemAI\install-timing.log" a
     FileSeek $2 0 END
     !insertmacro GetTimestamp $8
     FileWrite $2 "$8 phase=skill-restore-start$\r$\n"
@@ -373,7 +373,7 @@
     System::Call 'kernel32::GetTickCount()i .r7'
 
     nsExec::ExecToStack 'powershell -NoProfile -NonInteractive -Command "\
-      $$backup    = \"$APPDATA\LobsterAI\skills-backup\";\
+      $$backup    = \"$APPDATA\NukemAI\skills-backup\";\
       $$newSkills = \"$INSTDIR\resources\SKILLs\";\
       Get-ChildItem -Path $$backup -Directory | ForEach-Object {\
         $$target = Join-Path $$newSkills $$_.Name;\
@@ -387,7 +387,7 @@
     StrCpy $R2 $0
     System::Call 'kernel32::GetTickCount()i .r6'
     IntOp $5 $6 - $7
-    FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+    FileOpen $2 "$APPDATA\NukemAI\install-timing.log" a
     FileSeek $2 0 END
     !insertmacro GetTimestamp $8
     FileWrite $2 "$8 phase=skill-restore-complete exit=$R2 elapsed_ms=$5$\r$\n"
@@ -400,7 +400,7 @@
   ; The unpack script is deleted in TarExtractSucceeded above; after a failed
   ; extraction it is intentionally kept alongside win-resources.tar.
 
-  FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+  FileOpen $2 "$APPDATA\NukemAI\install-timing.log" a
   FileSeek $2 0 END
   !insertmacro GetTimestamp $8
   FileWrite $2 "$8 phase=install-complete$\r$\n"

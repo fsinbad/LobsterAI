@@ -14,7 +14,6 @@ import {
   stripFileLinksFromText,
   toAbsoluteArtifactPath,
 } from './artifactParser';
-import { parseLocalServiceArtifactsFromMessages } from './localServiceContextParser';
 
 /**
  * Detect artifacts from a session transcript.
@@ -37,11 +36,7 @@ export function collectSessionArtifacts(
   sessionId: string,
   cwd?: string,
 ): Artifact[] {
-  const detected = parseLocalServiceArtifactsFromMessages(
-    messages,
-    sessionId,
-    { workingDirectory: cwd },
-  );
+  const detected: Artifact[] = [];
 
   const absolutize = (artifact: Artifact): Artifact =>
     artifact.filePath

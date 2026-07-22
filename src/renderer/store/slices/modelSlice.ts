@@ -1,5 +1,4 @@
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
-import { ProviderName } from '@shared/providers/constants';
 
 import { defaultConfig, getProviderDisplayName } from '../../config';
 import { resolveOpenClawModelRef } from '../../utils/openclawModelRef';
@@ -23,7 +22,7 @@ export interface Model {
 }
 
 function isServerModelIdentity(model: Pick<Model, 'providerKey' | 'isServerModel'>): boolean {
-  return model.isServerModel === true || model.providerKey === ProviderName.LobsteraiServer;
+  return model.isServerModel === true;
 }
 
 export function getModelIdentityKey(model: Pick<Model, 'id' | 'providerKey' | 'isServerModel'>): string {

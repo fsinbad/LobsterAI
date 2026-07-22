@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>LobsterAI</title>
+    <title>NukemAI</title>
     <style>
       /* Pre-React splash: a static replica of EngineStartupOverlay so the whole
          startup (window shown -> renderer init -> engine starting) is one
@@ -196,7 +196,7 @@
       // 'lobster-theme-appearance' 由 theme-manager.ts 在每次应用主题时写入。
       (function () {
         try {
-          var appearance = localStorage.getItem('lobster-theme-appearance');
+          var appearance = localStorage.getItem('nukemai-theme-appearance');
           if (appearance !== 'dark' && appearance !== 'light') {
             appearance = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
           }
@@ -215,7 +215,7 @@
         <div class="splash-content">
           <div class="splash-logo-wrap">
             <div class="splash-logo-glow"></div>
-            <img class="splash-logo" src="logo.png" alt="LobsterAI" width="72" height="72" draggable="false" />
+            <img class="splash-logo" src="logo.png" alt="NukemAI" width="72" height="72" draggable="false" />
           </div>
           <h1 class="splash-title" id="splash-title">AI 引擎启动中</h1>
           <p class="splash-subtitle" id="splash-subtitle">加载中...</p>
@@ -240,7 +240,7 @@
       // 文案需与 src/renderer/services/i18n.ts 中的 engineStarting* / loading 保持同步。
       (function () {
         try {
-          var lang = localStorage.getItem('lobster-language');
+          var lang = localStorage.getItem('nukemai-language');
           if (lang !== 'zh' && lang !== 'en') {
             lang = navigator.language === 'zh-CN' ? 'zh' : 'en';
           }
@@ -288,7 +288,7 @@
               dotButtons[j].className = j === idx ? 'splash-dot splash-dot-active' : 'splash-dot';
             }
             try {
-              sessionStorage.setItem('lobster-splash-tip-index', String(idx));
+              sessionStorage.setItem('nukemai-splash-tip-index', String(idx));
             } catch (e) {
               /* storage unavailable */
             }

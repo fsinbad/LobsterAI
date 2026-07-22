@@ -1,9 +1,7 @@
-import { store } from '../store';
 import { configService } from './config';
-import { getInstallationId } from './installationId';
 
 export const LogReporterEndpoint = {
-  YoudaoAnalyzer: 'https://rlogs.youdao.com/rlog.php',
+  YoudaoAnalyzer: '',
 } as const;
 
 export const LogReporterProduct = {
@@ -93,17 +91,8 @@ export interface BuildLogUrlOptions {
   timestamp?: number;
 }
 
-type LogKeyfromAttribution = {
-  firstKeyfrom: string;
-  latestKeyfrom: string;
-};
-
 let cachedAppVersion = '';
-let appVersionPromise: Promise<string> | null = null;
 let cachedInstallationId: string | null = null;
-let installationIdPromise: Promise<string | null> | null = null;
-let cachedKeyfromAttribution: LogKeyfromAttribution | null = null;
-let keyfromAttributionPromise: Promise<LogKeyfromAttribution | null> | null = null;
 
 const writeReporterLog = (level: 'debug' | 'warn', message: string, error?: unknown): void => {
   if (level === 'warn') {
@@ -116,72 +105,6 @@ const writeReporterLog = (level: 'debug' | 'warn', message: string, error?: unkn
     console.debug(`[LogReporter] ${message}`);
   }
   window.electron?.log?.fromRenderer?.(level, 'LogReporter', message);
-};
-
-const getWindowAppVersion = async (): Promise<string> => {
-  if (cachedAppVersion) {
-    return cachedAppVersion;
-  }
-  if (typeof window === 'undefined' || !window.electron?.appInfo?.getVersion) {
-    return '';
-  }
-  if (!appVersionPromise) {
-    appVersionPromise = window.electron.appInfo.getVersion()
-      .then(version => {
-        cachedAppVersion = version || '';
-        return cachedAppVersion;
-      })
-      .catch(error => {
-        appVersionPromise = null;
-        writeReporterLog('warn', 'failed to load app version for analytics', error);
-        return '';
-      });
-  }
-  return appVersionPromise;
-};
-
-const getInstallationIdForAnalytics = async (): Promise<string | null> => {
-  if (cachedInstallationId) {
-    return cachedInstallationId;
-  }
-  if (!installationIdPromise) {
-    installationIdPromise = getInstallationId()
-      .then(id => {
-        cachedInstallationId = id;
-        return cachedInstallationId;
-      })
-      .catch(error => {
-        installationIdPromise = null;
-        writeReporterLog('warn', 'failed to load installation uuid for analytics', error);
-        return null;
-      });
-  }
-  return installationIdPromise;
-};
-
-const getWindowKeyfromAttribution = async (): Promise<LogKeyfromAttribution | null> => {
-  if (cachedKeyfromAttribution) {
-    return cachedKeyfromAttribution;
-  }
-  if (typeof window === 'undefined' || !window.electron?.appInfo?.getKeyfromAttribution) {
-    return null;
-  }
-  if (!keyfromAttributionPromise) {
-    keyfromAttributionPromise = window.electron.appInfo.getKeyfromAttribution()
-      .then(attribution => {
-        cachedKeyfromAttribution = {
-          firstKeyfrom: attribution.firstKeyfrom || '',
-          latestKeyfrom: attribution.latestKeyfrom || '',
-        };
-        return cachedKeyfromAttribution;
-      })
-      .catch(error => {
-        keyfromAttributionPromise = null;
-        writeReporterLog('warn', 'failed to load keyfrom attribution for analytics', error);
-        return null;
-      });
-  }
-  return keyfromAttributionPromise;
 };
 
 const getWindowPlatform = (): string => {
@@ -202,11 +125,14 @@ export const buildLogUrl = (
   params: LogEventParams,
   options: BuildLogUrlOptions = {},
 ): string => {
+  if (!LogReporterEndpoint.YoudaoAnalyzer) {
+    return '';
+  }
   const url = new URL(LogReporterEndpoint.YoudaoAnalyzer);
   const config = configService.getConfig();
-  const userId = options.userId ?? store.getState().auth.user?.yid ?? '';
-  const firstKeyfrom = options.firstKeyfrom ?? cachedKeyfromAttribution?.firstKeyfrom;
-  const latestKeyfrom = options.latestKeyfrom ?? cachedKeyfromAttribution?.latestKeyfrom;
+  const userId = options.userId ?? '';
+  const firstKeyfrom = options.firstKeyfrom;
+  const latestKeyfrom = options.latestKeyfrom;
   const installationId = options.installationId ?? cachedInstallationId;
   const logParams: Record<string, LogParamValue> = {
     ...params,
@@ -233,43 +159,6 @@ export const buildLogUrl = (
 };
 
 export const reportYdAnalyzer = async (params: LogEventParams): Promise<boolean> => {
-  if (configService.getConfig().usageAnalyticsEnabled === false) {
-    writeReporterLog('debug', `skipped event ${params.action} because usage analytics is disabled`);
-    return false;
-  }
-
-  if (!params.action.trim()) {
-    writeReporterLog('warn', 'skipped an event without an action');
-    return false;
-  }
-
-  if (!params.action.startsWith(LogReporterActionPrefix.LobsterAI)) {
-    writeReporterLog('warn', 'skipped an event without the LobsterAI action prefix');
-    return false;
-  }
-
-  try {
-    await Promise.all([
-      getWindowAppVersion(),
-      getInstallationIdForAnalytics(),
-      getWindowKeyfromAttribution(),
-    ]);
-    writeReporterLog('debug', `sending event ${params.action}`);
-    const response = await window.electron.api.fetch({
-      url: buildLogUrl(params),
-      method: 'GET',
-      headers: {},
-    });
-
-    if (!response.ok) {
-      writeReporterLog('warn', `event ${params.action} failed with status ${response.status}`);
-      return false;
-    }
-
-    writeReporterLog('debug', `sent event ${params.action} successfully`);
-    return true;
-  } catch (error) {
-    writeReporterLog('warn', `event ${params.action} failed`, error);
-    return false;
-  }
+  writeReporterLog('debug', `skipped event ${params.action} (analytics endpoint removed)`);
+  return false;
 };

@@ -1710,47 +1710,6 @@ interface IElectronAPI {
   networkStatus: {
     send: (status: 'online' | 'offline') => void;
   };
-  auth: {
-    login: (loginUrl?: string) => Promise<{ success: boolean; error?: string }>;
-    exchange: (code: string) => Promise<{
-      success: boolean;
-      user?: import('../store/slices/authSlice').UserProfile;
-      quota?: {
-        planName: string;
-        subscriptionStatus: string;
-        creditsLimit: number;
-        creditsUsed: number;
-        creditsRemaining: number;
-      };
-      error?: string;
-    }>;
-    getUser: () => Promise<{
-      success: boolean;
-      user?: import('../store/slices/authSlice').UserProfile;
-      quota?: {
-        planName: string;
-        subscriptionStatus: string;
-        creditsLimit: number;
-        creditsUsed: number;
-        creditsRemaining: number;
-      };
-    }>;
-    getQuota: () => Promise<{
-      success: boolean;
-      quota?: {
-        planName: string;
-        subscriptionStatus: string;
-        creditsLimit: number;
-        creditsUsed: number;
-        creditsRemaining: number;
-      };
-    }>;
-    logout: () => Promise<{ success: boolean }>;
-    refreshToken: () => Promise<{ success: boolean; accessToken?: string }>;
-    getAccessToken: () => Promise<string | null>;
-    getPendingCallback: () => Promise<string | null>;
-    onCallback: (callback: (data: { code: string }) => void) => () => void;
-  };
   qwen: Record<string, never>;
   feishu: {
     install: {

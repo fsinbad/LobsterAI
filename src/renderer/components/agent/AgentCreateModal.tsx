@@ -2,7 +2,6 @@ import { XMarkIcon } from '@heroicons/react/24/outline';
 import { DefaultAgentAvatarIcon } from '@shared/agent/avatar';
 import type { Platform } from '@shared/platform';
 import { PlatformRegistry } from '@shared/platform';
-import { ProviderName } from '@shared/providers';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 
@@ -59,7 +58,7 @@ const serializeAnalyticsList = (values: string[]): string | undefined => {
 
 const getModelAnalyticsSource = (model: Model | null): 'package' | 'custom' | undefined => {
   if (!model) return undefined;
-  if (model.isServerModel || model.providerKey === ProviderName.LobsteraiServer) {
+  if (model.isServerModel) {
     return 'package';
   }
   return 'custom';
@@ -67,7 +66,7 @@ const getModelAnalyticsSource = (model: Model | null): 'package' | 'custom' | un
 
 const getModelSelectorGroup = (model: Model | null): 'server' | 'user' | undefined => {
   if (!model) return undefined;
-  return model.isServerModel || model.providerKey === ProviderName.LobsteraiServer ? 'server' : 'user';
+  return model.isServerModel ? 'server' : 'user';
 };
 
 interface AgentCreateModalProps {

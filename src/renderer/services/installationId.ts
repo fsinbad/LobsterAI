@@ -1,4 +1,3 @@
-import { store } from '../store';
 import { localStore } from './store';
 
 const INSTALLATION_UUID_KEY = 'installation_uuid';
@@ -58,8 +57,7 @@ export const getUpdateQueryString = async (): Promise<string> => {
       params.append('uuid', installationId);
     }
 
-    const authUser = store.getState().auth.user;
-    const userId = authUser?.yid;
+    const userId: string | undefined = undefined;
     if (userId && typeof userId === 'string') {
       params.append('userId', userId);
     }

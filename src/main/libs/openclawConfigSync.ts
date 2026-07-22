@@ -28,7 +28,6 @@ import type { DingTalkInstanceConfig, EmailMultiInstanceConfig, FeishuInstanceCo
 import { OpenClawSessionKeepAlive } from '../openclawSessionPolicy/constants';
 import { buildOpenClawSessionConfig } from '../openclawSessionPolicy/store';
 import {
-  getAllServerModelMetadata,
   listProviderSourceEntries,
   resolveAllEnabledProviderConfigs,
   resolveAllProviderApiKeys,
@@ -61,7 +60,6 @@ const gwDiagTs = (): string => {
   return `[GW-RESTART-DIAG] ${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}${sign}${p(Math.floor(abs / 60))}:${p(abs % 60)}`;
 };
 import { findBundledExtensionsDir, findThirdPartyExtensionsDir, hasBundledOpenClawExtension, hasRuntimeBundledOpenClawExtension, resolveOpenClawExtensionPluginId } from './openclawLocalExtensions';
-import { getOpenClawTokenProxyPort } from './openclawTokenProxy';
 import { getActiveSystemProxyUrl, isSystemProxyEnabled } from './systemProxy';
 
 export type AskUserCallbackConfig = {
@@ -772,19 +770,6 @@ const resolveModelMaxTokensForOpenClaw = (options: {
 };
 
 const PROVIDER_REGISTRY: Record<string, ProviderDescriptor> = {
-  [ProviderName.LobsteraiServer]: {
-    providerId: OpenClawProviderId.LobsteraiServer,
-    resolveApi: ({ apiType, baseURL }) => mapApiTypeToOpenClawApi(apiType, undefined, baseURL),
-    normalizeBaseUrl: url => {
-      const proxyPort = getOpenClawTokenProxyPort();
-      return proxyPort ? `http://127.0.0.1:${proxyPort}/v1` : stripChatCompletionsSuffix(url);
-    },
-    resolveApiKey: () => {
-      const proxyPort = getOpenClawTokenProxyPort();
-      return proxyPort ? '${LOBSTER_PROXY_TOKEN}' : `\${${providerApiKeyEnvVar('server')}}`;
-    },
-  },
-
   [ProviderName.Moonshot]: {
     providerId: OpenClawProviderId.Moonshot,
     resolveApi: ({ apiType, baseURL }) => mapApiTypeToOpenClawApi(apiType, undefined, baseURL),
@@ -1090,13 +1075,6 @@ export function resolveModelSourceForOpenClawProvider(
 ): OpenClawProviderModelSource | undefined {
   const providerId = openclawProviderId?.trim();
   if (!providerId) return undefined;
-
-  if (providerId === OpenClawProviderId.LobsteraiServer) {
-    return {
-      source: CoworkErrorModelSource.LobsterAIPlan,
-      providerName: ProviderName.LobsteraiServer,
-    };
-  }
 
   for (const entry of listProviderSourceEntries()) {
     const descriptor = resolveDescriptor(
@@ -1691,11 +1669,6 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
         contextWindow: apiResolution.providerMetadata?.contextWindow,
       });
       primaryModel = providerSelection.primaryModel;
-      if (providerSelection.providerId === OpenClawProviderId.LobsteraiServer) {
-        addExplicitContextCacheDefault(perModelCustomDefaults, providerSelection, {
-          modelId,
-        });
-      }
 
       for (const p of resolveAllEnabledProviderConfigs()) {
         for (const m of p.models) {
@@ -1751,57 +1724,6 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
         }
       }
 
-      const proxyPort = getOpenClawTokenProxyPort();
-      if (proxyPort) {
-        const serverModels = getAllServerModelMetadata();
-        const providerId = OpenClawProviderId.LobsteraiServer;
-
-        if (serverModels.length > 0 || !allProvidersMap[providerId]) {
-          const firstServerModelId = serverModels[0]?.modelId || modelId;
-          const firstServerSel = buildProviderSelection({
-            apiKey: 'proxy-managed',
-            baseURL: `http://127.0.0.1:${proxyPort}/v1`,
-            modelId: firstServerModelId,
-            apiType: normalizeServerApiType(serverModels[0]?.apiFormat),
-            providerName: ProviderName.LobsteraiServer,
-            supportsImage: serverModels[0]?.supportsImage,
-            supportsThinking: serverModels[0]?.supportsThinking,
-            modelName: serverModels[0]?.modelName,
-            contextWindow: serverModels[0]?.contextWindow,
-          });
-          const lobsteraiProviderConfig =
-            allProvidersMap[providerId] ?? {
-              ...firstServerSel.providerConfig,
-              models: [] as typeof firstServerSel.providerConfig.models,
-            };
-          allProvidersMap[providerId] = lobsteraiProviderConfig;
-
-          if (serverModels.length === 0) {
-            upsertProviderModel(lobsteraiProviderConfig, firstServerSel.providerConfig.models[0]);
-          } else {
-            for (const sm of serverModels) {
-              const serverApiType = normalizeServerApiType(sm.apiFormat);
-              const serverSel = buildProviderSelection({
-                apiKey: 'proxy-managed',
-                baseURL: `http://127.0.0.1:${proxyPort}/v1`,
-                modelId: sm.modelId,
-                apiType: serverApiType,
-                providerName: ProviderName.LobsteraiServer,
-                supportsImage: sm.supportsImage,
-                supportsThinking: sm.supportsThinking,
-                modelName: sm.modelName || sm.modelId,
-                contextWindow: sm.contextWindow,
-              });
-              addExplicitContextCacheDefault(perModelCustomDefaults, serverSel, {
-                modelId: sm.modelId,
-                provider: sm.provider,
-                explicitContextCache: sm.explicitContextCache,
-              });
-              upsertProviderModel(lobsteraiProviderConfig, serverSel.providerConfig.models[0]);
-            }
-          }
-        }
-      }
     }
 
     const sandboxMode = mapExecutionModeToSandboxMode(
@@ -3198,7 +3120,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
    * invoke LobsterAI skills.
    */
   private syncAgentsMd(workspaceDir: string, coworkConfig: CoworkConfig): string | undefined {
-    const MARKER = '<!-- LobsterAI managed: do not edit below this line -->';
+    const MARKER = '<!-- NukemAI managed: do not edit below this line -->';
 
     try {
       ensureDir(workspaceDir);

@@ -91,7 +91,7 @@ export function initLogger(): void {
 
   // Log startup marker
   log.info('='.repeat(60));
-  log.info(`LobsterAI started (${process.platform} ${process.arch})`);
+  log.info(`NukemAI started (${process.platform} ${process.arch})`);
   log.info('='.repeat(60));
 }
 

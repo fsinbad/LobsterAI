@@ -42,7 +42,6 @@ import { defaultConfig, getProviderDisplayName, ShortcutAction } from './config'
 import { SkinProvider } from './providers/SkinProvider';
 import type { ApiConfig } from './services/api';
 import { apiService } from './services/api';
-import { authService } from './services/auth';
 import { configService } from './services/config';
 import { coworkService } from './services/cowork';
 import { i18nService } from './services/i18n';
@@ -96,7 +95,6 @@ const SETTINGS_TAB_SHORTCUT_ACTIONS: Array<{
   { action: ShortcutAction.OpenSettingsDreaming, initialTab: 'coworkDreaming' },
   { action: ShortcutAction.OpenSettingsPlugins, initialTab: 'plugins' },
   { action: ShortcutAction.OpenSettingsShortcuts, initialTab: 'shortcuts' },
-  { action: ShortcutAction.OpenSettingsAbout, initialTab: 'about' },
 ];
 
 /** Used for config + i18n init; longer on Windows where main-process IPC can stall during cold start. */
@@ -139,7 +137,7 @@ const App: React.FC = () => {
     errorMessage: null,
   });
   const [showUpdateModal, setShowUpdateModal] = useState(false);
-  const [isUpdateCardExpanded, setIsUpdateCardExpanded] = useState(false);
+  const [, setIsUpdateCardExpanded] = useState(false);
   const [isUserInitiatedUpdateFlowActive, setIsUserInitiatedUpdateFlowActive] = useState(false);
   const [privacyAgreed, setPrivacyAgreed] = useState<boolean | null>(null);
   const [showWelcome, setShowWelcome] = useState(false);
@@ -159,7 +157,6 @@ const App: React.FC = () => {
   const currentSessionId = useSelector(selectCurrentSessionId);
   const pendingPermission = useSelector(selectFirstCurrentSessionPendingPermission);
   const pendingPermissions = useSelector(selectPendingPermissions);
-  const authUser = useSelector((state: RootState) => state.auth.user);
   const isWindows = window.electron.platform === 'win32';
   const [minimizedPermissionIds, setMinimizedPermissionIds] = useState<string[]>([]);
   const isPendingPermissionMinimized = pendingPermission
@@ -232,10 +229,6 @@ const App: React.FC = () => {
         await waitWithTimeout(i18nService.initialize(), initTimeoutMs, 'i18nService.initialize');
         mark('i18nService.initialize done');
 
-        mark('authService.init begin');
-        await authService.init();
-        mark('authService.init done');
-
         const config = await configService.getConfig();
         applyTypographyPreferences(config);
         const apiConfig: ApiConfig = {
@@ -287,7 +280,6 @@ const App: React.FC = () => {
           void reportYdAnalyzer({
             action: LogReporterAction.AppStarted,
             providerModelCount: providerModels.length,
-            hasLoggedInUser: !!store.getState().auth.user?.yid,
           });
         }
 
@@ -317,12 +309,6 @@ const App: React.FC = () => {
       unsubscribe();
     };
   }, []);
-
-  useEffect(() => {
-    if (authUser) {
-      void authService.fetchProfileSummary();
-    }
-  }, [authUser]);
 
   // Listen for Copilot token auto-refresh events from the main process
   useEffect(() => {
@@ -582,13 +568,9 @@ const App: React.FC = () => {
     };
   }, [showToast, stopUserInitiatedUpdateFlow]);
 
-  const handleShowLogin = useCallback(() => {
-    showToast(i18nService.t('featureInDevelopment'));
-  }, [showToast]);
-
   const runUpdateCheck = useCallback(async () => {
     try {
-      const result = await window.electron.appUpdate.checkNow({ userId: authUser?.yid });
+      const result = await window.electron.appUpdate.checkNow({});
       setAppUpdateState(result.state);
       if (!result.success) {
         console.error('[App] app update check failed:', result.error);
@@ -596,7 +578,7 @@ const App: React.FC = () => {
     } catch (error) {
       console.error('Failed to check app update:', error);
     }
-  }, [authUser]);
+  }, []);
 
   const updateInfo = appUpdateState.info;
 
@@ -723,7 +705,6 @@ const App: React.FC = () => {
 
   const handleWelcomeLogin = useCallback(async () => {
     setShowWelcome(false);
-    await authService.login();
   }, []);
   const handleWelcomeCustomModel = useCallback(() => {
     setShowWelcome(false);
@@ -1280,7 +1261,6 @@ const App: React.FC = () => {
         aria-busy={isUpdateInteractionBlocked}
       >
         <Sidebar
-          onShowLogin={handleShowLogin}
           onShowSettings={handleShowSettings}
           activeView={mainView}
           onShowSkills={handleShowSkills}
@@ -1293,8 +1273,6 @@ const App: React.FC = () => {
           onToggleCollapse={handleToggleSidebar}
           onWidthChange={setSidebarWidth}
           updateNotice={!isSidebarCollapsed && !isUpdateInteractionBlocked ? updateCard : null}
-          hideAdBanner={isUpdateCardExpanded}
-          hideLogin={enterpriseConfig?.ui?.login === 'hide'}
         />
         <div className={`flex-1 min-w-0 transition-[padding] duration-200 ease-out ${isSidebarCollapsed ? 'pl-1.5' : ''}`}>
           <div

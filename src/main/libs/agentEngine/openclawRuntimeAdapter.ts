@@ -85,7 +85,8 @@ import {
   stripTrailingSilentReplyToken,
 } from '../openclawHistory';
 import { buildOpenClawLocalTimeContextPrompt } from '../openclawLocalTimeContextPrompt';
-import { consumeRecentOpenClawTokenProxyQuotaError } from '../openclawTokenProxy';
+// Token proxy was removed during NukemAI rebrand. Stub the quota error consumer.
+const consumeRecentOpenClawTokenProxyQuotaError = (): unknown => null;
 import {
   findRedundantFinalPrefixMessageId,
   findReusableCommittedAssistantMessageId,

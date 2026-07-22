@@ -31,10 +31,8 @@ import {
   type CoworkSession,
   type OpenClawEngineStatus,
 } from '../../types/cowork';
-import type { MediaAttachmentRef } from '../../types/mediaGeneration';
 import { applyOptimisticGoalCommand } from '../../utils/goalCommand';
 import { toOpenClawModelRef } from '../../utils/openclawModelRef';
-import CreditsResetCampaignFloat from '../CreditsResetCampaignFloat';
 import ComposeIcon from '../icons/ComposeIcon';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import { PromptPanel, QuickActionBar } from '../quick-actions';
@@ -254,7 +252,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({
     prompt: string,
     skillPrompt?: string,
     imageAttachments?: CoworkImageAttachment[],
-    mediaReferences?: MediaAttachmentRef[],
     selectedTextSnippets?: CoworkSelectedTextSnippet[],
     collaborationMode: CoworkCollaborationModeType = CoworkCollaborationMode.Default,
   ): Promise<boolean | void> => {
@@ -414,7 +411,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({
         modelOverride: sessionModelOverride,
         imageAttachments,
         mediaSelection: mediaSelection && mediaSelection.mode !== 'none' ? mediaSelection : undefined,
-        mediaReferences,
         selectedTextSnippets,
       });
 
@@ -484,7 +480,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({
     prompt: string,
     skillPrompt?: string,
     imageAttachments?: CoworkImageAttachment[],
-    mediaReferences?: MediaAttachmentRef[],
     selectedTextSnippets?: CoworkSelectedTextSnippet[],
     collaborationMode: CoworkCollaborationModeType = CoworkCollaborationMode.Default,
   ) => {
@@ -538,7 +533,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({
         resolvedKitCapabilities: displayKitIds.length > 0 ? resolvedKitCapabilities : undefined,
         imageAttachments,
         mediaSelection: mediaSelection && mediaSelection.mode !== 'none' ? mediaSelection : undefined,
-        mediaReferences,
         selectedTextSnippets,
       });
       if (sent && (sessionSkillIds.length > 0 || sessionKitIds.length > 0)) {
@@ -898,7 +892,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
                     />
                   </div>
                 )}
-                <CreditsResetCampaignFloat />
+
               </div>
 
               <div aria-hidden="true" className="w-full min-h-[24px] flex-[3_0_0px]" />

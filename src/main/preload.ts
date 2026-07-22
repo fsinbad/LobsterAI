@@ -6,11 +6,6 @@ import { AppIpcChannel } from '../shared/app/constants';
 import { AppSettingsIpc } from '../shared/appSettings/constants';
 import { AppUpdateIpc } from '../shared/appUpdate/constants';
 import { ArtifactPreviewIpc } from '../shared/artifactPreview/constants';
-import {
-  AsrIpcChannel,
-  type AsrRealtimeSessionRequest,
-} from '../shared/asr/constants';
-import { AuthIpcChannel } from '../shared/auth/constants';
 import { BrowserIpc, type BrowserRuntimeProfile } from '../shared/browserWebAccess/constants';
 import { ClipboardIpc } from '../shared/clipboard/constants';
 import { CoworkIpcChannel } from '../shared/cowork/constants';
@@ -37,15 +32,6 @@ import { McpIpcChannel } from '../shared/mcp/constants';
 import { OpenClawEngineIpc } from '../shared/openclawEngine/constants';
 import { PermissionIpcChannel } from '../shared/permissions/constants';
 import type { Platform } from '../shared/platform';
-import {
-  type ShareDeploymentAnalyzeProjectInput,
-  type ShareDeploymentCreateNodeInput,
-  type ShareDeploymentDetectCandidatesInput,
-  type ShareDeploymentDownloadPersistenceInput,
-  type ShareDeploymentGetByLocalServiceInput,
-  ShareDeploymentIpc,
-  type ShareDeploymentSelectPersistencePathInput,
-} from '../shared/shareDeployment/constants';
 import { type ShellGetBrowserAppsInput, ShellIpc } from '../shared/shell/constants';
 import { SkinIpc } from '../shared/skin/constants';
 import type {
@@ -738,27 +724,6 @@ contextBridge.exposeInMainWorld('electron', {
     disable: (shareId: string) => ipcRenderer.invoke(HtmlShareIpc.Disable, shareId),
     get: (shareId: string) => ipcRenderer.invoke(HtmlShareIpc.Get, shareId),
   },
-  shareDeployment: {
-    detectProjectCandidates: (options: ShareDeploymentDetectCandidatesInput) =>
-      ipcRenderer.invoke(ShareDeploymentIpc.DetectProjectCandidates, options),
-    analyzeProjectDirectory: (options: ShareDeploymentAnalyzeProjectInput) =>
-      ipcRenderer.invoke(ShareDeploymentIpc.AnalyzeProjectDirectory, options),
-    selectPersistencePath: (options: ShareDeploymentSelectPersistencePathInput) =>
-      ipcRenderer.invoke(ShareDeploymentIpc.SelectPersistencePath, options),
-    createNodeDeployment: (options: ShareDeploymentCreateNodeInput) =>
-      ipcRenderer.invoke(ShareDeploymentIpc.CreateNodeDeployment, options),
-    get: (deploymentId: string) => ipcRenderer.invoke(ShareDeploymentIpc.Get, deploymentId),
-    getByLocalService: (options: ShareDeploymentGetByLocalServiceInput) =>
-      ipcRenderer.invoke(ShareDeploymentIpc.GetByLocalService, options),
-    getPersistence: (deploymentId: string) =>
-      ipcRenderer.invoke(ShareDeploymentIpc.GetPersistence, deploymentId),
-    downloadPersistenceArchive: (options: ShareDeploymentDownloadPersistenceInput) =>
-      ipcRenderer.invoke(ShareDeploymentIpc.DownloadPersistenceArchive, options),
-  },
-  asr: {
-    createRealtimeSession: (options: AsrRealtimeSessionRequest) =>
-      ipcRenderer.invoke(AsrIpcChannel.CreateRealtimeSession, options),
-  },
   artifact: {
     watchFile: (filePath: string) => ipcRenderer.invoke('artifact:watchFile', filePath),
     unwatchFile: (filePath: string) => ipcRenderer.invoke('artifact:unwatchFile', filePath),
@@ -1049,33 +1014,6 @@ contextBridge.exposeInMainWorld('electron', {
   },
   networkStatus: {
     send: (status: 'online' | 'offline') => ipcRenderer.send('network:status-change', status),
-  },
-  auth: {
-    login: (loginUrl?: string) => ipcRenderer.invoke('auth:login', { loginUrl }),
-    exchange: (code: string) => ipcRenderer.invoke('auth:exchange', { code }),
-    getUser: () => ipcRenderer.invoke('auth:getUser'),
-    getQuota: () => ipcRenderer.invoke('auth:getQuota'),
-    logout: () => ipcRenderer.invoke('auth:logout'),
-    refreshToken: () => ipcRenderer.invoke('auth:refreshToken'),
-    getAccessToken: () => ipcRenderer.invoke('auth:getAccessToken'),
-    getModels: () => ipcRenderer.invoke('auth:getModels'),
-    getPricingCatalog: () => ipcRenderer.invoke(AuthIpcChannel.GetPricingCatalog),
-    getProfileSummary: () => ipcRenderer.invoke('auth:getProfileSummary'),
-    claimCreditsFinalReward: (campaignCode: string) =>
-      ipcRenderer.invoke('auth:claimCreditsFinalReward', { campaignCode }),
-    getActiveClientBanner: () => ipcRenderer.invoke('auth:getActiveClientBanner'),
-    getActiveClientBanners: () => ipcRenderer.invoke('auth:getActiveClientBanners'),
-    getPendingCallback: () => ipcRenderer.invoke(AuthIpcChannel.GetPendingCallback),
-    onCallback: (callback: (data: { code: string }) => void) => {
-      const handler = (_event: any, data: { code: string }) => callback(data);
-      ipcRenderer.on(AuthIpcChannel.Callback, handler);
-      return () => ipcRenderer.removeListener(AuthIpcChannel.Callback, handler);
-    },
-    onQuotaChanged: (callback: () => void) => {
-      const handler = () => callback();
-      ipcRenderer.on('auth:quotaChanged', handler);
-      return () => ipcRenderer.removeListener('auth:quotaChanged', handler);
-    },
   },
   media: {
     getModels: (type: 'image' | 'video') =>

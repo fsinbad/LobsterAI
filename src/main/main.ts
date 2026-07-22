@@ -37,7 +37,6 @@ import { AppIpcChannel } from '../shared/app/constants';
 import { AppSettingsAutoLaunchErrorCode, AppSettingsIpc } from '../shared/appSettings/constants';
 import { AppUpdateIpc } from '../shared/appUpdate/constants';
 import { ArtifactBrowserPartition, ArtifactPreviewIpc, ArtifactPreviewProtocol } from '../shared/artifactPreview/constants';
-import { AuthIpcChannel } from '../shared/auth/constants';
 import {
   type BrowserDiagnosticResultStep,
   BrowserDiagnosticStatus,
@@ -80,15 +79,6 @@ import {
   DataMigrationRestoreStatus,
 } from '../shared/dataMigration/constants';
 import { DialogIpc } from '../shared/dialog/constants';
-import {
-  HtmlShareAccessMode,
-  type HtmlShareAccessMode as HtmlShareAccessModeValue,
-  type HtmlShareConfigurableStatus,
-  HtmlShareIpc,
-  HtmlShareSourceType,
-  HtmlShareStatus,
-  type HtmlShareStatus as HtmlShareStatusValue,
-} from '../shared/htmlShare/constants';
 import type {
   InstalledKitRecord,
   KitReference,
@@ -113,28 +103,11 @@ import {
 } from '../shared/openclawEngine/constants';
 import { PlatformRegistry } from '../shared/platform';
 import { OpenClawProviderId, ProviderName } from '../shared/providers';
-import {
-  ShareDeploymentCandidateSource,
-  type ShareDeploymentCreateNodeInput,
-  type ShareDeploymentDetectCandidatesInput,
-  type ShareDeploymentDownloadPersistenceInput,
-  type ShareDeploymentGetByLocalServiceInput,
-  ShareDeploymentIpc,
-  ShareDeploymentKind,
-  ShareDeploymentPackageManager,
-  type ShareDeploymentPersistence,
-  ShareDeploymentPersistenceBindingKind,
-  ShareDeploymentPersistenceProvider,
-  ShareDeploymentPersistenceUpdateMode,
-  type ShareDeploymentProjectCandidate,
-  type ShareDeploymentSelectPersistencePathInput,
-} from '../shared/shareDeployment/constants';
 import type { ShellOpenFailureReason as ShellOpenFailureReasonType } from '../shared/shell/constants';
 import { type ShellGetBrowserAppsInput, ShellIpc, ShellOpenFailureReason } from '../shared/shell/constants';
 import { AgentManager } from './agentManager';
 import { APP_NAME, APP_USER_MODEL_ID, DB_FILENAME } from './appConstants';
 import { createLocalFileProtocolResponse } from './artifactLocalFileProtocol';
-import { authQuotaGateStateFromQuota, AuthSubscriptionStatus, createDefaultAuthQuotaGateState, normalizeAuthQuota } from './authQuota';
 import { type AutoLaunchStatus, getAutoLaunchStatus, isAutoLaunched, setAutoLaunchEnabled } from './autoLaunchManager';
 import { getRecentComputerUseLogEntries } from './computerUse/computerUseLogs';
 import { type CoworkForkContextMessage, type CoworkMessage, CoworkStore } from './coworkStore';
@@ -159,7 +132,6 @@ import type {
   WecomInstanceConfig,
 } from './im/types';
 import { registerAgentHandlers } from './ipcHandlers/agents';
-import { registerAsrIpcHandlers } from './ipcHandlers/asr';
 import { registerCoworkSubagentHandlers } from './ipcHandlers/coworkSubagent';
 import { registerKitHandlers } from './ipcHandlers/kits';
 import { registerMcpHandlers } from './ipcHandlers/mcp';
@@ -182,23 +154,12 @@ import {
   type PermissionResult,
 } from './libs/agentEngine';
 import { AppUpdateCoordinator, INSTALLATION_UUID_KEY } from './libs/appUpdateCoordinator';
-import { AuthCallbackRouter } from './libs/authCallbackRouter';
 import {
-  appendCallbackReturnTo,
-  appendLoginParams,
-  startAuthLocalCallback,
-} from './libs/authLocalCallbackServer';
-import {
-  clearServerModelMetadata,
-  getAllServerModelMetadata,
   getCurrentApiConfig,
   resolveAllEnabledProviderConfigs,
   resolveCurrentApiConfig,
   resolveRawApiConfig,
-  setAuthTokensGetter,
-  setServerBaseUrlGetter,
   setStoreGetter,
-  updateServerModelMetadata,
 } from './libs/claudeSettings';
 import {
   clearCopilotTokenState,
@@ -235,10 +196,8 @@ import {
 } from './libs/dataMigration/dataMigrationService';
 import { DesktopNotificationManager } from './libs/desktopNotificationManager';
 import {
-  getHtmlSharePublicBaseUrl,
   getKitStoreUrl,
   getPortalTasksUrl,
-  getServerApiBaseUrl,
   getSkillStoreUrl,
   refreshEndpointsTestMode,
 } from './libs/endpoints';
@@ -254,18 +213,6 @@ import {
   isPreviewServerUrl,
   stopHtmlPreviewServer,
 } from './libs/htmlPreviewServer';
-import {
-  type ArtifactFileShareSourceType,
-  packageArtifactFile,
-} from './libs/htmlShare/artifactFileSharePackager';
-import {
-  getHtmlShareBySource,
-  updateHtmlShare,
-  updateHtmlShareAccessMode,
-  updateHtmlShareStatus,
-  uploadHtmlShare,
-} from './libs/htmlShare/htmlShareClient';
-import { packageHtmlFile } from './libs/htmlShare/htmlSharePackager';
 import { getKeyfromAttribution, initializeKeyfromAttribution } from './libs/keyfromAttribution';
 import { exportLogsZip } from './libs/logExport';
 import { inferImageMimeTypeFromDataUrl, type PersistedGeneratedImageAsset, persistGeneratedImageAssets, type PersistGeneratedImageAssetsResult, persistGeneratedVideoAssets, type RemoteGeneratedMediaAsset } from './libs/mediaAssetPersistence';
@@ -310,31 +257,9 @@ import {
   writeMemoryFileRaw,
 } from './libs/openclawMemoryFile';
 import { collectReferencedEnvVarNames, pickReferencedSecretEnvVars } from './libs/openclawSecretEnv';
-import { startOpenClawTokenProxy, stopOpenClawTokenProxy } from './libs/openclawTokenProxy';
 import { migrateMainAgentWorkspace } from './libs/openclawWorkspaceMigration';
 import { ensurePythonRuntimeReady } from './libs/pythonRuntime';
 import { sanitizeUrlForLog, serializeForLog } from './libs/sanitizeForLog';
-import { packageNodeServiceDeployment } from './libs/shareDeployment/nodeServiceDeploymentPackager';
-import {
-  analyzeNodeServiceProjectDirectory,
-  detectNodeServiceProjectCandidates,
-} from './libs/shareDeployment/nodeServiceProjectAnalyzer';
-import {
-  buildNodeDeploymentClientSourceKey,
-  buildStaticDeploymentClientSourceKey,
-  downloadDeploymentPersistenceArchive,
-  getDeploymentPersistence,
-  getNodeDeployment,
-  getNodeDeploymentByLocalService,
-  uploadNodeDeployment,
-  uploadStaticDeployment,
-} from './libs/shareDeployment/shareDeploymentClient';
-import {
-  reconcileShareDeploymentAccess,
-  type ShareDeploymentAccessSyncFailure,
-  ShareDeploymentAccessSyncOperation,
-  ShareDeploymentOperationCoordinator,
-} from './libs/shareDeployment/shareDeploymentOperationCoordinator';
 import { SqliteBackupTrigger } from './libs/sqliteBackup/constants';
 import { SqliteBackupManager } from './libs/sqliteBackup/sqliteBackupManager';
 import { runStartupCacheWarmup } from './libs/startupCacheWarmup';
@@ -427,11 +352,6 @@ const IPC_MAX_KEYS = 80;
 const IPC_MAX_ITEMS = 40;
 const MAX_INLINE_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 const MAX_ARTIFACT_SHARE_CONTENT_CHARS = 30 * 1024 * 1024;
-const SHARE_DEPLOYMENT_PROJECT_CANDIDATE_MAX_ITEMS = 24;
-const SHARE_DEPLOYMENT_CANDIDATE_SOURCES = new Set<string>(
-  Object.values(ShareDeploymentCandidateSource),
-);
-const shareDeploymentOperationCoordinator = new ShareDeploymentOperationCoordinator();
 const ENGINE_NOT_READY_CODE = 'ENGINE_NOT_READY';
 const LOCAL_WEB_SERVICE_PROBE_TIMEOUT_MS = 700;
 const LOCAL_WEB_SERVICE_TITLE_MAX_LENGTH = 80;
@@ -457,703 +377,20 @@ const MIME_EXTENSION_MAP: Record<string, string> = {
   'application/json': '.json',
   'text/csv': '.csv',
 };
-
-interface HtmlShareCreateFromHtmlFileInput {
-  sessionId: string;
-  artifactId: string;
-  filePath: string;
-  title: string;
-  accessMode?: HtmlShareAccessModeValue;
-}
-
-interface HtmlShareUpdateFromHtmlFileInput extends HtmlShareCreateFromHtmlFileInput {
-  shareId: string;
-  currentStatus?: HtmlShareStatusValue;
-}
-
-interface HtmlShareGetByHtmlFileInput {
-  filePath: string;
-}
-
-interface HtmlShareCreateFromArtifactFileInput {
-  sourceType: ArtifactFileShareSourceType;
-  sessionId: string;
-  artifactId: string;
-  title: string;
-  accessMode?: HtmlShareAccessModeValue;
-  fileName?: string;
-  filePath?: string;
-  content?: string;
-  remoteUrl?: string;
-}
-
-interface HtmlShareUpdateFromArtifactFileInput extends HtmlShareCreateFromArtifactFileInput {
-  shareId: string;
-  currentStatus?: HtmlShareStatusValue;
-}
-
-interface HtmlShareGetByArtifactFileInput {
-  sourceType: ArtifactFileShareSourceType;
-  sessionId?: string;
-  artifactId?: string;
-  filePath?: string;
-}
-
-interface HtmlShareUpdateStatusInput {
-  shareId: string;
-  status: HtmlShareConfigurableStatus;
-}
-
-interface HtmlShareUpdateAccessModeInput {
-  shareId: string;
-  accessMode: HtmlShareAccessModeValue;
-}
-
-interface ShareDeploymentAnalyzeProjectDirectoryInput {
-  projectDirectory: string;
-  localServiceUrl?: string;
-}
-
-function sanitizeHtmlShareString(
-  value: unknown,
-  fieldName: string,
-  maxLength = IPC_STRING_MAX_CHARS,
-): string {
-  if (typeof value !== 'string') {
-    throw new Error(`${fieldName} must be a string.`);
-  }
-  const trimmed = value.trim();
-  if (!trimmed) {
-    throw new Error(`${fieldName} is required.`);
-  }
-  if (trimmed.length > maxLength) {
-    throw new Error(`${fieldName} is too long.`);
-  }
-  return trimmed;
-}
-
-function sanitizeOptionalHtmlShareString(
-  value: unknown,
-  fieldName: string,
-  maxLength = IPC_STRING_MAX_CHARS,
-): string | undefined {
-  if (value === undefined || value === null) return undefined;
-  return sanitizeHtmlShareString(value, fieldName, maxLength);
-}
-
-function sanitizeOptionalShareDeploymentCommand(
-  value: unknown,
-  fieldName: string,
-  maxLength = 512,
-): string {
-  if (value === undefined || value === null) return '';
-  if (typeof value !== 'string') {
-    throw new Error(`${fieldName} must be a string.`);
-  }
-  const trimmed = value.trim();
-  if (trimmed.length > maxLength) {
-    throw new Error(`${fieldName} is too long.`);
-  }
-  return trimmed;
-}
-
-function sanitizeHtmlShareTitle(value: unknown): string {
-  return sanitizeHtmlShareString(value, 'title', 255);
-}
-
-function sanitizeArtifactFileShareSourceType(value: unknown): ArtifactFileShareSourceType {
-  const sourceType = sanitizeHtmlShareString(value, 'sourceType', 32);
-  if (
-    sourceType !== HtmlShareSourceType.ImageFile &&
-    sourceType !== HtmlShareSourceType.SvgFile &&
-    sourceType !== HtmlShareSourceType.DocumentFile &&
-    sourceType !== HtmlShareSourceType.MarkdownFile &&
-    sourceType !== HtmlShareSourceType.MermaidFile
-  ) {
-    throw new Error('sourceType must be image_file, svg_file, document_file, markdown_file, or mermaid_file.');
-  }
-  return sourceType;
-}
-
-function sanitizeHtmlShareAccessMode(
-  value: unknown,
-  defaultValue?: HtmlShareAccessModeValue,
-): HtmlShareAccessModeValue | undefined {
-  if (value === undefined) return defaultValue;
-  const accessMode = sanitizeHtmlShareString(value, 'accessMode', 32);
-  if (accessMode !== HtmlShareAccessMode.Code && accessMode !== HtmlShareAccessMode.Public) {
-    throw new Error('accessMode must be code or public.');
-  }
-  return accessMode;
-}
-
-function sanitizeHtmlShareConfigurableStatus(
-  value: unknown,
-): HtmlShareConfigurableStatus | undefined {
-  if (value === undefined) return undefined;
-  const status = sanitizeHtmlShareString(value, 'status', 32);
-  if (status !== HtmlShareStatus.Live && status !== HtmlShareStatus.Disabled) {
-    throw new Error('status must be live or disabled.');
-  }
-  return status;
-}
-
-function sanitizeHtmlShareStatus(value: unknown): HtmlShareStatusValue | undefined {
-  if (value === undefined) return undefined;
-  const status = sanitizeHtmlShareString(value, 'currentStatus', 32);
-  if (
-    status !== HtmlShareStatus.Live &&
-    status !== HtmlShareStatus.Disabled &&
-    status !== HtmlShareStatus.Failed
-  ) {
-    throw new Error('currentStatus must be live, disabled, or failed.');
-  }
-  return status;
-}
-
-function sanitizeCreateFromHtmlFileInput(input: unknown): HtmlShareCreateFromHtmlFileInput {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    throw new Error('Invalid HTML share request.');
-  }
-  const source = input as Record<string, unknown>;
-  return {
-    sessionId: sanitizeHtmlShareString(source.sessionId, 'sessionId', 128),
-    artifactId: sanitizeHtmlShareString(source.artifactId, 'artifactId', 128),
-    filePath: sanitizeHtmlShareString(source.filePath, 'filePath', 4096),
-    title: sanitizeHtmlShareTitle(source.title),
-    accessMode: sanitizeHtmlShareAccessMode(source.accessMode, HtmlShareAccessMode.Code),
-  };
-}
-
-function sanitizeUpdateFromHtmlFileInput(input: unknown): HtmlShareUpdateFromHtmlFileInput {
-  const source = sanitizeCreateFromHtmlFileInput(input);
-  const record = input as Record<string, unknown>;
-  return {
-    ...source,
-    shareId: sanitizeHtmlShareString(record.shareId, 'shareId', 64),
-    currentStatus: sanitizeHtmlShareStatus(record.currentStatus),
-    accessMode: sanitizeHtmlShareAccessMode(record.accessMode),
-  };
-}
-
-function sanitizeGetByHtmlFileInput(input: unknown): HtmlShareGetByHtmlFileInput {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    throw new Error('Invalid HTML share lookup request.');
-  }
-  const source = input as Record<string, unknown>;
-  return {
-    filePath: sanitizeHtmlShareString(source.filePath, 'filePath', 4096),
-  };
-}
-
-function sanitizeCreateFromArtifactFileInput(input: unknown): HtmlShareCreateFromArtifactFileInput {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    throw new Error('Invalid artifact share request.');
-  }
-  const source = input as Record<string, unknown>;
-  const options: HtmlShareCreateFromArtifactFileInput = {
-    sourceType: sanitizeArtifactFileShareSourceType(source.sourceType),
-    sessionId: sanitizeHtmlShareString(source.sessionId, 'sessionId', 128),
-    artifactId: sanitizeHtmlShareString(source.artifactId, 'artifactId', 128),
-    title: sanitizeHtmlShareTitle(source.title),
-    accessMode: sanitizeHtmlShareAccessMode(source.accessMode, HtmlShareAccessMode.Code),
-    fileName: sanitizeOptionalHtmlShareString(source.fileName, 'fileName', 255),
-    filePath: sanitizeOptionalHtmlShareString(source.filePath, 'filePath', 4096),
-    content: sanitizeOptionalHtmlShareString(
-      source.content,
-      'content',
-      MAX_ARTIFACT_SHARE_CONTENT_CHARS,
-    ),
-    remoteUrl: sanitizeOptionalHtmlShareString(source.remoteUrl, 'remoteUrl', 4096),
-  };
-  if (!options.filePath && !options.content && !options.remoteUrl) {
-    throw new Error('Artifact share source is required.');
-  }
-  return options;
-}
-
-function sanitizeUpdateFromArtifactFileInput(
-  input: unknown,
-): HtmlShareUpdateFromArtifactFileInput {
-  const source = sanitizeCreateFromArtifactFileInput(input);
-  const record = input as Record<string, unknown>;
-  return {
-    ...source,
-    shareId: sanitizeHtmlShareString(record.shareId, 'shareId', 64),
-    currentStatus: sanitizeHtmlShareStatus(record.currentStatus),
-    accessMode: sanitizeHtmlShareAccessMode(record.accessMode),
-  };
-}
-
-function sanitizeGetByArtifactFileInput(input: unknown): HtmlShareGetByArtifactFileInput {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    throw new Error('Invalid artifact share lookup request.');
-  }
-  const source = input as Record<string, unknown>;
-  const options: HtmlShareGetByArtifactFileInput = {
-    sourceType: sanitizeArtifactFileShareSourceType(source.sourceType),
-    sessionId: sanitizeOptionalHtmlShareString(source.sessionId, 'sessionId', 128),
-    artifactId: sanitizeOptionalHtmlShareString(source.artifactId, 'artifactId', 128),
-    filePath: sanitizeOptionalHtmlShareString(source.filePath, 'filePath', 4096),
-  };
-  if (!options.filePath && (!options.sessionId || !options.artifactId)) {
-    throw new Error('Artifact share lookup source is required.');
-  }
-  return options;
-}
-
-function sanitizeUpdateHtmlShareStatusInput(input: unknown): HtmlShareUpdateStatusInput {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    throw new Error('Invalid HTML share status request.');
-  }
-  const source = input as Record<string, unknown>;
-  const status = sanitizeHtmlShareConfigurableStatus(source.status);
-  if (!status) {
-    throw new Error('status is required.');
-  }
-  return {
-    shareId: sanitizeHtmlShareString(source.shareId, 'shareId', 64),
-    status,
-  };
-}
-
-function sanitizeUpdateHtmlShareAccessModeInput(input: unknown): HtmlShareUpdateAccessModeInput {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    throw new Error('Invalid HTML share access mode request.');
-  }
-  const source = input as Record<string, unknown>;
-  const accessMode = sanitizeHtmlShareAccessMode(source.accessMode);
-  if (!accessMode) {
-    throw new Error('accessMode is required.');
-  }
-  return {
-    shareId: sanitizeHtmlShareString(source.shareId, 'shareId', 64),
-    accessMode,
-  };
-}
-
-function sanitizeOptionalShareDeploymentCandidateText(
-  value: unknown,
-  fieldName: string,
-  maxLength = 1024,
-): string | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== 'string') return undefined;
-  const trimmed = value.trim();
-  if (!trimmed) return undefined;
-  if (trimmed.length > maxLength) {
-    throw new Error(`${fieldName} is too long.`);
-  }
-  return trimmed;
-}
-
-function sanitizeShareDeploymentCandidateSource(
-  value: unknown,
-): ShareDeploymentProjectCandidate['source'] | null {
-  if (typeof value !== 'string') return null;
-  return SHARE_DEPLOYMENT_CANDIDATE_SOURCES.has(value)
-    ? value as ShareDeploymentProjectCandidate['source']
-    : null;
-}
-
-function sanitizeShareDeploymentCandidateConfidence(value: unknown): number {
-  const confidence = typeof value === 'number' ? value : Number(value);
-  if (!Number.isFinite(confidence)) return 0;
-  return Math.max(0, Math.min(100, Math.round(confidence)));
-}
-
-function sanitizeOptionalShareDeploymentCandidateInteger(
-  value: unknown,
-): number | undefined {
-  if (value === undefined || value === null) return undefined;
-  const numberValue = typeof value === 'number' ? value : Number(value);
-  return Number.isInteger(numberValue) && numberValue >= 0 ? numberValue : undefined;
-}
-
-function sanitizeShareDeploymentProjectCandidate(
-  value: unknown,
-  index: number,
-): ShareDeploymentProjectCandidate | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const source = value as Record<string, unknown>;
-  const directory = sanitizeOptionalShareDeploymentCandidateText(
-    source.directory,
-    `projectCandidates[${index}].directory`,
-    4096,
-  );
-  if (!directory) return null;
-  const candidateSource = sanitizeShareDeploymentCandidateSource(source.source);
-  if (!candidateSource) return null;
-  const reason = sanitizeOptionalShareDeploymentCandidateText(
-    source.reason,
-    `projectCandidates[${index}].reason`,
-  );
-  const evidence = sanitizeOptionalShareDeploymentCandidateText(
-    source.evidence,
-    `projectCandidates[${index}].evidence`,
-    2048,
-  );
-  const messageId = sanitizeOptionalShareDeploymentCandidateText(
-    source.messageId,
-    `projectCandidates[${index}].messageId`,
-    128,
-  );
-  const artifactId = sanitizeOptionalShareDeploymentCandidateText(
-    source.artifactId,
-    `projectCandidates[${index}].artifactId`,
-    128,
-  );
-  const pid = sanitizeOptionalShareDeploymentCandidateInteger(source.pid);
-  const detectedAt = sanitizeOptionalShareDeploymentCandidateInteger(source.detectedAt);
-  return {
-    directory,
-    source: candidateSource,
-    confidence: sanitizeShareDeploymentCandidateConfidence(source.confidence),
-    ...(reason ? { reason } : {}),
-    ...(evidence ? { evidence } : {}),
-    ...(messageId ? { messageId } : {}),
-    ...(artifactId ? { artifactId } : {}),
-    ...(pid !== undefined ? { pid } : {}),
-    ...(detectedAt !== undefined ? { detectedAt } : {}),
-  };
-}
-
-function sanitizeShareDeploymentProjectCandidates(value: unknown): ShareDeploymentProjectCandidate[] {
-  if (value === undefined || value === null) return [];
-  if (!Array.isArray(value)) {
-    throw new Error('projectCandidates must be an array.');
-  }
-  return value
-    .slice(0, SHARE_DEPLOYMENT_PROJECT_CANDIDATE_MAX_ITEMS)
-    .map((candidate, index) => sanitizeShareDeploymentProjectCandidate(candidate, index))
-    .filter((candidate): candidate is ShareDeploymentProjectCandidate => Boolean(candidate));
-}
-
-function sanitizeShareDeploymentDetectProjectCandidatesInput(
-  input: unknown,
-): ShareDeploymentDetectCandidatesInput {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    throw new Error('Invalid deployment project detection request.');
-  }
-  const source = input as Record<string, unknown>;
-  return {
-    localServiceUrl: sanitizeHtmlShareString(source.localServiceUrl, 'localServiceUrl', 2048),
-    workingDirectory: sanitizeOptionalHtmlShareString(source.workingDirectory, 'workingDirectory', 4096),
-    projectCandidates: sanitizeShareDeploymentProjectCandidates(source.projectCandidates),
-    cachedProjectDirectory: sanitizeOptionalHtmlShareString(
-      source.cachedProjectDirectory,
-      'cachedProjectDirectory',
-      4096,
-    ),
-  };
-}
-
-function sanitizeShareDeploymentAnalyzeProjectDirectoryInput(
-  input: unknown,
-): ShareDeploymentAnalyzeProjectDirectoryInput {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    throw new Error('Invalid deployment project analysis request.');
-  }
-  const source = input as Record<string, unknown>;
-  return {
-    projectDirectory: sanitizeHtmlShareString(source.projectDirectory, 'projectDirectory', 4096),
-    localServiceUrl: sanitizeOptionalHtmlShareString(source.localServiceUrl, 'localServiceUrl', 2048),
-  };
-}
-
-function sanitizeShareDeploymentPersistenceBinding(value: unknown): ShareDeploymentPersistence['bindings'][number] | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const source = value as Record<string, unknown>;
-  const appPath = sanitizeOptionalHtmlShareString(source.appPath, 'appPath', 256);
-  const dataPath = sanitizeOptionalHtmlShareString(source.dataPath, 'dataPath', 256);
-  if (!appPath || !dataPath) return null;
-  const kind = source.kind === ShareDeploymentPersistenceBindingKind.Directory
-    ? ShareDeploymentPersistenceBindingKind.Directory
-    : ShareDeploymentPersistenceBindingKind.File;
-  const sizeBytes = typeof source.sizeBytes === 'number'
-    ? Math.max(0, Math.round(source.sizeBytes))
-    : undefined;
-  return {
-    appPath,
-    dataPath,
-    kind,
-    ...(sizeBytes !== undefined ? { sizeBytes } : {}),
-  };
-}
-
-function sanitizeShareDeploymentPersistence(value: unknown): ShareDeploymentPersistence | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Invalid service data settings.');
-  }
-  const source = value as Record<string, unknown>;
-  const bindings = Array.isArray(source.bindings)
-    ? source.bindings
-        .slice(0, 8)
-        .map(sanitizeShareDeploymentPersistenceBinding)
-        .filter((binding): binding is ShareDeploymentPersistence['bindings'][number] => Boolean(binding))
-    : [];
-  return {
-    enabled: Boolean(source.enabled) && bindings.length > 0,
-    provider: ShareDeploymentPersistenceProvider.Filesystem,
-    mountPath: sanitizeOptionalHtmlShareString(source.mountPath, 'mountPath', 256),
-    quotaBytes: typeof source.quotaBytes === 'number' && source.quotaBytes > 0
-      ? Math.round(source.quotaBytes)
-      : undefined,
-    bindings,
-  };
-}
-
-function sanitizeShareDeploymentPort(value: unknown): number {
-  const port = typeof value === 'number' ? value : Number(value);
-  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
-    throw new Error('port must be a valid TCP port.');
-  }
-  return port;
-}
-
-function sanitizeShareDeploymentPersistenceUpdateMode(
-  value: unknown,
-): ShareDeploymentPersistenceUpdateMode {
-  if (value === undefined || value === ShareDeploymentPersistenceUpdateMode.Preserve) {
-    return ShareDeploymentPersistenceUpdateMode.Preserve;
-  }
-  if (value === ShareDeploymentPersistenceUpdateMode.Replace) {
-    return ShareDeploymentPersistenceUpdateMode.Replace;
-  }
-  throw new Error('persistenceUpdateMode must be preserve or replace.');
-}
-
-function formatShareDeploymentAccessSyncError(
-  failures: ShareDeploymentAccessSyncFailure[],
-): string | undefined {
-  if (failures.length === 0) return undefined;
-  const message = failures
-    .map(failure => failure.error || (
-      failure.operation === ShareDeploymentAccessSyncOperation.AccessMode
-        ? t('htmlShareAccessModeUpdateFailed')
-        : t('htmlShareStatusUpdateFailed')
-    ))
-    .join('; ');
-  return t('nodeDeploymentAccessStatusApplyFailed', { message });
-}
-
-function sanitizeShareDeploymentCreateNodeInput(input: unknown): ShareDeploymentCreateNodeInput {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    throw new Error('Invalid node deployment request.');
-  }
-  const source = input as Record<string, unknown>;
-  return {
-    sessionId: sanitizeHtmlShareString(source.sessionId, 'sessionId', 128),
-    artifactId: sanitizeHtmlShareString(source.artifactId, 'artifactId', 128),
-    title: sanitizeHtmlShareTitle(source.title),
-    localServiceUrl: sanitizeHtmlShareString(source.localServiceUrl, 'localServiceUrl', 2048),
-    projectDirectory: sanitizeHtmlShareString(source.projectDirectory, 'projectDirectory', 4096),
-    accessMode: sanitizeHtmlShareAccessMode(source.accessMode, HtmlShareAccessMode.Code),
-    previousAccessMode: sanitizeHtmlShareAccessMode(source.previousAccessMode),
-    nodeVersion: sanitizeHtmlShareString(source.nodeVersion, 'nodeVersion', 32),
-    installCommand: sanitizeOptionalShareDeploymentCommand(source.installCommand, 'installCommand'),
-    buildCommand: sanitizeOptionalShareDeploymentCommand(source.buildCommand, 'buildCommand'),
-    startCommand: sanitizeOptionalShareDeploymentCommand(source.startCommand, 'startCommand'),
-    port: sanitizeShareDeploymentPort(source.port),
-    persistence: sanitizeShareDeploymentPersistence(source.persistence),
-    persistenceUpdateMode: sanitizeShareDeploymentPersistenceUpdateMode(
-      source.persistenceUpdateMode,
-    ),
-    targetShareStatus:
-      sanitizeHtmlShareConfigurableStatus(source.targetShareStatus) ?? HtmlShareStatus.Live,
-  };
-}
-
-function sanitizeShareDeploymentGetByLocalServiceInput(
-  input: unknown,
-): ShareDeploymentGetByLocalServiceInput {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    throw new Error('Invalid deployment lookup request.');
-  }
-  const source = input as Record<string, unknown>;
-  return {
-    sessionId: sanitizeHtmlShareString(source.sessionId, 'sessionId', 128),
-    localServiceUrl: sanitizeHtmlShareString(source.localServiceUrl, 'localServiceUrl', 2048),
-    projectDirectory: sanitizeOptionalHtmlShareString(source.projectDirectory, 'projectDirectory', 4096),
-  };
-}
-
-function sanitizeShareDeploymentSelectPersistencePathInput(
-  input: unknown,
-): ShareDeploymentSelectPersistencePathInput {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    throw new Error('Invalid service data path selection request.');
-  }
-  const source = input as Record<string, unknown>;
-  if (
-    source.kind !== ShareDeploymentPersistenceBindingKind.Directory &&
-    source.kind !== ShareDeploymentPersistenceBindingKind.File
-  ) {
-    throw new Error('Invalid service data path kind.');
-  }
-  return {
-    projectDirectory: sanitizeHtmlShareString(source.projectDirectory, 'projectDirectory', 4096),
-    kind: source.kind,
-  };
-}
-
-function sanitizeShareDeploymentPersistenceDeploymentIdInput(value: unknown): string {
-  return sanitizeHtmlShareString(value, 'deploymentId', 128);
-}
-
-function sanitizeShareDeploymentDownloadPersistenceInput(
-  input: unknown,
-): ShareDeploymentDownloadPersistenceInput {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    throw new Error('Invalid service data download request.');
-  }
-  const source = input as Record<string, unknown>;
-  return {
-    deploymentId: sanitizeShareDeploymentPersistenceDeploymentIdInput(source.deploymentId),
-    projectDirectory: sanitizeOptionalHtmlShareString(source.projectDirectory, 'projectDirectory', 4096),
-    shareId: sanitizeOptionalHtmlShareString(source.shareId, 'shareId', 128),
-  };
-}
-
-const SHARE_DEPLOYMENT_PERSISTENCE_EXCLUDED_SEGMENTS = new Set([
-  '.git',
-  'node_modules',
-  'dist',
-  'build',
-  '.next',
-  '.output',
-]);
-
-function isSensitiveShareDeploymentPersistenceFileName(fileName: string): boolean {
-  const normalized = fileName.trim().toLowerCase();
-  return normalized === '.env' ||
-    normalized.startsWith('.env.') ||
-    /(?:^|[-_.])(secret|credential|credentials|token|private[-_.]?key)(?:[-_.]|$)/i.test(fileName);
-}
-
-async function estimateShareDeploymentPersistencePathBytes(filePath: string): Promise<number | undefined> {
-  const maxVisited = 2000;
-  let visited = 0;
-  let total = 0;
-  async function visit(currentPath: string): Promise<void> {
-    if (visited >= maxVisited) return;
-    visited += 1;
-    const stats = await fs.promises.lstat(currentPath);
-    if (stats.isSymbolicLink()) return;
-    if (stats.isFile()) {
-      total += stats.size;
-      return;
-    }
-    if (!stats.isDirectory()) return;
-    const entries = await fs.promises.readdir(currentPath);
-    await Promise.all(entries.map(entry => visit(path.join(currentPath, entry))));
-  }
-  try {
-    await visit(filePath);
-    return total;
-  } catch {
-    return undefined;
-  }
-}
-
-async function buildShareDeploymentPersistenceBindingFromPath(
-  projectDirectory: string,
-  selectedPath: string,
-): Promise<ShareDeploymentPersistence['bindings'][number]> {
-  const projectRoot = await fs.promises.realpath(projectDirectory);
-  const targetPath = await fs.promises.realpath(selectedPath);
-  const relativePath = path.relative(projectRoot, targetPath).replace(/\\/g, '/');
-  if (
-    !relativePath ||
-    relativePath === '.' ||
-    relativePath.startsWith('../') ||
-    path.isAbsolute(relativePath)
-  ) {
-    throw new Error('Selected service data must be inside the project directory.');
-  }
-  const segments = relativePath.split('/').filter(Boolean);
-  if (
-    segments.length === 0 ||
-    segments.some(segment => SHARE_DEPLOYMENT_PERSISTENCE_EXCLUDED_SEGMENTS.has(segment)) ||
-    segments.some(segment => segment === '..' || segment.startsWith('.env'))
-  ) {
-    throw new Error('Selected service data path is not supported.');
-  }
-  const stats = await fs.promises.lstat(targetPath);
-  if (stats.isSymbolicLink()) {
-    throw new Error('Symbolic links cannot be used as service data.');
-  }
-  const kind = stats.isDirectory()
-    ? ShareDeploymentPersistenceBindingKind.Directory
-    : stats.isFile()
-      ? ShareDeploymentPersistenceBindingKind.File
-      : null;
-  if (!kind) {
-    throw new Error('Selected service data must be a file or directory.');
-  }
-  if (
-    kind === ShareDeploymentPersistenceBindingKind.File &&
-    isSensitiveShareDeploymentPersistenceFileName(path.basename(targetPath))
-  ) {
-    throw new Error('Selected service data path is not supported.');
-  }
-  const sizeBytes = await estimateShareDeploymentPersistencePathBytes(targetPath);
-  return {
-    appPath: relativePath,
-    dataPath: relativePath,
-    kind,
-    ...(sizeBytes !== undefined ? { sizeBytes } : {}),
-  };
-}
-
 function sanitizeShellGetBrowserAppsInput(input: unknown): ShellGetBrowserAppsInput {
   if (input === undefined || input === null) return {};
   if (typeof input !== 'object' || Array.isArray(input)) {
     throw new Error('Invalid browser app lookup request.');
   }
   const source = input as Record<string, unknown>;
+  const dir = typeof source.projectDirectory === 'string' ? source.projectDirectory.trim() : '';
   return {
-    projectDirectory: sanitizeOptionalHtmlShareString(source.projectDirectory, 'projectDirectory', 4096),
+    projectDirectory: dir || undefined,
   };
 }
 
-function normalizeHtmlShareSourceFilePath(filePath: string): string {
-  let normalized = filePath.trim();
-  if (/^file:\/\//i.test(normalized)) {
-    normalized = safeDecodeURIComponent(normalized.replace(/^file:\/\//i, ''));
-  }
-  if (/^\/[A-Za-z]:/.test(normalized)) {
-    normalized = normalized.slice(1);
-  }
-  normalized = path.resolve(normalized).replace(/\\/g, '/');
-  return normalized.toLowerCase();
-}
 
-function buildHtmlShareClientSourceKey(filePath: string): string {
-  const normalizedPath = normalizeHtmlShareSourceFilePath(filePath);
-  return crypto
-    .createHash('sha256')
-    .update(`${HtmlShareSourceType.HtmlFile}:${normalizedPath}`)
-    .digest('hex');
-}
 
-function buildArtifactShareClientSourceKey(options: HtmlShareGetByArtifactFileInput): string {
-  if (options.filePath) {
-    const normalizedPath = normalizeHtmlShareSourceFilePath(options.filePath);
-    return crypto
-      .createHash('sha256')
-      .update(`${options.sourceType}:file:${normalizedPath}`)
-      .digest('hex');
-  }
-  if (!options.sessionId || !options.artifactId) {
-    throw new Error('Artifact share source key is missing.');
-  }
-  return crypto
-    .createHash('sha256')
-    .update(`${options.sourceType}:artifact:${options.sessionId}:${options.artifactId}`)
-    .digest('hex');
-}
 
 const cleanHtmlTitle = (value: string): string =>
   value.replace(/\s+/g, ' ').trim().slice(0, LOCAL_WEB_SERVICE_TITLE_MAX_LENGTH);
@@ -1321,32 +558,6 @@ const buildAvailableOpenClawProviders = (): Record<string, { models: Array<{ id:
   }
 
   return providerMap;
-};
-
-const openClawConfigHasServerModels = (modelIds: string[]): boolean => {
-  const normalizedModelIds = modelIds.map(modelId => modelId.trim()).filter(Boolean);
-  if (normalizedModelIds.length === 0) return true;
-
-  try {
-    const configPath = getOpenClawEngineManager().getConfigPath();
-    const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
-      models?: {
-        providers?: Record<string, { models?: Array<{ id?: string }> }>;
-      };
-    };
-    const serverProviderModels = parsed.models?.providers?.[OpenClawProviderId.LobsteraiServer]?.models;
-    if (!Array.isArray(serverProviderModels)) return false;
-
-    const configuredModelIds = new Set(
-      serverProviderModels
-        .map(model => (typeof model.id === 'string' ? model.id.trim() : ''))
-        .filter(Boolean),
-    );
-    return normalizedModelIds.every(modelId => configuredModelIds.has(modelId));
-  } catch (error) {
-    console.debug('[Auth:getModels] OpenClaw config inspection failed; scheduling model sync.', error);
-    return false;
-  }
 };
 
 const normalizeOpenClawModelRef = (modelRef: string): string => {
@@ -1763,15 +974,11 @@ let sqliteBackupManager: SqliteBackupManager | null = null;
 let openClawEngineManager: OpenClawEngineManager | null = null;
 let openClawConfigSync: OpenClawConfigSync | null = null;
 let openClawBootstrapPromise: Promise<OpenClawEngineStatus> | null = null;
-let cachedSubscriptionStatus: string = AuthSubscriptionStatus.Free;
-let cachedMediaGenerationEntitled = false;
 let openClawStatusForwarderBound = false;
 let coworkRuntimeForwarderBound = false;
 let memoryMigrationDone = false;
 let preventSleepBlockerId: number | null = null;
 let appUpdateCoordinator: AppUpdateCoordinator | null = null;
-
-const AUTH_USER_STORE_KEY = 'auth_user';
 
 function setPreventSleepBlockerEnabled(enabled: boolean): void {
   if (enabled) {
@@ -2029,34 +1236,12 @@ const resolveSessionWorkingDirectory = (options: { cwd?: string; agentId?: strin
   return resolveAgentDefaultWorkingDirectory(options.agentId);
 };
 
-const isLobsteraiServerModelRef = (modelRef: string): boolean => {
-  const normalized = modelRef.trim();
-  if (!normalized) return false;
-
-  const parsed = parsePrimaryModelRef(normalized);
-  if (parsed) {
-    return parsed.providerId === ProviderName.LobsteraiServer;
-  }
-
-  return getAllServerModelMetadata().some(model => model.modelId === normalized);
+const isLobsteraiServerModelRef = (_modelRef: string): boolean => {
+  return false;
 };
 
-const shouldRefreshServerQuotaForSession = (sessionId: string): boolean => {
-  const session = getCoworkStore().getSession(sessionId);
-  const sessionModelRef = session?.modelOverride?.trim();
-  if (sessionModelRef) {
-    return isLobsteraiServerModelRef(sessionModelRef);
-  }
-
-  const agentModelRef = session?.agentId
-    ? getAgentManager().getAgent(session.agentId)?.model?.trim()
-    : '';
-  if (agentModelRef) {
-    return isLobsteraiServerModelRef(agentModelRef);
-  }
-
-  const apiConfig = resolveCurrentApiConfig();
-  return apiConfig.providerMetadata?.providerName === ProviderName.LobsteraiServer;
+const shouldRefreshServerQuotaForSession = (_sessionId: string): boolean => {
+  return false;
 };
 
 const resolveCoworkAgentEngine = (): CoworkAgentEngine => {
@@ -2173,7 +1358,7 @@ const getOpenClawConfigSync = (): OpenClawConfigSync => {
           .listUserPlugins()
           .filter(p => !isHiddenUserPluginId(p.pluginId))
           .map(p => ({ pluginId: p.pluginId, enabled: p.enabled, config: p.config })),
-      canUseMediaGeneration: () => cachedMediaGenerationEntitled,
+      canUseMediaGeneration: () => false,
     });
   }
   return openClawConfigSync;
@@ -2798,7 +1983,6 @@ const bindCoworkRuntimeForwarder = (): void => {
         const windows = BrowserWindow.getAllWindows();
         windows.forEach(win => {
           if (win.isDestroyed()) return;
-          win.webContents.send('auth:quotaChanged');
         });
       }
     } catch {
@@ -3770,34 +2954,6 @@ const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
   app.quit();
 } else {
-  // Register custom protocol for OAuth callback
-  if (!app.isPackaged) {
-    // In dev mode, setAsDefaultProtocolClient needs the electron exe path
-    // and the app entry point as extra args so the OS can relaunch correctly
-    app.setAsDefaultProtocolClient('lobsterai', process.execPath, [
-      path.resolve(process.argv[1]),
-    ]);
-  } else {
-    app.setAsDefaultProtocolClient('lobsterai');
-  }
-
-  const authCallbackRouter = new AuthCallbackRouter({
-    getTarget: () => {
-      if (!mainWindow || mainWindow.isDestroyed()) return null;
-      return mainWindow.webContents;
-    },
-    onParseError: error => {
-      console.error('[Main] Failed to parse deep link:', error);
-    },
-  });
-
-  /**
-   * Parse a lobsterai:// deep link and send (or buffer) the auth code.
-   */
-  const handleDeepLink = (url: string) => {
-    authCallbackRouter.handleDeepLink(url);
-  };
-
   const focusMainWindow = (reason: string) => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     try {
@@ -3830,27 +2986,11 @@ if (!gotTheLock) {
     fn(`[Renderer][${tag}] ${message}`);
   });
 
-  // Allow renderer to retrieve a buffered auth code on init
-  ipcMain.handle(AuthIpcChannel.GetPendingCallback, () =>
-    authCallbackRouter.markListenerReadyAndConsumePending());
-
-  // macOS: handle open-url event for deep links
-  app.on('open-url', (event, url) => {
-    event.preventDefault();
-    handleDeepLink(url);
-  });
-
   app.on('second-instance', (_event, commandLine, workingDirectory) => {
     console.debug('[Main] second-instance event', { commandLine, workingDirectory });
     if (isDataMigrationRestoreInProgress) {
       console.log('[DataMigration] ignored second-instance activation while restore is in progress.');
       return;
-    }
-
-    // Check for deep link in command line args (Windows/Linux)
-    const deepLink = commandLine.find(arg => arg.startsWith('lobsterai://'));
-    if (deepLink) {
-      handleDeepLink(deepLink);
     }
 
     focusMainWindow('second instance activation');
@@ -4156,52 +3296,6 @@ if (!gotTheLock) {
     }
   });
 
-  // ── Auth IPC handlers ──
-
-  /**
-   * Helper: Persist auth tokens into the kv store.
-   */
-  const saveAuthTokens = (accessToken: string, refreshToken: string) => {
-    getStore().set('auth_tokens', { accessToken, refreshToken });
-  };
-
-  const getAuthTokens = (): { accessToken: string; refreshToken: string } | null => {
-    return getStore().get<{ accessToken: string; refreshToken: string }>('auth_tokens') || null;
-  };
-
-  const clearAuthTokens = () => {
-    getStore().delete('auth_tokens');
-  };
-
-  const saveAuthUser = (user: Record<string, unknown>) => {
-    try {
-      getStore().set(AUTH_USER_STORE_KEY, user);
-    } catch (error) {
-      console.warn('[Auth] failed to save auth user for attribution:', error);
-    }
-  };
-
-  const getAuthUserId = (): string | null => {
-    try {
-      const user = getStore().get<Record<string, unknown>>(AUTH_USER_STORE_KEY);
-      const yid = user?.yid;
-      if (typeof yid === 'string' && yid.trim()) return yid;
-      const userId = user?.userId;
-      if (typeof userId === 'string' && userId.trim()) return userId;
-    } catch (error) {
-      console.warn('[Auth] failed to read auth user for attribution:', error);
-    }
-    return null;
-  };
-
-  const clearAuthUser = () => {
-    try {
-      getStore().delete(AUTH_USER_STORE_KEY);
-    } catch (error) {
-      console.warn('[Auth] failed to clear auth user for attribution:', error);
-    }
-  };
-
   const getOrCreateInstallationId = (): string | null => {
     try {
       const existing = getStore().get<string>(INSTALLATION_UUID_KEY);
@@ -4221,17 +3315,14 @@ if (!gotTheLock) {
     firstKeyfrom: string;
     latestKeyfrom: string;
     uuid?: string;
-    userId?: string;
     version: string;
   } => {
     const { firstKeyfrom, latestKeyfrom } = getKeyfromAttribution(getStore());
     const uuid = getOrCreateInstallationId();
-    const userId = getAuthUserId();
     return {
       firstKeyfrom,
       latestKeyfrom,
       ...(uuid ? { uuid } : {}),
-      ...(userId ? { userId } : {}),
       version: app.getVersion(),
     };
   };
@@ -4252,671 +3343,27 @@ if (!gotTheLock) {
     return parsed.toString();
   };
 
-  // refreshOnce() is the single entry-point for all token refresh paths
-  // (proactive, proxy 401/403 retry, and main-process authenticated API 401s).
-  // It deduplicates concurrent calls via pendingTokenRefresh so that rolling
-  // refresh tokens are never consumed twice.
-  const refreshOnce = async (reason: string): Promise<string | null> => {
-    if (pendingTokenRefresh) {
-      return pendingTokenRefresh;
-    }
-    let resolvedToken: string | null = null;
-    pendingTokenRefresh = (async () => {
-      try {
-        const tokens = getAuthTokens();
-        if (!tokens?.refreshToken) return null;
-        const serverBaseUrl = getServerApiBaseUrl();
-        const refreshUrl = `${serverBaseUrl}/api/auth/refresh`;
-        console.log(`[Auth] requesting token refresh (reason: ${reason}) at ${refreshUrl}`);
-        const resp = await net.fetch(refreshUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(withKeyfromBody({ refreshToken: tokens.refreshToken })),
-        });
-        if (resp.ok) {
-          const body = await resp.json() as { code: number; data: { accessToken: string; refreshToken?: string } };
-          if (body.code === 0 && body.data) {
-            saveAuthTokens(body.data.accessToken, body.data.refreshToken || tokens.refreshToken);
-            console.log(`[Auth] token refresh succeeded (reason: ${reason})`);
-            resolvedToken = body.data.accessToken;
-            // Token proxy handles fresh tokens dynamically — no need
-            // to restart the gateway on token refresh.
-            syncOpenClawConfig({ reason: `token-refresh:${reason}`, restartGatewayIfRunning: false }).catch((err) => {
-              console.warn('[Auth] post-refresh OpenClaw config sync failed:', err);
-            });
-          }
-        }
-      } catch (err) {
-        console.warn(`[Auth] token refresh failed (reason: ${reason}):`, err);
-      } finally {
-        pendingTokenRefresh = null;
-      }
-      return resolvedToken;
-    })();
-    return pendingTokenRefresh;
-  };
-
-  /**
-   * Helper: Fetch with Bearer token, auto-refresh on 401 and retry once.
-   */
-  const fetchWithAuth = async (url: string, options?: RequestInit): Promise<Response> => {
-    const tokens = getAuthTokens();
-    if (!tokens) throw new Error('No auth tokens');
-
-    const doFetch = (accessToken: string) =>
-      net.fetch(url, {
-        ...options,
-        headers: {
-          ...(options?.headers as Record<string, string>),
-          Authorization: `Bearer ${accessToken}`,
-        },
-      });
-
-    let resp = await doFetch(tokens.accessToken);
-
-    if (resp.status === 401 && tokens.refreshToken) {
-      const refreshedAccessToken = await refreshOnce('passive');
-      if (refreshedAccessToken) {
-        resp = await doFetch(refreshedAccessToken);
-      }
-    }
-
-    return resp;
-  };
-
   const extractSessionIdFromKey = (sessionKey: string): string | null =>
     resolveCoworkSessionIdByOpenClawSessionKey(getStore().getDatabase(), sessionKey);
 
   /**
    * Handle media generation tool callbacks from the OpenClaw plugin.
+   * Stubbed after auth system removal - only skin runtime delegation remains.
    */
   const handleMediaGenerationCallback = async (request: {
     tool: string;
     args: Record<string, unknown>;
     context: { sessionKey: string; toolCallId: string };
   }): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean; details?: Record<string, unknown> }> => {
-    const { tool, args } = request;
+    const { tool } = request;
     const skinRuntime = getSkinRuntimeController();
     if (skinRuntime.handlesTool(tool)) {
       return skinRuntime.handleToolRequest(request);
     }
-    const action = (args.action as string) || 'generate';
-    const serverBaseUrl = getServerApiBaseUrl();
-    const sessionId = extractSessionIdFromKey(request.context.sessionKey);
-    const selection = resolveMediaSelectionForSession(sessionId);
-    const prompt = typeof args.prompt === 'string' ? args.prompt : '';
-    const explicitModel = canonicalizeMediaModelId(typeof args.model === 'string' ? args.model : '');
-    const resolvedModelFromSelection = tool === MediaGenerationTool.Image
-      ? canonicalizeMediaModelId(selection?.imageModelId || selection?.modelId || '')
-      : canonicalizeMediaModelId(selection?.videoModelId || selection?.modelId || '');
-    let selectedModel = explicitModel || resolvedModelFromSelection;
-    let selectedModelSource = explicitModel ? 'tool' : resolvedModelFromSelection ? 'selection' : 'none';
-
-    if (action === 'generate' && tool === MediaGenerationTool.Image) {
-      const skinPreflight = await skinRuntime.preflightLobsterImageGeneration(
-        sessionId,
-        selection,
-      );
-      if (skinPreflight) return skinPreflight;
-    }
-
-    if (action === 'generate' && resolvedModelFromSelection && explicitModel && explicitModel !== resolvedModelFromSelection) {
-      console.warn(`[MediaGeneration] overriding LLM model choice "${explicitModel}" with user selection "${resolvedModelFromSelection}"`);
-      selectedModel = resolvedModelFromSelection;
-      selectedModelSource = 'selection-override';
-    }
-    console.log('[MediaGeneration] received tool request:', serializeForLog({
-      tool,
-      action,
-      sessionId: sessionId ?? '',
-      toolCallId: request.context.toolCallId,
-      selectionMode: selection?.mode ?? 'none',
-      selectedModel,
-      selectedModelSource,
-      promptLength: prompt.length,
-      promptPreview: prompt.slice(0, 120),
-    }));
-
-    // Tool gating: for generate action, check if media selection allows this tool
-    if (action === 'generate') {
-      const gate = resolveMediaGenerationGate({ action, tool, selection });
-      if (gate.allowed === false) {
-        if (gate.reason === MediaGenerationGateReason.MediaNotEnabled) {
-          console.warn('[MediaGeneration] blocked generate request because no media model was selected for this turn.');
-        } else {
-          console.warn('[MediaGeneration] blocked generate request because the selected turn model has a different media type.');
-        }
-        return {
-          content: [{ type: 'text', text: gate.message }],
-          isError: true,
-          details: { status: 'failed', warnings: [gate.reason] },
-        };
-      }
-    }
-
-    try {
-      if (action === 'list') {
-        const mediaType = tool === MediaGenerationTool.Image ? 'image' : 'video';
-        const endpoint = mediaType === 'image' ? '/api/media/images/models' : '/api/media/videos/models';
-        console.log(`[MediaGeneration] listing ${mediaType} models from server.`);
-        const resp = await fetchWithAuth(`${serverBaseUrl}${endpoint}`);
-        console.log(`[MediaGeneration] server returned HTTP ${resp.status} for ${mediaType} model list.`);
-        const body = await resp.json() as { code: number; data?: unknown[]; message?: string };
-        if (body.code !== 0) {
-          console.warn('[MediaGeneration] server rejected model list request:', serializeForLog({ mediaType, code: body.code, message: body.message }));
-          return { content: [{ type: 'text', text: body.message || 'Failed to list models.' }], isError: true };
-        }
-        const models = (body.data || []).map(model => {
-          const mediaModel = model as { modelId?: string; displayName?: string };
-          const modelId = canonicalizeMediaModelId(mediaModel.modelId);
-          return {
-            ...(model as Record<string, unknown>),
-            modelId,
-            displayName: mediaModelDisplayName(modelId, mediaModel.displayName),
-          };
-        });
-        console.log(`[MediaGeneration] server returned ${models.length} ${mediaType} models.`);
-        let text = models.length > 0
-          ? `Available ${mediaType} models:\n\n${(models as Array<{ modelId: string; displayName: string; capabilities?: string; parameterSpec?: Record<string, unknown> }>).map(m => {
-              let line = `### ${m.displayName} (model: "${m.modelId}")`;
-              if (m.capabilities) line += `\n${m.capabilities}`;
-              if (m.parameterSpec) line += `\nSupported parameters:\n${JSON.stringify(m.parameterSpec, null, 2)}`;
-              return line;
-            }).join('\n\n')}`
-          : `No ${mediaType} models available.`;
-        if (resolvedModelFromSelection) {
-          text += `\n\n---\n**Note:** The user has already selected model "${resolvedModelFromSelection}" for this session. You MUST use this model for the generate action. Do NOT choose a different model.`;
-        }
-        return { content: [{ type: 'text', text }], details: { status: 'succeeded', models } };
-      }
-
-      if (action === 'status') {
-        const taskId = args.taskId as string;
-        if (!taskId) {
-          console.warn('[MediaGeneration] blocked status request because taskId was missing.');
-          return { content: [{ type: 'text', text: 'taskId is required for status action.' }], isError: true };
-        }
-        const pollCount = incrementMediaStatusPollCount(sessionId, taskId);
-        const mediaType = tool === MediaGenerationTool.Image ? 'images' : 'videos';
-        const statusMediaType = tool === MediaGenerationTool.Image ? 'image' : 'video';
-        console.log(`[MediaGeneration] checking ${mediaType} task status for task ${taskId}.`);
-        const resp = await fetchWithAuth(`${serverBaseUrl}/api/media/${mediaType}/tasks/${taskId}`);
-        console.log(`[MediaGeneration] server returned HTTP ${resp.status} for ${mediaType} task status.`);
-        const body = await resp.json() as { code: number; data?: Record<string, unknown>; message?: string };
-        if (body.code !== 0) {
-          console.warn('[MediaGeneration] server rejected task status request:', serializeForLog({ mediaType, taskId, code: body.code, message: body.message }));
-          return { content: [{ type: 'text', text: body.message || 'Failed to get task status.' }], isError: true };
-        }
-        const task = body.data!;
-        const status = task.status as string;
-        const resultUrls = (task.resultUrls as string[]) || [];
-        const outputModel = mediaModelIdForOutput(task.model);
-        const upstreamModel = typeof task.upstreamModel === 'string' && task.upstreamModel.trim()
-          ? task.upstreamModel.trim()
-          : undefined;
-        const modelSelectionReason = typeof task.modelSelectionReason === 'string' && task.modelSelectionReason.trim()
-          ? task.modelSelectionReason.trim()
-          : undefined;
-        if (sessionId && TERMINAL_MEDIA_TASK_STATUSES.has(status)) {
-          markMediaTaskHandledByStatusPolling(sessionId, taskId);
-        }
-        const assets = resultUrls.map(url => ({
-          type: statusMediaType,
-          url,
-          mimeType: resolveGeneratedMediaAssetMimeType(statusMediaType, url),
-        }));
-
-        let resultLines: string[];
-        let detailsAssets: unknown[] = assets;
-        if (status === 'succeeded' && statusMediaType === 'image' && sessionId) {
-          const persistResult = await persistGeneratedImages(sessionId, assets);
-          if (persistResult && persistResult.saved.length > 0) {
-            detailsAssets = persistResult.saved;
-            resultLines = persistResult.saved.map(asset =>
-              `  - [${asset.filename}](${pathToFileURL(asset.filePath).toString()})`
-            );
-          } else {
-            resultLines = resultUrls.map((url, index) => `  - ![Generated image ${index + 1}](${url})`);
-          }
-        } else if (status === 'succeeded' && statusMediaType === 'video' && sessionId) {
-          const persistResult = await persistGeneratedVideos(sessionId, assets);
-          if (persistResult && persistResult.saved.length > 0) {
-            detailsAssets = persistResult.saved;
-            resultLines = persistResult.saved.map(asset =>
-              `  - [${asset.filename}](${pathToFileURL(asset.filePath).toString()})`
-            );
-          } else {
-            resultLines = resultUrls.map(url => `  - ${url}`);
-          }
-        } else {
-          resultLines = statusMediaType === 'image'
-            ? resultUrls.map((_url, index) => `  - Generated image ${index + 1}`)
-            : resultUrls.map(url => `  - ${url}`);
-        }
-
-        const lines = [
-          `Task ID: ${task.upstreamTaskId || task.taskId}`,
-          `Model: ${outputModel}`,
-          ...(upstreamModel ? [`Selected model: ${upstreamModel}`] : []),
-          ...(modelSelectionReason ? [`Selection reason: ${modelSelectionReason}`] : []),
-          `Status: ${status}`,
-          ...(task.progress ? [`Progress: ${task.progress}%`] : []),
-          ...(resultUrls.length > 0 ? [`Results:\n${resultLines.join('\n')}`] : []),
-          ...(task.errorMessage ? [`Error: ${task.errorMessage}`] : []),
-        ];
-        const details = {
-          taskId: String(task.taskId),
-          ...(task.upstreamTaskId ? { upstreamTaskId: String(task.upstreamTaskId) } : {}),
-          status,
-          ...(pollCount > 1 ? { pollCount } : {}),
-          model: outputModel,
-          ...(upstreamModel ? { upstreamModel } : {}),
-          ...(modelSelectionReason ? { modelSelectionReason } : {}),
-          mediaType: statusMediaType,
-          ...(detailsAssets.length > 0 ? { assets: detailsAssets } : {}),
-          ...(task.quotaRemaining != null ? { billing: { quotaRemaining: task.quotaRemaining } } : {}),
-        };
-        if (sessionId) {
-          emitMediaStatusPollUpdate({
-            sessionId,
-            toolCallId: request.context.toolCallId,
-            details,
-          });
-        }
-
-        return {
-          content: [{ type: 'text', text: lines.join('\n') }],
-          details,
-        };
-      }
-
-      if (action === 'cancel' && tool === MediaGenerationTool.Video) {
-        const taskId = args.taskId as string;
-        if (!taskId) {
-          console.warn('[MediaGeneration] blocked cancel request because taskId was missing.');
-          return { content: [{ type: 'text', text: 'taskId is required for cancel action.' }], isError: true };
-        }
-        console.log(`[MediaGeneration] cancelling video task ${taskId}.`);
-        const resp = await fetchWithAuth(`${serverBaseUrl}/api/media/videos/tasks/${taskId}/cancel`, { method: 'POST' });
-        console.log(`[MediaGeneration] server returned HTTP ${resp.status} for video task cancel.`);
-        const body = await resp.json() as { code: number; message?: string };
-        if (body.code !== 0) {
-          console.warn('[MediaGeneration] server rejected task cancel request:', serializeForLog({ taskId, code: body.code, message: body.message }));
-          return { content: [{ type: 'text', text: body.message || 'Failed to cancel task.' }], isError: true };
-        }
-        return {
-          content: [{ type: 'text', text: `Task ${taskId} cancelled successfully.` }],
-          details: { taskId, status: 'cancelled' },
-        };
-      }
-
-      // action === 'generate'
-      const mediaType = tool === MediaGenerationTool.Image ? 'image' : 'video';
-      const endpoint = mediaType === 'image' ? '/api/media/images/generate' : '/api/media/videos/generate';
-
-      // Video generation confirmation: inform user about cost and duration
-      if (mediaType === 'video') {
-        const durationSec = typeof args.durationSeconds === 'number' ? args.durationSeconds : null;
-        const costPoints = durationSec ? durationSec * 100 : null;
-        const portalTasksUrl = getPortalTasksUrl();
-        const subtitle = costPoints
-          ? `本次生成大约预计消耗 **${costPoints}** 积分`
-          : '费用约为 **100** 积分/秒';
-        const questionText = [
-          '请确认当前描述无误，提交后将无法取消。',
-          '视频生成任务耗时较长，请耐心等待。',
-          '',
-          `生成后请妥善保存视频，若误删可在[「个人主页-用量详情-生成任务」](${portalTasksUrl})中下载`,
-          '~~（链接有时效性，请尽快下载）~~',
-        ].join('\n');
-        const confirmResponse = await getMcpRuntime().askUserInternal(
-          [{
-            question: questionText,
-            title: '确认生成视频？',
-            subtitle,
-            options: [
-              { label: '确认生成', description: '开始视频生成任务' },
-              { label: '取消', description: '暂不生成' },
-            ],
-          }],
-          undefined,
-          { sessionKey: request.context.sessionKey },
-        );
-
-        const userCancelled = confirmResponse?.behavior === 'deny'
-          || confirmResponse?.answers?.[questionText] === '取消';
-
-        if (userCancelled) {
-          console.log('[MediaGeneration] user cancelled video generation confirmation.');
-          return {
-            content: [{ type: 'text', text: 'Video generation cancelled by user.' }],
-            isError: true,
-            details: { status: 'cancelled', reason: 'USER_CANCELLED' },
-          };
-        }
-      }
-
-      let params: Record<string, unknown> = {};
-      if (args.image) {
-        const existing = (args.images as string[]) || [];
-        params.images = [args.image as string, ...existing];
-      } else if (args.images) {
-        params.images = args.images;
-      }
-      if (args.imageRoles) params.imageRoles = args.imageRoles;
-      if (args.firstFrame) params.firstFrame = args.firstFrame;
-      if (args.lastFrame) params.lastFrame = args.lastFrame;
-      if (args.referenceImages) params.referenceImages = args.referenceImages;
-      if (args.media) params.media = args.media;
-      if (args.video) {
-        const existing = (args.videos as string[]) || [];
-        params.videos = [args.video as string, ...existing];
-      } else if (args.videos) {
-        params.videos = args.videos;
-      }
-      if (args.videoRoles) params.videoRoles = args.videoRoles;
-      if (args.aspectRatio) params.aspectRatio = args.aspectRatio;
-      if (args.resolution) params.resolution = args.resolution;
-      if (args.size) params.size = args.size;
-      if (mediaType === 'image') {
-        if (args.n != null) params.n = args.n;
-        if (args.quality) params.quality = args.quality;
-        if (args.outputFormat) params.outputFormat = args.outputFormat;
-        if (args.output_format) params.output_format = args.output_format;
-        if (args.temperature != null) params.temperature = args.temperature;
-        if (args.imageSize) params.imageSize = args.imageSize;
-      }
-      if (args.count) params.count = args.count;
-      if (args.durationSeconds != null) params.durationSeconds = args.durationSeconds;
-      if (args.audio != null) params.audio = args.audio;
-      if (args.watermark != null) params.watermark = args.watermark;
-      if (args.seed != null) params.seed = args.seed;
-      if (args.returnLastFrame != null) params.returnLastFrame = args.returnLastFrame;
-      if (args.cameraFixed != null) params.cameraFixed = args.cameraFixed;
-      if (args.filename) params.filename = args.filename;
-      if (args.providerOptions) {
-        params.providerOptions = args.providerOptions;
-        const providerOptions = args.providerOptions;
-        if (providerOptions && typeof providerOptions === 'object' && !Array.isArray(providerOptions)) {
-          const rawMedia = (providerOptions as Record<string, unknown>).media;
-          if (!params.media && Array.isArray(rawMedia)) {
-            params.media = rawMedia;
-          }
-        }
-      }
-
-      const refs = sessionId ? mediaReferencesBySession.get(sessionId) : undefined;
-      params = applyMediaReferencesToGenerationParams({
-        mediaType: mediaType === MediaGenerationRequestType.Video
-          ? MediaGenerationRequestType.Video
-          : MediaGenerationRequestType.Image,
-        params,
-        refs,
-      });
-
-      // Convert local file paths to data URLs
-      const MEDIA_MIME: Record<string, string> = {
-        '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-        '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp',
-        '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm',
-      };
-      const resolveRef = async (ref: string): Promise<string> => {
-        if (!ref || ref.startsWith('http') || ref.startsWith('oss://') || ref.startsWith('data:')) return ref;
-        const filePath = ref.startsWith('file://') ? fileURLToPath(ref) : path.resolve(ref);
-        const buf = await fs.promises.readFile(filePath);
-        const mime = MEDIA_MIME[path.extname(filePath).toLowerCase()] || 'application/octet-stream';
-        return `data:${mime};base64,${buf.toString('base64')}`;
-      };
-      const resolveStringParam = async (name: string) => {
-        if (typeof params[name] === 'string') {
-          params[name] = await resolveRef(params[name] as string);
-        }
-      };
-      const resolveStringArrayParam = async (name: string) => {
-        if (Array.isArray(params[name])) {
-          params[name] = await Promise.all((params[name] as string[]).map(resolveRef));
-        }
-      };
-      const resolveMediaItem = async (item: unknown): Promise<unknown> => {
-        if (typeof item === 'string') {
-          return resolveRef(item);
-        }
-        if (!item || typeof item !== 'object' || Array.isArray(item)) {
-          return item;
-        }
-        const next: Record<string, unknown> = { ...(item as Record<string, unknown>) };
-        if (typeof next.url === 'string') {
-          next.url = await resolveRef(next.url);
-        }
-        for (const key of ['image_url', 'video_url', 'audio_url']) {
-          const nested = next[key];
-          if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
-            const nestedRecord = nested as Record<string, unknown>;
-            if (typeof nestedRecord.url === 'string') {
-              next[key] = { ...nestedRecord, url: await resolveRef(nestedRecord.url) };
-            }
-          }
-        }
-        return next;
-      };
-      if (Array.isArray(params.images)) {
-        params.images = await Promise.all((params.images as string[]).map(resolveRef));
-      }
-      await resolveStringParam('firstFrame');
-      await resolveStringParam('lastFrame');
-      await resolveStringArrayParam('referenceImages');
-      if (Array.isArray(params.videos)) {
-        params.videos = await Promise.all((params.videos as string[]).map(resolveRef));
-      }
-      if (Array.isArray(params.media)) {
-        params.media = await Promise.all((params.media as unknown[]).map(resolveMediaItem));
-      }
-
-      const inferVideoGenerationType = (): string => {
-        const normalizedModel = selectedModel.toLowerCase();
-        if (normalizedModel.includes('happyhorse-1.1-r2v')) return 'r2v';
-        if (normalizedModel.includes('happyhorse-1.1-t2v')) return 't2v';
-        if (normalizedModel.includes('happyhorse-1.1-i2v')) return 'i2v';
-        if (normalizedModel.includes('happyhorse-1.0-r2v')) return 'r2v';
-        if (normalizedModel.includes('happyhorse-1.0-t2v')) return 't2v';
-        if (normalizedModel.includes('happyhorse-1.0-i2v')) return 'i2v';
-
-        const imageRoles = Array.isArray(params.imageRoles)
-          ? (params.imageRoles as unknown[]).map(role => String(role).toLowerCase())
-          : [];
-        const mediaItems = Array.isArray(params.media) ? params.media as unknown[] : [];
-        const mediaTypes = mediaItems
-          .filter(item => item && typeof item === 'object' && !Array.isArray(item))
-          .map(item => String((item as Record<string, unknown>).type || '').toLowerCase());
-        const hasReferenceImage = (Array.isArray(params.referenceImages) && (params.referenceImages as unknown[]).length > 0)
-          || imageRoles.some(role => role === 'reference_image' || role === 'reference')
-          || mediaTypes.some(type => type === 'reference_image');
-        if (hasReferenceImage) return 'r2v';
-
-        const hasFirstFrame = typeof params.firstFrame === 'string'
-          || imageRoles.some(role => role === 'first_frame' || role === 'firstframe')
-          || mediaTypes.some(type => type === 'first_frame')
-          || (Array.isArray(params.images) && (params.images as unknown[]).length > 0);
-        return hasFirstFrame ? 'i2v' : 't2v';
-      };
-
-      const happyHorse11Selection = mediaType === 'video'
-        ? resolveHappyHorse11Selection(selectedModel, params)
-        : null;
-      const generateReq = {
-        model: selectedModel,
-        type: mediaType === 'video'
-          ? (happyHorse11Selection?.type ?? inferVideoGenerationType())
-          : mediaType,
-        prompt,
-        params,
-      };
-
-      console.log('[MediaGeneration] sending generate request to server:', serializeForLog({
-        endpoint,
-        mediaType,
-        selectedModel,
-        selectedModelSource,
-        ...(happyHorse11Selection ? {
-          upstreamModel: happyHorse11Selection.upstreamModel,
-          modelSelectionReason: happyHorse11Selection.reason,
-          inputImageCount: happyHorse11Selection.imageCount,
-        } : {}),
-        promptLength: prompt.length,
-        promptPreview: prompt.slice(0, 120),
-        params: summarizeMediaGenerationParamsForLog(params),
-      }));
-      const resp = await fetchWithAuth(`${serverBaseUrl}${endpoint}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(generateReq),
-      });
-      console.log(`[MediaGeneration] server returned HTTP ${resp.status} for ${mediaType} generate request.`);
-      const body = await resp.json() as { code: number; data?: Record<string, unknown>; message?: string };
-
-      if (body.code === 40203) {
-        console.warn('[MediaGeneration] server rejected generate request because subscription is required.');
-        return {
-          content: [{ type: 'text', text: 'Media generation requires an active subscription. Please subscribe to use this feature.' }],
-          isError: true,
-          details: { status: 'failed', warnings: ['MEDIA_SUBSCRIPTION_REQUIRED'] },
-        };
-      }
-      if (body.code === 40204) {
-        console.warn('[MediaGeneration] server rejected generate request because quota was exhausted.');
-        return {
-          content: [{ type: 'text', text: 'Media generation quota exhausted for this period. Please wait for quota reset or upgrade your plan.' }],
-          isError: true,
-          details: { status: 'failed', warnings: ['MEDIA_QUOTA_EXHAUSTED'] },
-        };
-      }
-      if (body.code !== 0) {
-        console.warn('[MediaGeneration] server rejected generate request:', serializeForLog({ mediaType, selectedModel, code: body.code, message: body.message }));
-        return {
-          content: [{ type: 'text', text: body.message || 'Media generation request failed.' }],
-          isError: true,
-          details: { status: 'failed', warnings: [body.message || 'Unknown error'] },
-        };
-      }
-
-      const task = body.data!;
-      const status = task.status as string;
-      const resultUrls = (task.resultUrls as string[]) || [];
-      const outputModel = mediaModelIdForOutput(task.model, selectedModel);
-      const upstreamModel = typeof task.upstreamModel === 'string' && task.upstreamModel.trim()
-        ? task.upstreamModel.trim()
-        : happyHorse11Selection?.upstreamModel;
-      const modelSelectionReason = typeof task.modelSelectionReason === 'string' && task.modelSelectionReason.trim()
-        ? task.modelSelectionReason.trim()
-        : happyHorse11Selection?.reason;
-      console.log('[MediaGeneration] server accepted generate request:', serializeForLog({
-        mediaType,
-        taskId: task.taskId,
-        status,
-        model: outputModel,
-        upstreamModel,
-        modelSelectionReason,
-        resultCount: resultUrls.length,
-        quotaRemaining: task.quotaRemaining,
-      }));
-      const assets = resultUrls.map(url => ({
-        type: mediaType,
-        url,
-        mimeType: resolveGeneratedMediaAssetMimeType(mediaType, url),
-        ...(args.filename ? { filename: args.filename as string } : {}),
-      }));
-      let detailsAssets: unknown[] = assets;
-
-      const billing: Record<string, unknown> = {};
-      if (task.quotaRemaining != null) billing.quotaRemaining = task.quotaRemaining;
-      if (mediaType === 'image') {
-        if (args.count) billing.frozenImages = args.count;
-        else if (args.n) billing.frozenImages = args.n;
-      } else {
-        if (args.durationSeconds) billing.frozenVideoSeconds = args.durationSeconds;
-      }
-
-      const lines = [
-        `${mediaType === 'image' ? 'Image' : 'Video'} generation task created.`,
-        `Task ID: ${task.upstreamTaskId || task.taskId}`,
-        `Model: ${outputModel}`,
-        ...(upstreamModel ? [`Selected model: ${upstreamModel}`] : []),
-        ...(modelSelectionReason ? [`Selection reason: ${modelSelectionReason}`] : []),
-        `Status: ${status}`,
-        ...(task.quotaRemaining != null ? [`Quota remaining: ${task.quotaRemaining}`] : []),
-      ];
-
-      if (status === 'succeeded' && mediaType === 'image' && sessionId) {
-        const persistResult = await persistGeneratedImages(sessionId, assets);
-        if (persistResult && persistResult.saved.length > 0) {
-          detailsAssets = persistResult.saved;
-          const fileLines = persistResult.saved.map(asset =>
-            `  - [${asset.filename}](${pathToFileURL(asset.filePath).toString()})`
-          );
-          lines.push(`Results:\n${fileLines.join('\n')}`);
-        } else if (assets.length > 0) {
-          const resultLines = resultUrls.map((url, index) => `  - ![Generated image ${index + 1}](${url})`);
-          lines.push(`Results:\n${resultLines.join('\n')}`);
-        }
-      } else if (status === 'succeeded' && mediaType === 'video' && sessionId) {
-        const persistResult = await persistGeneratedVideos(sessionId, assets);
-        if (persistResult && persistResult.saved.length > 0) {
-          detailsAssets = persistResult.saved;
-          const fileLines = persistResult.saved.map(asset =>
-            `  - [${asset.filename}](${pathToFileURL(asset.filePath).toString()})`
-          );
-          lines.push(`Results:\n${fileLines.join('\n')}`);
-        } else if (assets.length > 0) {
-          const resultLines = resultUrls.map(url => `  - ${url}`);
-          lines.push(`Results:\n${resultLines.join('\n')}`);
-        }
-      } else if (status === 'succeeded' && assets.length > 0) {
-        const resultLines = resultUrls.map(url => `  - ${url}`);
-        lines.push(`Results:\n${resultLines.join('\n')}`);
-      }
-
-      // Register async media tasks for background polling if not already completed.
-      if (status !== 'succeeded' && status !== 'failed' && status !== 'cancelled') {
-        if (sessionId) {
-          const metadata = task.metadata as Record<string, unknown> | undefined;
-          const expiresAfterSec = metadata?.execution_expires_after ?? task.execution_expires_after;
-          const timeoutMs = typeof expiresAfterSec === 'number' && expiresAfterSec > 0
-            ? expiresAfterSec * 1000
-            : MEDIA_TASK_DEFAULT_TIMEOUT_MS;
-          registerMediaTaskForPolling({
-            taskId: String(task.taskId),
-            sessionId,
-            mediaType,
-            model: upstreamModel || outputModel,
-            startedAt: Date.now(),
-            pollCount: 0,
-            timeoutMs,
-          });
-        }
-      }
-
-      return {
-        content: [{ type: 'text', text: lines.join('\n') }],
-        details: {
-          taskId: String(task.taskId),
-          ...(task.upstreamTaskId ? { upstreamTaskId: String(task.upstreamTaskId) } : {}),
-          status,
-          model: outputModel,
-          ...(upstreamModel ? { upstreamModel } : {}),
-          ...(modelSelectionReason ? { modelSelectionReason } : {}),
-          ...(detailsAssets.length > 0 ? { assets: detailsAssets } : {}),
-          ...(Object.keys(billing).length > 0 ? { billing } : {}),
-        },
-      };
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      if (msg === 'No auth tokens') {
-        console.warn('[MediaGeneration] blocked media generation because the user is not logged in.');
-        return { content: [{ type: 'text', text: 'Not logged in. Please log in to use media generation.' }], isError: true };
-      }
-      console.error('[MediaGeneration] media generation request failed:', error);
-      return { content: [{ type: 'text', text: `Media generation error: ${msg}` }], isError: true };
-    }
+    return {
+      content: [{ type: 'text', text: 'Media generation is not available.' }],
+      isError: true,
+    };
   };
 
   getMcpRuntime().setMediaGenerationHandler(handleMediaGenerationCallback);
@@ -4941,161 +3388,10 @@ if (!gotTheLock) {
   };
 
   const pollPendingMediaTasks = async () => {
-    if (pendingMediaTasks.size === 0) {
-      stopMediaPollTimer();
-      return;
-    }
-
-    const serverBaseUrl = getServerApiBaseUrl();
-    const now = Date.now();
-    const tasksToRemove: string[] = [];
-
-    for (const [taskId, tracker] of pendingMediaTasks) {
-      if (isMediaTaskHandledByStatusPolling(tracker.sessionId, taskId)) {
-        tasksToRemove.push(taskId);
-        continue;
-      }
-
-      if (now - tracker.startedAt > tracker.timeoutMs) {
-        tasksToRemove.push(taskId);
-        emitMediaTaskMessage(tracker.sessionId, `${tracker.mediaType === 'video' ? 'Video' : 'Image'} generation timed out.\nTask ID: ${taskId}\nStatus: timeout`);
-        continue;
-      }
-
-      if (tracker.pollCount >= MEDIA_POLL_FAST_COUNT) {
-        const lastPollTime = tracker.lastPollAt ?? tracker.startedAt;
-        const sinceLast = now - lastPollTime;
-        const totalSlowAndMedium = MEDIA_POLL_FAST_COUNT + MEDIA_POLL_SLOW_COUNT;
-        const totalBeforeIdle = totalSlowAndMedium + MEDIA_POLL_MEDIUM_COUNT;
-        if (tracker.pollCount >= totalBeforeIdle) {
-          if (sinceLast < MEDIA_POLL_IDLE_MS) continue;
-        } else if (tracker.pollCount >= totalSlowAndMedium) {
-          if (sinceLast < MEDIA_POLL_MEDIUM_MS) continue;
-        } else {
-          if (sinceLast < MEDIA_POLL_SLOW_MS) continue;
-        }
-      }
-
-      tracker.pollCount++;
-      tracker.lastPollAt = now;
-
-      try {
-        const endpoint = tracker.mediaType === 'video' ? 'videos' : 'images';
-        const resp = await fetchWithAuth(`${serverBaseUrl}/api/media/${endpoint}/tasks/${taskId}`);
-        const body = await resp.json() as { code: number; data?: Record<string, unknown>; message?: string };
-
-        if (body.code !== 0) continue;
-        const task = body.data!;
-        const status = task.status as string;
-        if (isMediaTaskHandledByStatusPolling(tracker.sessionId, taskId)) {
-          tasksToRemove.push(taskId);
-          continue;
-        }
-
-        if (TERMINAL_MEDIA_TASK_STATUSES.has(status)) {
-          tasksToRemove.push(taskId);
-          const resultUrls = (task.resultUrls as string[]) || [];
-          const outputModel = mediaModelIdForOutput(task.model, tracker.model);
-          const upstreamModel = typeof task.upstreamModel === 'string' && task.upstreamModel.trim()
-            ? task.upstreamModel.trim()
-            : undefined;
-          const modelSelectionReason = typeof task.modelSelectionReason === 'string' && task.modelSelectionReason.trim()
-            ? task.modelSelectionReason.trim()
-            : undefined;
-          const displayModel = upstreamModel || outputModel;
-          const assets = resultUrls.map(url => ({
-            type: tracker.mediaType,
-            url,
-            mimeType: resolveGeneratedMediaAssetMimeType(tracker.mediaType, url),
-          }));
-          if (status === 'succeeded' && tracker.mediaType === 'image') {
-            const persistResult = await persistGeneratedImages(tracker.sessionId, assets);
-            if (persistResult && persistResult.saved.length > 0) {
-              const fileLines = persistResult.saved.map(asset => `  - [${asset.filename}](${pathToFileURL(asset.filePath).toString()})`);
-              emitMediaTaskMessage(
-                tracker.sessionId,
-                `Saved generated ${persistResult.saved.length === 1 ? 'image' : 'images'}:\n${fileLines.join('\n')}`,
-                {
-                  toolResultDetails: {
-                    status: 'succeeded',
-                    assets: persistResult.saved,
-                  },
-                },
-              );
-            } else {
-              const resultLines = resultUrls.map((_url, index) => `  - Generated image ${index + 1}`);
-              emitMediaTaskMessage(tracker.sessionId, [
-                'Image generation succeeded.',
-                `Task ID: ${taskId}`,
-                `Model: ${displayModel}`,
-                ...(modelSelectionReason ? [`Selection reason: ${modelSelectionReason}`] : []),
-                ...(resultUrls.length > 0 ? [`Results:\n${resultLines.join('\n')}`] : []),
-                ...(task.errorMessage ? [`Error: ${task.errorMessage}`] : []),
-              ].join('\n'));
-            }
-          } else if (status === 'succeeded' && tracker.mediaType === 'video') {
-            const persistResult = await persistGeneratedVideos(tracker.sessionId, assets);
-            if (persistResult && persistResult.saved.length > 0) {
-              const fileLines = persistResult.saved.map(asset => `  - [${asset.filename}](${pathToFileURL(asset.filePath).toString()})`);
-              emitMediaTaskMessage(
-                tracker.sessionId,
-                [
-                  `Saved generated ${persistResult.saved.length === 1 ? 'video' : 'videos'}:`,
-                  `Model: ${displayModel}`,
-                  ...(modelSelectionReason ? [`Selection reason: ${modelSelectionReason}`] : []),
-                  fileLines.join('\n'),
-                ].join('\n'),
-                {
-                  toolResultDetails: {
-                    status: 'succeeded',
-                    model: outputModel,
-                    ...(upstreamModel ? { upstreamModel } : {}),
-                    ...(modelSelectionReason ? { modelSelectionReason } : {}),
-                    assets: persistResult.saved,
-                  },
-                },
-              );
-            } else {
-              const resultLines = resultUrls.map(url => `  - ${url}`);
-              emitMediaTaskMessage(tracker.sessionId, [
-                'Video generation succeeded.',
-                `Task ID: ${taskId}`,
-                `Model: ${displayModel}`,
-                ...(modelSelectionReason ? [`Selection reason: ${modelSelectionReason}`] : []),
-                ...(resultUrls.length > 0 ? [`Results:\n${resultLines.join('\n')}`] : []),
-                ...(task.errorMessage ? [`Error: ${task.errorMessage}`] : []),
-              ].join('\n'));
-            }
-          } else {
-            const resultLines = tracker.mediaType === 'image'
-              ? resultUrls.map((_url, index) => `  - Generated image ${index + 1}`)
-              : resultUrls.map(url => `  - ${url}`);
-            const lines = [
-              `${tracker.mediaType === 'video' ? 'Video' : 'Image'} generation ${status}.`,
-              `Task ID: ${taskId}`,
-              `Model: ${tracker.model}`,
-              ...(resultUrls.length > 0 ? [`Results:\n${resultLines.join('\n')}`] : []),
-              ...(task.errorMessage ? [`Error: ${task.errorMessage}`] : []),
-            ];
-            emitMediaTaskMessage(tracker.sessionId, lines.join('\n'));
-          }
-          BrowserWindow.getAllWindows().forEach(win => {
-            if (!win.isDestroyed()) win.webContents.send('auth:quotaChanged');
-          });
-        }
-      } catch {
-        // Network error, retry on next poll
-      }
-    }
-
-    for (const taskId of tasksToRemove) {
-      pendingMediaTasks.delete(taskId);
-    }
-
-    if (pendingMediaTasks.size === 0) {
-      stopMediaPollTimer();
-    }
+    // Stubbed after auth system removal.
+    stopMediaPollTimer();
   };
+;
 
   const emitMediaTaskMessage = (sessionId: string, content: string, metadata?: Record<string, unknown>) => {
     let message: CoworkMessage = {
@@ -5220,1095 +3516,6 @@ if (!gotTheLock) {
       return cachedAssets.length > 0 ? { saved: cachedAssets, failed: [] } : null;
     }
   };
-
-  const MEDIA_ENTITLEMENT_SYNC_REASON = 'media-entitlement-changed';
-
-  const getAuthQuotaGateState = () => ({
-    subscriptionStatus: cachedSubscriptionStatus,
-    mediaGenerationEntitled: cachedMediaGenerationEntitled,
-  });
-
-  const hasAuthQuotaGateStateChanged = (previous: ReturnType<typeof getAuthQuotaGateState>) => (
-    cachedSubscriptionStatus !== previous.subscriptionStatus
-    || cachedMediaGenerationEntitled !== previous.mediaGenerationEntitled
-  );
-
-  const syncOpenClawConfigIfAuthQuotaGateChanged = (previous: ReturnType<typeof getAuthQuotaGateState>) => {
-    if (hasAuthQuotaGateStateChanged(previous)) {
-      syncOpenClawConfig({ reason: MEDIA_ENTITLEMENT_SYNC_REASON, restartGatewayIfRunning: true }).catch((error) => {
-        console.warn('[Auth] failed to sync OpenClaw config after quota gate changed:', error);
-      });
-      return true;
-    }
-    return false;
-  };
-
-  const resetAuthQuotaGateState = () => {
-    const defaultGateState = createDefaultAuthQuotaGateState();
-    cachedSubscriptionStatus = defaultGateState.subscriptionStatus;
-    cachedMediaGenerationEntitled = defaultGateState.mediaGenerationEntitled;
-  };
-
-  /**
-   * Normalize quota data from various server response formats into a unified shape.
-   */
-  const normalizeQuota = (raw: Record<string, unknown>) => {
-    const quota = normalizeAuthQuota(raw, {
-      freePlanName: t('authPlanFree'),
-      standardPlanName: t('authPlanStandard'),
-      fallbackSubscriptionStatus: cachedSubscriptionStatus,
-    });
-    const quotaGateState = authQuotaGateStateFromQuota(quota);
-    cachedSubscriptionStatus = quotaGateState.subscriptionStatus;
-    cachedMediaGenerationEntitled = quotaGateState.mediaGenerationEntitled;
-    return quota;
-  };
-
-  ipcMain.handle('auth:login', async (_event, { loginUrl }: { loginUrl?: string } = {}) => {
-    const baseUrl = loginUrl || `${getServerApiBaseUrl()}/login`;
-    const fallbackUrl = appendLoginParams(baseUrl, { source: 'electron' });
-    let localCallback: Awaited<ReturnType<typeof startAuthLocalCallback>> | null = null;
-
-    try {
-      console.log('[Auth] starting browser login with local callback server');
-      localCallback = await startAuthLocalCallback({
-        onCode: code => {
-          authCallbackRouter.handleAuthCode(code);
-          focusMainWindow('local auth callback');
-        },
-      });
-      const returnTo = appendLoginParams(baseUrl, {
-        source: 'electron',
-        electronLogin: 'success',
-      });
-      const finalUrl = appendLoginParams(baseUrl, {
-        source: 'electron',
-        redirect_uri: appendCallbackReturnTo(localCallback.redirectUri, returnTo),
-        state: localCallback.state,
-      });
-      console.log('[Auth] opening portal login with local callback redirect');
-      await shell.openExternal(finalUrl);
-      return { success: true };
-    } catch (error) {
-      await localCallback?.close();
-      console.warn('[Auth] local callback login failed, falling back to deep link login:', error);
-      try {
-        await shell.openExternal(fallbackUrl);
-        return { success: true };
-      } catch (fallbackError) {
-        console.error('[Auth] login failed:', fallbackError);
-        return {
-          success: false,
-          error: fallbackError instanceof Error ? fallbackError.message : 'Failed to open login',
-        };
-      }
-    }
-  });
-
-  ipcMain.handle('auth:exchange', async (_event, { code }: { code: string }) => {
-    try {
-      const serverBaseUrl = getServerApiBaseUrl();
-      const exchangeUrl = `${serverBaseUrl}/api/auth/exchange`;
-      console.log(`[Auth] requesting auth exchange at ${exchangeUrl}`);
-      const resp = await net.fetch(exchangeUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(withKeyfromBody({ authCode: code })),
-      });
-      if (!resp.ok) {
-        return { success: false, error: `Exchange failed: ${resp.status}` };
-      }
-      const body = (await resp.json()) as {
-        code: number;
-        message?: string;
-        data: {
-          accessToken: string;
-          refreshToken: string;
-          user: Record<string, unknown>;
-          quota: Record<string, unknown>;
-        };
-      };
-      if (body.code !== 0 || !body.data) {
-        return { success: false, error: body.message || 'Exchange failed' };
-      }
-      saveAuthTokens(body.data.accessToken, body.data.refreshToken);
-      saveAuthUser(body.data.user);
-      console.log('[Auth] exchange user data:', JSON.stringify(body.data.user));
-      const previousQuotaGateState = getAuthQuotaGateState();
-      const quota = normalizeQuota(body.data.quota);
-      syncOpenClawConfigIfAuthQuotaGateChanged(previousQuotaGateState);
-      return { success: true, user: body.data.user, quota };
-    } catch (error) {
-      console.error('[Auth] exchange failed:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Exchange failed',
-      };
-    }
-  });
-
-  ipcMain.handle('auth:getUser', async () => {
-    try {
-      const tokens = getAuthTokens();
-      if (!tokens) return { success: false };
-      const serverBaseUrl = getServerApiBaseUrl();
-      // Fetch user profile
-      const profileResp = await fetchWithAuth(`${serverBaseUrl}/api/user/profile`);
-      if (!profileResp.ok) return { success: false };
-      const profileBody = (await profileResp.json()) as {
-        code: number;
-        data: Record<string, unknown>;
-      };
-      if (profileBody.code !== 0 || !profileBody.data) return { success: false };
-      saveAuthUser(profileBody.data);
-      // Fetch quota separately
-      const quotaResp = await fetchWithAuth(`${serverBaseUrl}/api/user/quota`);
-      let quota = null;
-      if (quotaResp.ok) {
-        const quotaBody = (await quotaResp.json()) as {
-          code: number;
-          data: Record<string, unknown>;
-        };
-        if (quotaBody.code === 0 && quotaBody.data) {
-          const previousQuotaGateState = getAuthQuotaGateState();
-          quota = normalizeQuota(quotaBody.data);
-          syncOpenClawConfigIfAuthQuotaGateChanged(previousQuotaGateState);
-        }
-      }
-      console.log('[Auth] getUser profile data:', JSON.stringify(profileBody.data));
-      return { success: true, user: profileBody.data, quota };
-    } catch {
-      return { success: false };
-    }
-  });
-
-  ipcMain.handle('auth:getQuota', async () => {
-    try {
-      const tokens = getAuthTokens();
-      if (!tokens) return { success: false };
-      const serverBaseUrl = getServerApiBaseUrl();
-      const resp = await fetchWithAuth(`${serverBaseUrl}/api/user/quota`);
-      if (!resp.ok) return { success: false };
-      const body = (await resp.json()) as { code: number; data: Record<string, unknown> };
-      if (body.code !== 0 || !body.data) return { success: false };
-      const previousQuotaGateState = getAuthQuotaGateState();
-      const quota = normalizeQuota(body.data);
-      syncOpenClawConfigIfAuthQuotaGateChanged(previousQuotaGateState);
-      return { success: true, quota };
-    } catch {
-      return { success: false };
-    }
-  });
-
-  ipcMain.handle('auth:getProfileSummary', async () => {
-    try {
-      const tokens = getAuthTokens();
-      if (!tokens) return { success: false };
-      const serverBaseUrl = getServerApiBaseUrl();
-      const profileSummaryUrl = appendKeyfromQuery(`${serverBaseUrl}/api/user/profile-summary`);
-      console.log(`[Auth] requesting profile summary at ${profileSummaryUrl}`);
-      const resp = await fetchWithAuth(profileSummaryUrl);
-      if (!resp.ok) return { success: false };
-      const body = (await resp.json()) as { code: number; data: Record<string, unknown> };
-      if (body.code !== 0 || !body.data) return { success: false };
-      return { success: true, data: body.data };
-    } catch {
-      return { success: false };
-    }
-  });
-
-  ipcMain.handle('auth:claimCreditsFinalReward', async (_event, payload: { campaignCode?: string }) => {
-    try {
-      const campaignCode = payload?.campaignCode?.trim();
-      if (!campaignCode) return { success: false, error: 'Missing campaign code' };
-      const serverBaseUrl = getServerApiBaseUrl();
-      const url = appendKeyfromQuery(`${serverBaseUrl}/api/credits-reset-campaign/free-credits/claim`);
-      const resp = await fetchWithAuth(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ campaignCode }),
-      });
-      const body = (await resp.json()) as {
-        code: number;
-        message?: string;
-        data?: Record<string, unknown>;
-      };
-      if (!resp.ok || body.code !== 0 || !body.data) {
-        return { success: false, error: body.message || `Claim failed (${resp.status})` };
-      }
-      return { success: true, data: body.data };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Claim failed',
-      };
-    }
-  });
-
-  ipcMain.handle('auth:getActiveClientBanner', async () => {
-    try {
-      const serverBaseUrl = getServerApiBaseUrl();
-      const url = appendKeyfromQuery(`${serverBaseUrl}/api/client-banners/active?placement=desktop_sidebar`);
-      const resp = await net.fetch(url);
-      if (!resp.ok) return { success: false };
-      const body = (await resp.json()) as { code: number; data: Record<string, unknown> | null };
-      if (body.code !== 0) return { success: false };
-      return { success: true, data: body.data ?? null };
-    } catch {
-      return { success: false };
-    }
-  });
-
-  ipcMain.handle('auth:getActiveClientBanners', async () => {
-    try {
-      const serverBaseUrl = getServerApiBaseUrl();
-      const url = appendKeyfromQuery(`${serverBaseUrl}/api/client-banners/active-list?placement=desktop_sidebar`);
-      const resp = await net.fetch(url);
-      if (!resp.ok) return { success: false };
-      const body = (await resp.json()) as { code: number; data: Record<string, unknown>[] | null };
-      if (body.code !== 0) return { success: false };
-      return { success: true, data: Array.isArray(body.data) ? body.data : [] };
-    } catch {
-      return { success: false };
-    }
-  });
-
-  ipcMain.handle('auth:logout', async () => {
-    try {
-      const tokens = getAuthTokens();
-      if (tokens) {
-        const serverBaseUrl = getServerApiBaseUrl();
-        const logoutUrl = `${serverBaseUrl}/api/auth/logout`;
-        console.log(`[Auth] requesting logout at ${logoutUrl}`);
-        await net
-          .fetch(logoutUrl, {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${tokens.accessToken}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(withKeyfromBody({})),
-          })
-          .catch(() => {
-            /* best-effort */
-          });
-      }
-      clearAuthTokens();
-      clearAuthUser();
-      clearServerModelMetadata();
-      const previousQuotaGateState = getAuthQuotaGateState();
-      resetAuthQuotaGateState();
-      const quotaGateSyncScheduled = syncOpenClawConfigIfAuthQuotaGateChanged(previousQuotaGateState);
-      if (!quotaGateSyncScheduled) {
-        syncOpenClawConfig({
-          reason: 'auth-logout-server-models-cleared',
-          restartGatewayIfRunning: false,
-        }).catch((error) => {
-          console.warn('[Auth] failed to sync OpenClaw config after logout:', error);
-        });
-      }
-      console.log('[Auth] cleared login state and scheduled server model config refresh');
-      return { success: true };
-    } catch (error) {
-      console.warn('[Auth] logout cleanup encountered an error; clearing local state anyway:', error);
-      const previousQuotaGateState = getAuthQuotaGateState();
-      clearAuthTokens();
-      clearAuthUser();
-      clearServerModelMetadata();
-      resetAuthQuotaGateState();
-      const quotaGateSyncScheduled = syncOpenClawConfigIfAuthQuotaGateChanged(previousQuotaGateState);
-      if (!quotaGateSyncScheduled) {
-        syncOpenClawConfig({
-          reason: 'auth-logout-server-models-cleared',
-          restartGatewayIfRunning: false,
-        }).catch((syncError) => {
-          console.warn('[Auth] failed to sync OpenClaw config after logout cleanup:', syncError);
-        });
-      }
-      return { success: true };
-    }
-  });
-
-  ipcMain.handle('auth:refreshToken', async () => {
-    try {
-      const accessToken = await refreshOnce('manual');
-      return accessToken ? { success: true, accessToken } : { success: false };
-    } catch {
-      return { success: false };
-    }
-  });
-
-  ipcMain.handle('auth:getAccessToken', async () => {
-    const tokens = getAuthTokens();
-    return tokens?.accessToken || null;
-  });
-
-  ipcMain.handle(AuthIpcChannel.GetPricingCatalog, async () => {
-    try {
-      const serverBaseUrl = getServerApiBaseUrl();
-      const url = `${serverBaseUrl}/api/models/pricing-catalog`;
-      console.log(`[Auth:getPricingCatalog] requesting public pricing catalog at ${url}`);
-      const resp = await net.fetch(url, {
-        method: 'GET',
-        headers: { Accept: 'application/json' },
-      });
-      console.log(`[Auth:getPricingCatalog] server returned HTTP ${resp.status}.`);
-      if (!resp.ok) {
-        return { success: false, error: `HTTP ${resp.status}` };
-      }
-      const body = await resp.json() as {
-        code: number;
-        message?: string;
-        data?: {
-          textModels?: unknown[];
-          imageModels?: unknown[];
-          videoModels?: unknown[];
-        };
-      };
-      if (body.code !== 0) {
-        console.warn('[Auth:getPricingCatalog] server rejected pricing catalog request:', serializeForLog({
-          code: body.code,
-          message: body.message,
-        }));
-        return { success: false, error: body.message || 'Failed to load pricing catalog.' };
-      }
-      const textModels = Array.isArray(body.data?.textModels) ? body.data.textModels : [];
-      console.log(`[Auth:getPricingCatalog] loaded ${textModels.length} public text models.`);
-      return { success: true, textModels };
-    } catch (error) {
-      console.error('[Auth:getPricingCatalog] pricing catalog request failed:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      };
-    }
-  });
-
-  ipcMain.handle('auth:getModels', async () => {
-    try {
-      const tokens = getAuthTokens();
-      if (!tokens) {
-        console.log('[Auth:getModels] No auth tokens available');
-        return { success: false };
-      }
-      const serverBaseUrl = getServerApiBaseUrl();
-      const url = appendKeyfromQuery(`${serverBaseUrl}/api/models/available`);
-      console.log(`[Auth:getModels] requesting available models at ${url}`);
-      const resp = await fetchWithAuth(url);
-      console.log('[Auth:getModels] Response status:', resp.status);
-      if (!resp.ok) {
-        console.log('[Auth:getModels] Response not ok:', resp.status, resp.statusText);
-        return { success: false };
-      }
-      const data = (await resp.json()) as {
-        code: number;
-        data: Array<{
-          modelId: string;
-          modelName: string;
-          provider: string;
-          apiFormat: string;
-          supportsImage?: boolean;
-          supportsThinking?: boolean;
-          explicitContextCache?: boolean;
-          contextWindow?: number;
-          costMultiplier?: number;
-          description?: string;
-        }>;
-      };
-      console.log('[Auth:getModels] Response data:', JSON.stringify(data).slice(0, 500));
-      if (data.code !== 0) return { success: false };
-      // Cache server model metadata for use in OpenClaw config sync (supportsImage, etc.)
-      const serverModelsChanged = updateServerModelMetadata(data.data);
-      const serverModelIds = data.data.map(model => model.modelId);
-      const serverModelsMissingFromConfig = !openClawConfigHasServerModels(serverModelIds);
-      // Re-sync so the gateway picks up the correct supportsImage values for server models.
-      // This IPC can run after normal chat completion when the renderer refreshes quota/model
-      // state, so server model updates must not force a hard gateway restart.
-      if (serverModelsChanged || serverModelsMissingFromConfig) {
-        console.log(
-          `[Auth:getModels] scheduling OpenClaw config sync for ${serverModelIds.length} server model(s); metadataChanged=${serverModelsChanged} missingFromConfig=${serverModelsMissingFromConfig}`,
-        );
-        syncOpenClawConfig({
-          reason: serverModelsChanged ? 'server-models-updated' : 'server-models-restored',
-          restartGatewayIfRunning: false,
-        }).catch((error) => {
-          console.warn('[Auth:getModels] failed to sync OpenClaw config after loading server models:', error);
-        });
-      } else {
-        console.debug('[Auth:getModels] server model metadata unchanged, skipping config sync');
-      }
-      return { success: true, models: data.data };
-    } catch (e) {
-      console.error('[Auth:getModels] Error:', e);
-      return { success: false };
-    }
-  });
-
-  ipcMain.handle(HtmlShareIpc.CreateFromHtmlFile, async (_event, input: unknown) => {
-    let archivePath: string | undefined;
-    try {
-      const options = sanitizeCreateFromHtmlFileInput(input);
-      console.debug(
-        `[HtmlShare] received HTML file share request for session ${options.sessionId} and artifact ${options.artifactId}`,
-      );
-      console.debug(
-        `[HtmlShare] HTML file share uses access mode ${options.accessMode ?? 'server-default'} and source file ${options.filePath}`,
-      );
-      const clientSourceKey = buildHtmlShareClientSourceKey(options.filePath);
-      const packaged = await packageHtmlFile(options.filePath);
-      archivePath = packaged.archivePath;
-      console.debug(
-        `[HtmlShare] packaged HTML file share with ${packaged.totalFiles} files, ${packaged.totalBytes} bytes, entry ${packaged.entryFile}, and ${packaged.warnings.length} warnings`,
-      );
-      const result = await uploadHtmlShare(
-        getServerApiBaseUrl(),
-        getHtmlSharePublicBaseUrl(),
-        fetchWithAuth,
-        {
-          archivePath: packaged.archivePath,
-          sourceType: HtmlShareSourceType.HtmlFile,
-          clientSourceKey,
-          sessionId: options.sessionId,
-          artifactId: options.artifactId,
-          title: options.title,
-          entryFile: packaged.entryFile,
-          accessMode: options.accessMode,
-          sourceSha256: packaged.sourceSha256,
-        },
-      );
-      console.debug(
-        `[HtmlShare] HTML file share finished with success ${result.success} and code ${result.code ?? 'none'}`,
-      );
-      return { ...result, warnings: packaged.warnings };
-    } catch (error) {
-      console.error('[HtmlShare] failed to create share from HTML file:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to create share',
-      };
-    } finally {
-      if (archivePath) {
-        const archiveDir = path.dirname(archivePath);
-        fs.promises
-          .rm(archiveDir, { recursive: true, force: true })
-          .then(() => {
-            console.debug(`[HtmlShare] cleaned temporary archive directory ${archiveDir}`);
-          })
-          .catch((cleanupError): undefined => {
-            console.warn('[HtmlShare] temporary archive cleanup failed:', cleanupError);
-            return undefined;
-          });
-      }
-    }
-  });
-
-  ipcMain.handle(HtmlShareIpc.GetByHtmlFile, async (_event, input: unknown) => {
-    try {
-      const options = sanitizeGetByHtmlFileInput(input);
-      const clientSourceKey = buildHtmlShareClientSourceKey(options.filePath);
-      return await getHtmlShareBySource(
-        getServerApiBaseUrl(),
-        getHtmlSharePublicBaseUrl(),
-        fetchWithAuth,
-        HtmlShareSourceType.HtmlFile,
-        clientSourceKey,
-      );
-    } catch (error) {
-      console.error('[HtmlShare] failed to look up share from HTML file:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to load share',
-      };
-    }
-  });
-
-  ipcMain.handle(HtmlShareIpc.UpdateFromHtmlFile, async (_event, input: unknown) => {
-    let archivePath: string | undefined;
-    try {
-      const options = sanitizeUpdateFromHtmlFileInput(input);
-      const clientSourceKey = buildHtmlShareClientSourceKey(options.filePath);
-      const packaged = await packageHtmlFile(options.filePath);
-      archivePath = packaged.archivePath;
-      const result = await updateHtmlShare(
-        getServerApiBaseUrl(),
-        getHtmlSharePublicBaseUrl(),
-        fetchWithAuth,
-        options.shareId,
-        {
-          archivePath: packaged.archivePath,
-          sourceType: HtmlShareSourceType.HtmlFile,
-          clientSourceKey,
-          sessionId: options.sessionId,
-          artifactId: options.artifactId,
-          title: options.title,
-          entryFile: packaged.entryFile,
-          accessMode: options.accessMode,
-          sourceSha256: packaged.sourceSha256,
-        },
-      );
-      return { ...result, warnings: packaged.warnings };
-    } catch (error) {
-      console.error('[HtmlShare] failed to update share from HTML file:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to update share',
-      };
-    } finally {
-      if (archivePath) {
-        const archiveDir = path.dirname(archivePath);
-        fs.promises
-          .rm(archiveDir, { recursive: true, force: true })
-          .then(() => {
-            console.debug(`[HtmlShare] cleaned temporary archive directory ${archiveDir}`);
-          })
-          .catch((cleanupError): undefined => {
-            console.warn('[HtmlShare] temporary archive cleanup failed:', cleanupError);
-            return undefined;
-          });
-      }
-    }
-  });
-
-  ipcMain.handle(HtmlShareIpc.CreateFromArtifactFile, async (_event, input: unknown) => {
-    let archivePath: string | undefined;
-    try {
-      const options = sanitizeCreateFromArtifactFileInput(input);
-      console.debug(
-        `[HtmlShare] received ${options.sourceType} share request for session ${options.sessionId} and artifact ${options.artifactId}`,
-      );
-      const clientSourceKey = buildArtifactShareClientSourceKey(options);
-      const packaged = await packageArtifactFile({
-        sourceType: options.sourceType,
-        fileName: options.fileName,
-        filePath: options.filePath,
-        content: options.content,
-        remoteUrl: options.remoteUrl,
-      });
-      archivePath = packaged.archivePath;
-      console.debug(
-        `[HtmlShare] packaged ${options.sourceType} share with ${packaged.totalBytes} bytes and entry ${packaged.entryFile}`,
-      );
-      const result = await uploadHtmlShare(
-        getServerApiBaseUrl(),
-        getHtmlSharePublicBaseUrl(),
-        fetchWithAuth,
-        {
-          archivePath: packaged.archivePath,
-          sourceType: options.sourceType,
-          clientSourceKey,
-          sessionId: options.sessionId,
-          artifactId: options.artifactId,
-          title: options.title,
-          entryFile: packaged.entryFile,
-          accessMode: options.accessMode,
-          sourceSha256: packaged.sourceSha256,
-        },
-      );
-      return { ...result, warnings: packaged.warnings };
-    } catch (error) {
-      console.error('[HtmlShare] failed to create share from artifact file:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to create share',
-      };
-    } finally {
-      if (archivePath) {
-        const archiveDir = path.dirname(archivePath);
-        fs.promises
-          .rm(archiveDir, { recursive: true, force: true })
-          .then(() => {
-            console.debug(`[HtmlShare] cleaned temporary archive directory ${archiveDir}`);
-          })
-          .catch((cleanupError): undefined => {
-            console.warn('[HtmlShare] temporary archive cleanup failed:', cleanupError);
-            return undefined;
-          });
-      }
-    }
-  });
-
-  ipcMain.handle(HtmlShareIpc.GetByArtifactFile, async (_event, input: unknown) => {
-    try {
-      const options = sanitizeGetByArtifactFileInput(input);
-      const clientSourceKey = buildArtifactShareClientSourceKey(options);
-      return await getHtmlShareBySource(
-        getServerApiBaseUrl(),
-        getHtmlSharePublicBaseUrl(),
-        fetchWithAuth,
-        options.sourceType,
-        clientSourceKey,
-      );
-    } catch (error) {
-      console.error('[HtmlShare] failed to look up share from artifact file:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to load share',
-      };
-    }
-  });
-
-  ipcMain.handle(HtmlShareIpc.UpdateFromArtifactFile, async (_event, input: unknown) => {
-    let archivePath: string | undefined;
-    try {
-      const options = sanitizeUpdateFromArtifactFileInput(input);
-      const clientSourceKey = buildArtifactShareClientSourceKey(options);
-      const packaged = await packageArtifactFile({
-        sourceType: options.sourceType,
-        fileName: options.fileName,
-        filePath: options.filePath,
-        content: options.content,
-        remoteUrl: options.remoteUrl,
-      });
-      archivePath = packaged.archivePath;
-      const result = await updateHtmlShare(
-        getServerApiBaseUrl(),
-        getHtmlSharePublicBaseUrl(),
-        fetchWithAuth,
-        options.shareId,
-        {
-          archivePath: packaged.archivePath,
-          sourceType: options.sourceType,
-          clientSourceKey,
-          sessionId: options.sessionId,
-          artifactId: options.artifactId,
-          title: options.title,
-          entryFile: packaged.entryFile,
-          accessMode: options.accessMode,
-          sourceSha256: packaged.sourceSha256,
-        },
-      );
-      return { ...result, warnings: packaged.warnings };
-    } catch (error) {
-      console.error('[HtmlShare] failed to update share from artifact file:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to update share',
-      };
-    } finally {
-      if (archivePath) {
-        const archiveDir = path.dirname(archivePath);
-        fs.promises
-          .rm(archiveDir, { recursive: true, force: true })
-          .then(() => {
-            console.debug(`[HtmlShare] cleaned temporary archive directory ${archiveDir}`);
-          })
-          .catch((cleanupError): undefined => {
-            console.warn('[HtmlShare] temporary archive cleanup failed:', cleanupError);
-            return undefined;
-          });
-      }
-    }
-  });
-
-  ipcMain.handle(HtmlShareIpc.UpdateStatus, async (_event, input: unknown) => {
-    try {
-      const options = sanitizeUpdateHtmlShareStatusInput(input);
-      return await updateHtmlShareStatus(
-        getServerApiBaseUrl(),
-        getHtmlSharePublicBaseUrl(),
-        fetchWithAuth,
-        options.shareId,
-        options.status,
-      );
-    } catch (error) {
-      console.error('[HtmlShare] failed to update share status:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to update share status',
-      };
-    }
-  });
-
-  ipcMain.handle(HtmlShareIpc.UpdateAccessMode, async (_event, input: unknown) => {
-    try {
-      const options = sanitizeUpdateHtmlShareAccessModeInput(input);
-      return await updateHtmlShareAccessMode(
-        getServerApiBaseUrl(),
-        getHtmlSharePublicBaseUrl(),
-        fetchWithAuth,
-        options.shareId,
-        options.accessMode,
-      );
-    } catch (error) {
-      console.error('[HtmlShare] failed to update share access mode:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to update share access mode',
-      };
-    }
-  });
-
-  ipcMain.handle(HtmlShareIpc.Get, async (_event, shareId: unknown) => {
-    try {
-      const id = sanitizeHtmlShareString(shareId, 'shareId', 64);
-      const resp = await fetchWithAuth(
-        `${getServerApiBaseUrl()}/api/html-shares/${encodeURIComponent(id)}`,
-      );
-      const body = (await resp.json().catch((): null => null)) as {
-        code?: number;
-        message?: string;
-        data?: unknown;
-      } | null;
-      if (!resp.ok || body?.code !== 0) {
-        return { success: false, error: body?.message || `Share lookup failed: ${resp.status}` };
-      }
-      return { success: true, share: body.data };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to load share',
-      };
-    }
-  });
-
-  ipcMain.handle(HtmlShareIpc.Disable, async (_event, shareId: unknown) => {
-    try {
-      const id = sanitizeHtmlShareString(shareId, 'shareId', 64);
-      return await updateHtmlShareStatus(
-        getServerApiBaseUrl(),
-        getHtmlSharePublicBaseUrl(),
-        fetchWithAuth,
-        id,
-        HtmlShareStatus.Disabled,
-      );
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to disable share',
-      };
-    }
-  });
-
-  ipcMain.handle(ShareDeploymentIpc.DetectProjectCandidates, async (_event, input: unknown) => {
-    try {
-      const options = sanitizeShareDeploymentDetectProjectCandidatesInput(input);
-      const candidates = await detectNodeServiceProjectCandidates(options);
-      return {
-        success: true,
-        candidates,
-      };
-    } catch (error) {
-      console.error('[ShareDeployment] failed to detect project candidates:', error);
-      return {
-        success: false,
-        candidates: [],
-        error: error instanceof Error ? error.message : 'Failed to detect project candidates',
-      };
-    }
-  });
-
-  ipcMain.handle(ShareDeploymentIpc.AnalyzeProjectDirectory, async (_event, input: unknown) => {
-    try {
-      const options = sanitizeShareDeploymentAnalyzeProjectDirectoryInput(input);
-      return await analyzeNodeServiceProjectDirectory(options);
-    } catch (error) {
-      console.error('[ShareDeployment] failed to analyze project directory:', error);
-      return {
-        success: false,
-        projectDirectory: '',
-        packageManager: ShareDeploymentPackageManager.Unknown,
-        nodeVersion: '20',
-        installCommand: 'npm install',
-        buildCommand: '',
-        startCommand: '',
-        totalFiles: 0,
-        totalBytes: 0,
-        excludedCount: 0,
-        warnings: [],
-        blockers: [error instanceof Error ? error.message : 'Failed to analyze project directory'],
-      };
-    }
-  });
-
-  ipcMain.handle(ShareDeploymentIpc.SelectPersistencePath, async (event, input: unknown) => {
-    try {
-      const options = sanitizeShareDeploymentSelectPersistencePathInput(input);
-      const ownerWindow = BrowserWindow.fromWebContents(event.sender);
-      let defaultPath: string | undefined;
-      try {
-        const stats = await fs.promises.stat(options.projectDirectory);
-        if (stats.isDirectory()) {
-          defaultPath = options.projectDirectory;
-        }
-      } catch {
-        defaultPath = undefined;
-      }
-      const dialogOptions = {
-        properties: options.kind === ShareDeploymentPersistenceBindingKind.File
-          ? ['openFile'] as 'openFile'[]
-          : ['openDirectory'] as 'openDirectory'[],
-        defaultPath,
-      };
-      const result = ownerWindow
-        ? await dialog.showOpenDialog(ownerWindow, dialogOptions)
-        : await dialog.showOpenDialog(dialogOptions);
-      if (result.canceled || result.filePaths.length === 0) {
-        return {
-          success: true,
-        };
-      }
-      const binding = await buildShareDeploymentPersistenceBindingFromPath(
-        options.projectDirectory,
-        result.filePaths[0],
-      );
-      return {
-        success: true,
-        binding,
-      };
-    } catch (error) {
-      console.error('[ShareDeployment] failed to select service data path:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to select service data path',
-      };
-    }
-  });
-
-  ipcMain.handle(ShareDeploymentIpc.CreateNodeDeployment, async (_event, input: unknown) => {
-    let archivePath: string | undefined;
-    try {
-      const options = sanitizeShareDeploymentCreateNodeInput(input);
-      const operationSourceKey = buildNodeDeploymentClientSourceKey({
-        sessionId: options.sessionId,
-        localServiceUrl: options.localServiceUrl,
-        projectDirectory: options.projectDirectory,
-      });
-      console.debug(
-        `[ShareDeployment] received node deployment request for session ${options.sessionId} and artifact ${options.artifactId}`,
-      );
-      return await shareDeploymentOperationCoordinator.run(operationSourceKey, async () => {
-        const packaged = await packageNodeServiceDeployment({
-          projectDirectory: options.projectDirectory,
-          localServiceUrl: options.localServiceUrl,
-          installCommand: options.installCommand,
-          buildCommand: options.buildCommand,
-          startCommand: options.startCommand,
-          port: options.port,
-          persistence: options.persistence,
-        });
-        archivePath = packaged.archivePath;
-        const analysis = options.persistence
-          ? {
-              ...packaged.analysis,
-              persistence: options.persistence,
-            }
-          : packaged.analysis;
-        const isStaticDeployment = packaged.deploymentKind === ShareDeploymentKind.StaticSite;
-        const clientSourceKey = isStaticDeployment
-          ? buildStaticDeploymentClientSourceKey({
-              sessionId: options.sessionId,
-              localServiceUrl: options.localServiceUrl,
-              projectDirectory: options.projectDirectory,
-            })
-          : operationSourceKey;
-        const serverBaseUrl = getServerApiBaseUrl();
-        const publicBaseUrl = getHtmlSharePublicBaseUrl();
-        const result = isStaticDeployment
-          ? await uploadStaticDeployment(
-              serverBaseUrl,
-              publicBaseUrl,
-              fetchWithAuth,
-              {
-                ...options,
-                archivePath: packaged.archivePath,
-                sourceSha256: packaged.sourceSha256,
-                analysis,
-                archiveBytes: packaged.archiveBytes,
-                clientSourceKey,
-                deploymentKind: ShareDeploymentKind.StaticSite,
-                entryFile: packaged.entryFile ?? 'index.html',
-                spaFallback: packaged.spaFallback ?? true,
-              },
-            )
-          : await uploadNodeDeployment(
-              serverBaseUrl,
-              publicBaseUrl,
-              fetchWithAuth,
-              {
-                ...options,
-                archivePath: packaged.archivePath,
-                sourceSha256: packaged.sourceSha256,
-                analysis,
-                archiveBytes: packaged.archiveBytes,
-                clientSourceKey,
-                deploymentKind: ShareDeploymentKind.NodeService,
-              },
-            );
-        let finalResult = result;
-        if (result.success && result.deployment) {
-          const accessSync = await reconcileShareDeploymentAccess(
-            result.deployment,
-            {
-              accessMode: options.accessMode ?? HtmlShareAccessMode.Code,
-              previousAccessMode: options.previousAccessMode,
-              targetShareStatus: options.targetShareStatus ?? HtmlShareStatus.Live,
-            },
-            {
-              updateAccessMode: (shareId, accessMode) => updateHtmlShareAccessMode(
-                serverBaseUrl,
-                publicBaseUrl,
-                fetchWithAuth,
-                shareId,
-                accessMode,
-              ),
-              updateStatus: (shareId, status) => updateHtmlShareStatus(
-                serverBaseUrl,
-                publicBaseUrl,
-                fetchWithAuth,
-                shareId,
-                status,
-              ),
-            },
-          );
-          finalResult = {
-            ...result,
-            deployment: accessSync.deployment,
-            accessSyncError: formatShareDeploymentAccessSyncError(accessSync.failures),
-          };
-        }
-        console.debug(
-          `[ShareDeployment] local service deployment request finished with kind ${packaged.deploymentKind} success ${finalResult.success} and code ${finalResult.code ?? 'none'}`,
-        );
-        return finalResult;
-      });
-    } catch (error) {
-      console.error('[ShareDeployment] failed to create node deployment:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to create node deployment',
-      };
-    } finally {
-      if (archivePath) {
-        const archiveDir = path.dirname(archivePath);
-        fs.promises
-          .rm(archiveDir, { recursive: true, force: true })
-          .then(() => {
-            console.debug(`[ShareDeployment] cleaned temporary archive directory ${archiveDir}`);
-          })
-          .catch((cleanupError): undefined => {
-            console.warn('[ShareDeployment] temporary archive cleanup failed:', cleanupError);
-            return undefined;
-          });
-      }
-    }
-  });
-
-  ipcMain.handle(ShareDeploymentIpc.Get, async (_event, deploymentId: unknown) => {
-    try {
-      const id = sanitizeHtmlShareString(deploymentId, 'deploymentId', 128);
-      return await getNodeDeployment(
-        getServerApiBaseUrl(),
-        getHtmlSharePublicBaseUrl(),
-        fetchWithAuth,
-        id,
-      );
-    } catch (error) {
-      console.error('[ShareDeployment] failed to load deployment:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to load deployment',
-      };
-    }
-  });
-
-  ipcMain.handle(ShareDeploymentIpc.GetPersistence, async (_event, deploymentId: unknown) => {
-    try {
-      const id = sanitizeShareDeploymentPersistenceDeploymentIdInput(deploymentId);
-      return await getDeploymentPersistence(getServerApiBaseUrl(), fetchWithAuth, id);
-    } catch (error) {
-      console.error('[ShareDeployment] failed to load service data:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to load service data',
-      };
-    }
-  });
-
-  ipcMain.handle(ShareDeploymentIpc.DownloadPersistenceArchive, async (_event, input: unknown) => {
-    try {
-      const options = sanitizeShareDeploymentDownloadPersistenceInput(input);
-      return await downloadDeploymentPersistenceArchive(
-        getServerApiBaseUrl(),
-        fetchWithAuth,
-        options,
-      );
-    } catch (error) {
-      console.error('[ShareDeployment] failed to download service data:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to download service data',
-      };
-    }
-  });
-
-  ipcMain.handle(ShareDeploymentIpc.GetByLocalService, async (_event, input: unknown) => {
-    try {
-      const options = sanitizeShareDeploymentGetByLocalServiceInput(input);
-      return await getNodeDeploymentByLocalService(
-        getServerApiBaseUrl(),
-        getHtmlSharePublicBaseUrl(),
-        fetchWithAuth,
-        options,
-      );
-    } catch (error) {
-      console.error('[ShareDeployment] failed to load deployment by local service:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to load deployment',
-      };
-    }
-  });
-
-  // Media generation IPC handlers
-  ipcMain.handle('media:getModels', async (_event, type: 'image' | 'video') => {
-    try {
-      const tokens = getAuthTokens();
-      if (!tokens) {
-        console.warn('[Media:getModels] No auth tokens, skipping');
-        return { success: false, error: 'Not logged in' };
-      }
-      const serverBaseUrl = getServerApiBaseUrl();
-      const endpoint = type === 'image' ? '/api/media/images/models' : '/api/media/videos/models';
-      const resp = await fetchWithAuth(`${serverBaseUrl}${endpoint}`);
-      if (!resp.ok) return { success: false, error: `HTTP ${resp.status}` };
-      const body = await resp.json() as { code: number; data?: unknown[]; message?: string };
-      if (body.code !== 0) return { success: false, error: body.message };
-      const models = (body.data || []).map(model => {
-        const mediaModel = model as { modelId?: string; displayName?: string };
-        const modelId = canonicalizeMediaModelId(mediaModel.modelId);
-        return {
-          ...(model as Record<string, unknown>),
-          modelId,
-          displayName: mediaModelDisplayName(modelId, mediaModel.displayName),
-        };
-      });
-      return { success: true, models };
-    } catch (e) {
-      console.error('[Media:getModels] Error:', e);
-      return { success: false, error: e instanceof Error ? e.message : 'Unknown error' };
-    }
-  });
-
-  ipcMain.handle('media:getTaskStatus', async (_event, taskId: number, type: 'image' | 'video') => {
-    try {
-      const tokens = getAuthTokens();
-      if (!tokens) return { success: false, error: 'Not logged in' };
-      const serverBaseUrl = getServerApiBaseUrl();
-      const mediaPath = type === 'image' ? 'images' : 'videos';
-      const taskUrl = `${serverBaseUrl}/api/media/${mediaPath}/tasks/${taskId}`;
-      console.log('[Media:getTaskStatus] Fetching:', taskUrl);
-      const resp = await fetchWithAuth(taskUrl);
-      console.log('[Media:getTaskStatus] Response status:', resp.status);
-      if (!resp.ok) return { success: false, error: `HTTP ${resp.status}` };
-      const body = await resp.json() as { code: number; data?: unknown; message?: string };
-      console.log('[Media:getTaskStatus] Response body:', JSON.stringify(body));
-      if (body.code !== 0) return { success: false, error: body.message };
-      return { success: true, task: body.data };
-    } catch (e) {
-      console.error('[Media:getTaskStatus] Error:', e);
-      return { success: false, error: e instanceof Error ? e.message : 'Unknown error' };
-    }
-  });
 
   // Skills IPC handlers
   registerSkillHandlers({
@@ -6857,7 +4064,7 @@ if (!gotTheLock) {
           sessionId: session.id,
           kitIds: options.kitIds,
           mediaSelection: normalizeMediaSelectionState(options.mediaSelection),
-          mediaGenerationEntitled: cachedMediaGenerationEntitled,
+          mediaGenerationEntitled: false,
         });
         const { workflowKind, mediaSelection: normalizedMediaSelection } = skinTurn;
         if (normalizedMediaSelection && normalizedMediaSelection.mode !== 'none') {
@@ -7034,7 +4241,7 @@ if (!gotTheLock) {
           sessionId: options.sessionId,
           kitIds: options.kitIds,
           mediaSelection: normalizeMediaSelectionState(options.mediaSelection),
-          mediaGenerationEntitled: cachedMediaGenerationEntitled,
+          mediaGenerationEntitled: false,
         });
         const { workflowKind, mediaSelection: normalizedMediaSelection } = skinTurn;
         if (normalizedMediaSelection && normalizedMediaSelection.mode !== 'none') {
@@ -7769,22 +4976,8 @@ if (!gotTheLock) {
     getCoworkEngineRouter,
   });
 
-  ipcMain.handle('cowork:media:cancel', async (_event, taskId: string) => {
-    try {
-      const serverBaseUrl = getServerApiBaseUrl();
-      const resp = await fetchWithAuth(`${serverBaseUrl}/api/media/videos/tasks/${taskId}/cancel`, { method: 'POST' });
-      const body = await resp.json() as { code: number; message?: string };
-      if (body.code === 0) {
-        return { success: true };
-      }
-      const msg = body.message || '';
-      if (msg.includes('409') || msg.includes('running') || msg.includes('Conflict')) {
-        return { success: false, message: 'Task is already running and cannot be cancelled.' };
-      }
-      return { success: false, message: msg || 'Cancel failed' };
-    } catch (error) {
-      return { success: false, message: error instanceof Error ? error.message : 'Cancel failed' };
-    }
+  ipcMain.handle('cowork:media:cancel', async (_event, _taskId: string) => {
+    return { success: false, message: 'Media generation is not available.' };
   });
 
   ipcMain.handle('cowork:permission:respond', async (_event, options: {
@@ -10183,12 +7376,6 @@ if (!gotTheLock) {
     }
   });
 
-  registerAsrIpcHandlers({
-    getAuthTokens,
-    fetchWithAuth,
-    getServerApiBaseUrl,
-  });
-
   // ---- artifact file watching ----
   const fileWatchers = new Map<
     string,
@@ -10809,7 +7996,6 @@ if (!gotTheLock) {
 
     // 处理渲染进程崩溃或退出
     mainWindow.webContents.on('render-process-gone', (_event, details) => {
-      authCallbackRouter.markRendererUnavailable();
       console.error('Window render process gone:', details);
       scheduleReload('webContents-crashed');
     });
@@ -10863,13 +8049,11 @@ if (!gotTheLock) {
       if (isMainFrame && !isInPlace) {
         isOpenSessionFromNotificationReady = false;
       }
-      authCallbackRouter.handleNavigationStarted({ isMainFrame, isInPlace });
     });
 
     // 当窗口关闭时，清除引用
     mainWindow.on('closed', () => {
       windowStatePersist.cleanup();
-      authCallbackRouter.markRendererUnavailable();
       isOpenSessionFromNotificationReady = false;
       mainWindow = null;
     });
@@ -11120,8 +8304,6 @@ if (!gotTheLock) {
       console.error('[HtmlPreviewServer] Failed to stop:', error);
     });
 
-    stopOpenClawTokenProxy();
-
     // Stop skill services.
     const skillServices = getSkillServiceManager();
     await skillServices.stopAll();
@@ -11257,30 +8439,6 @@ if (!gotTheLock) {
     }
     // Inject store getter into claudeSettings
     setStoreGetter(() => store);
-    // Inject auth getters for lobsterai-server provider routing
-    // The getter proactively triggers a background token refresh when the
-    // accessToken is within 5 minutes of expiry, so that the SDK always
-    // gets a fresh token without blocking.
-
-    setAuthTokensGetter(() => {
-      const tokens = getAuthTokens();
-      if (!tokens) return null;
-      // Check if accessToken is close to expiry and trigger background refresh
-      try {
-        const payload = JSON.parse(
-          Buffer.from(tokens.accessToken.split('.')[1], 'base64').toString(),
-        );
-        const expiresAt = payload.exp * 1000;
-        if (expiresAt - Date.now() < 5 * 60 * 1000) {
-          void refreshOnce('proactive'); // fire-and-forget
-        }
-      } catch {
-        /* unable to parse JWT, return token as-is */
-      }
-      return tokens;
-    });
-    setServerBaseUrlGetter(() => getServerApiBaseUrl());
-
     // Initialize Copilot token manager and restore token state if available
     initCopilotTokenManager(getStore);
     const storedGithubToken = getStore().get('github_copilot_github_token') as string | undefined;
@@ -11302,35 +8460,6 @@ if (!gotTheLock) {
         });
     }
 
-    registerProxyTokenRefresher('lobsterai-server', async () => {
-      const tokens = getAuthTokens();
-      if (!tokens?.refreshToken) return null;
-      const serverBaseUrl = getServerApiBaseUrl();
-      try {
-        const refreshUrl = `${serverBaseUrl}/api/auth/refresh`;
-        console.log(`[Auth] requesting proxy token refresh at ${refreshUrl}`);
-        const resp = await net.fetch(refreshUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(withKeyfromBody({ refreshToken: tokens.refreshToken })),
-        });
-        if (resp.ok) {
-          const body = (await resp.json()) as {
-            code: number;
-            data: { accessToken: string; refreshToken?: string };
-          };
-          if (body.code === 0 && body.data) {
-            saveAuthTokens(body.data.accessToken, body.data.refreshToken || tokens.refreshToken);
-            console.log('[Auth] proxy token refresh succeeded');
-            return body.data.accessToken;
-          }
-        }
-      } catch (err) {
-        console.warn('[Auth] proxy token refresh failed:', err);
-      }
-      return null;
-    });
-
     registerProxyTokenRefresher('github-copilot', async () => {
       try {
         const { refreshCopilotTokenNow } = await import('./libs/copilotTokenManager');
@@ -11341,21 +8470,6 @@ if (!gotTheLock) {
         return null;
       }
     });
-
-    // Start the lightweight token proxy before OpenClaw config sync so that
-    // lobsterai-server provider can use the proxy URL in its config.
-    profiler.mark('openClawTokenProxy');
-    try {
-      await startOpenClawTokenProxy({
-        getAuthTokens,
-        refreshToken: refreshOnce,
-        getServerBaseUrl: getServerApiBaseUrl,
-      });
-      console.log('[Main] OpenClaw token proxy started');
-    } catch (err) {
-      console.warn('[Main] OpenClaw token proxy failed to start (non-fatal):', err);
-    }
-    profiler.measure('openClawTokenProxy');
 
     // Enterprise config sync — must run before openclawConfigSync
     profiler.mark('enterpriseConfigSync');
@@ -11472,21 +8586,16 @@ if (!gotTheLock) {
     });
     profiler.measure('coworkOpenAICompatProxy');
 
-    // ── Pre-warm quota & model caches so provider resolution and config sync
-    // see real server data instead of empty defaults ──
-    if (getAuthTokens()) {
-      profiler.mark('startupCacheWarmup');
-      const warmupResult = await runStartupCacheWarmup({
-        serverBaseUrl: getServerApiBaseUrl(),
-        fetchWithAuth,
-        appendKeyfromQuery,
-        cachedSubscriptionStatus,
-        t,
-      });
-      cachedSubscriptionStatus = warmupResult.subscriptionStatus;
-      cachedMediaGenerationEntitled = warmupResult.mediaGenerationEntitled;
-      profiler.measure('startupCacheWarmup');
-    }
+    // Pre-warm caches (stubbed after auth system removal)
+    profiler.mark('startupCacheWarmup');
+    await runStartupCacheWarmup({
+      serverBaseUrl: '',
+      fetchWithAuth: async () => new Response('{}', { status: 401 }),
+      appendKeyfromQuery,
+      cachedSubscriptionStatus: 'free',
+      t,
+    });
+    profiler.measure('startupCacheWarmup');
 
     // Agent model migration — runs after cache warmup so resolveMatchedProvider
     // can match lobsterai-server models without falling back.
@@ -11641,13 +8750,6 @@ if (!gotTheLock) {
     profiler.measure('skillManager');
 
     console.log(profiler.summary());
-
-    // Windows/Linux cold start: parse deep link from process.argv.
-    // The router buffers it because the renderer is not ready yet after createWindow().
-    const coldStartDeepLink = process.argv.find(arg => arg.startsWith('lobsterai://'));
-    if (coldStartDeepLink) {
-      handleDeepLink(coldStartDeepLink);
-    }
 
     // Auto-reconnect IM bots that were enabled before restart
     getIMGatewayManager()
