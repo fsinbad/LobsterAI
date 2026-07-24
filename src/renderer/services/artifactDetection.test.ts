@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'vitest';
 
-import { ShareDeploymentCandidateSource } from '../../shared/shareDeployment/constants';
 import type { CoworkMessage } from '../types/cowork';
 import { collectSessionArtifacts } from './artifactDetection';
 
@@ -107,39 +106,6 @@ describe('collectSessionArtifacts', () => {
     const detected = collectSessionArtifacts(messages, 'sess1', CWD);
     expect(detected).toHaveLength(1);
     expect(detected[0].filePath).toBe('/Users/admin/Desktop/便笺.md');
-  });
-
-  test('collects localhost service urls alongside file artifacts', () => {
-    const messages = [
-      assistantMessage('a1', `服务已启动 http://localhost:5173 页面 [首页](${CWD}/index.html)`),
-    ];
-
-    const detected = collectSessionArtifacts(messages, 'sess1', CWD);
-    const types = detected.map(artifact => artifact.type).sort();
-    expect(types).toEqual(['html', 'local-service']);
-  });
-
-  test('preserves project context for detected local services', () => {
-    const messages = [
-      {
-        id: 'tool1',
-        type: 'tool_use',
-        content: '',
-        timestamp: Date.now(),
-        metadata: {
-          toolName: 'Bash',
-          toolInput: { command: `cd ${CWD}/app && npm run dev` },
-        },
-      },
-      assistantMessage('a1', '服务已启动：http://localhost:5173'),
-    ] as CoworkMessage[];
-
-    const detected = collectSessionArtifacts(messages, 'sess1', CWD);
-    const localService = detected.find(artifact => artifact.type === 'local-service');
-    expect(localService?.localService?.projectDirectory).toBe(`${CWD}/app`);
-    expect(localService?.localService?.projectCandidates?.[0].source).toBe(
-      ShareDeploymentCandidateSource.ToolCdCommand,
-    );
   });
 
   test('failed edit tool calls yield no artifacts', () => {

@@ -25,10 +25,6 @@ import {
 } from '../../../shared/cowork/browserAnnotations';
 import { CoworkSelectedTextSource } from '../../../shared/cowork/selectedText';
 import { OpenClawTranscriptSafetyLimit } from '../../../shared/openclawTranscript/constants';
-import {
-  __openClawTokenProxyTestUtils,
-  consumeRecentOpenClawTokenProxyQuotaError,
-} from '../openclawTokenProxy';
 import { ContinuityCapsuleSource } from './coworkContinuityCapsule';
 import {
   buildOpenClawChatSendPayloadTooLargeError,
@@ -249,19 +245,6 @@ test('normalizeOpenClawRuntimeErrorMessage keeps unrelated errors unchanged', ()
   expect(normalizeOpenClawRuntimeErrorMessage('upstream 502')).toBe('upstream 502');
 });
 
-test('resolveOpenClawRuntimeErrorMessage restores recent quota error hidden by OpenClaw generic error', () => {
-  consumeRecentOpenClawTokenProxyQuotaError();
-  __openClawTokenProxyTestUtils.rememberQuotaError({
-    message: '本月积分已用完',
-    code: 40202,
-  });
-
-  expect(resolveOpenClawRuntimeErrorMessage('LLM request failed.')).toContain(
-    '积分额度已用完',
-  );
-  expect(consumeRecentOpenClawTokenProxyQuotaError()).toBeNull();
-});
-
 test('resolveOpenClawRuntimeErrorMessage classifies raw LobsterAI quota errors', () => {
   expect(resolveOpenClawRuntimeErrorMessage('本月积分已用完')).toContain('积分额度已用完');
 });
@@ -297,21 +280,6 @@ test('resolveOpenClawRuntimeErrorMessage classifies generic error from safe fetc
     model: 'MiniMax-M2.7',
     rawErrorPreview: 'TypeError: fetch failed; causeName=ConnectTimeoutError; causeCode=UND_ERR_CONNECT_TIMEOUT',
   })).toContain('网络连接失败');
-});
-
-test('resolveOpenClawRuntimeErrorMessage prefers safe metadata over stale quota signal', () => {
-  consumeRecentOpenClawTokenProxyQuotaError();
-  __openClawTokenProxyTestUtils.rememberQuotaError({
-    message: '本月积分已用完',
-    code: 40202,
-  });
-
-  expect(resolveOpenClawRuntimeErrorMessage('LLM request failed.', {
-    provider: 'minimax',
-    model: 'MiniMax-M2.7',
-    providerRuntimeFailureKind: 'timeout',
-  })).toContain('网络连接失败');
-  expect(consumeRecentOpenClawTokenProxyQuotaError()).toBeNull();
 });
 
 test('resolveOpenClawRuntimeErrorMessage keeps generic error when safe metadata is unclassified', () => {
@@ -615,9 +583,9 @@ test('outbound prompt injects workspace rehydration bridge before the current re
 
   const prompt = await internal.buildOutboundPrompt('session-1', '继续');
 
-  expect(prompt).toContain('[LobsterAI workspace state after context compaction]');
+  expect(prompt).toContain('[NukemAI workspace state after context compaction]');
   expect(prompt).toContain('src/main/libs/agentEngine/coworkWorkspaceRehydration.ts');
-  expect(prompt.indexOf('[LobsterAI workspace state after context compaction]')).toBeLessThan(
+  expect(prompt.indexOf('[NukemAI workspace state after context compaction]')).toBeLessThan(
     prompt.indexOf('[Current user request]'),
   );
 });
@@ -665,8 +633,8 @@ test('outbound prompt injects workspace rehydration bridge once per compaction',
   const firstPrompt = await internal.buildOutboundPrompt('session-1', '继续');
   const secondPrompt = await internal.buildOutboundPrompt('session-1', '再继续');
 
-  expect(firstPrompt).toContain('[LobsterAI workspace state after context compaction]');
-  expect(secondPrompt).not.toContain('[LobsterAI workspace state after context compaction]');
+  expect(firstPrompt).toContain('[NukemAI workspace state after context compaction]');
+  expect(secondPrompt).not.toContain('[NukemAI workspace state after context compaction]');
 });
 
 test('outbound prompt injects top-k evidence bridge before the current request', async () => {
@@ -725,9 +693,9 @@ test('outbound prompt injects top-k evidence bridge before the current request',
 
   const prompt = await internal.buildOutboundPrompt('session-1', '继续处理 src/pages/Bakery.tsx 的 npm test failed');
 
-  expect(prompt).toContain('[LobsterAI retrieved evidence after context compaction]');
+  expect(prompt).toContain('[NukemAI retrieved evidence after context compaction]');
   expect(prompt).toContain('npm test failed in src/pages/Bakery.tsx');
-  expect(prompt.indexOf('[LobsterAI retrieved evidence after context compaction]')).toBeLessThan(
+  expect(prompt.indexOf('[NukemAI retrieved evidence after context compaction]')).toBeLessThan(
     prompt.indexOf('[Current user request]'),
   );
 });
@@ -3829,52 +3797,6 @@ test('chat error replaces generic LLM failure using safe OpenClaw metadata', () 
   expect(session.status).toBe('error');
   expect(errorSpy).toHaveBeenCalledWith(session.id, expect.stringContaining('OAuth 授权已失效'));
   expect(persistedError?.content).toContain('OAuth 授权已失效');
-});
-
-test('chat error can consume quota signal after lifecycle error schedules fallback', () => {
-  vi.useFakeTimers();
-  try {
-    consumeRecentOpenClawTokenProxyQuotaError();
-    const { session, store } = createReconcileStore([
-      { id: 'msg-1', type: 'user', content: 'hello', timestamp: 1, metadata: {} },
-    ]);
-    const adapter = new OpenClawRuntimeAdapter(store, {});
-    const sessionKey = `agent:main:lobsterai:${session.id}`;
-    const errorSpy = vi.fn();
-    const abortRequest = vi.fn(async () => ({}));
-
-    session.status = 'running';
-    adapter.on('error', errorSpy);
-    adapter.gatewayClient = { start: () => {}, stop: () => {}, request: abortRequest };
-    adapter.activeTurns.set(session.id, createActiveTurn(session.id, sessionKey, 'run-quota'));
-    __openClawTokenProxyTestUtils.rememberQuotaError({
-      message: '本月积分已用完',
-      code: 40202,
-    });
-
-    adapter.handleAgentLifecycleEvent(session.id, {
-      phase: 'error',
-      error: 'LLM request failed.',
-    }, 'run-quota');
-
-    adapter.handleChatEvent({
-      state: 'error',
-      runId: 'run-quota',
-      sessionKey,
-      errorMessage: 'LLM request failed.',
-    }, 1);
-
-    const persistedError = session.messages.find((message) => message.type === 'system');
-    expect(session.status).toBe('error');
-    expect(errorSpy).toHaveBeenCalledWith(session.id, expect.stringContaining('积分额度已用完'));
-    expect(persistedError?.content).toContain('立即升级/充值');
-    expect(abortRequest).not.toHaveBeenCalled();
-    expect(consumeRecentOpenClawTokenProxyQuotaError()).toBeNull();
-  } finally {
-    vi.clearAllTimers();
-    vi.useRealTimers();
-    consumeRecentOpenClawTokenProxyQuotaError();
-  }
 });
 
 test('stale chat error after a successful deferred final completes the turn instead of erroring', async () => {

@@ -8,7 +8,7 @@ const { readBuildKeyfrom } = require('./build-keyfrom.cjs');
 
 // Opt-in web installer (small NSIS stub that downloads the app package from a
 // CDN at install time). Default builds are full offline installers; nothing
-// changes unless NUKEMAI_WEB_INSTALLER=1 is set explicitly.
+// changes unless LOBSTERAI_WEB_INSTALLER=1 is set explicitly.
 const WEB_INSTALLER_ENV = BuildEnv.WebInstaller;
 const WEB_PKG_BASE_URL_ENV = BuildEnv.WebPkgBaseUrl;
 const WEB_PKG_URL_ENV = BuildEnv.WebPkgUrl;

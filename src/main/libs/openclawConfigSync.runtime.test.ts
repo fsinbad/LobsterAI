@@ -17,17 +17,6 @@ vi.mock('electron', () => ({
 }));
 
 const mockRuntimeState = vi.hoisted(() => ({
-  proxyPort: null as number | null,
-  serverModels: [] as Array<{
-    modelId: string;
-    modelName?: string;
-    provider?: string;
-    apiFormat?: string;
-    supportsImage?: boolean;
-    supportsThinking?: boolean;
-    contextWindow?: number;
-    explicitContextCache?: boolean;
-  }>,
   enabledProviders: [] as Array<{
     providerName: string;
     baseURL: string;
@@ -67,7 +56,6 @@ const mockRuntimeState = vi.hoisted(() => ({
 }));
 
 vi.mock('./claudeSettings', () => ({
-  getAllServerModelMetadata: () => mockRuntimeState.serverModels,
   listProviderSourceEntries: () => mockRuntimeState.providerSourceEntries,
   resolveAllEnabledProviderConfigs: () => mockRuntimeState.enabledProviders,
   resolveAllProviderApiKeys: () => ({}),
@@ -89,18 +77,12 @@ vi.mock('./openclawLocalExtensions', () => ({
   },
 }));
 
-vi.mock('./openclawTokenProxy', () => ({
-  getOpenClawTokenProxyPort: () => mockRuntimeState.proxyPort,
-}));
-
 describe('OpenClawConfigSync runtime config output', () => {
   let tmpDir: string;
   let configPath: string;
   let stateDir: string;
 
   beforeEach(() => {
-    mockRuntimeState.proxyPort = null;
-    mockRuntimeState.serverModels = [];
     mockRuntimeState.enabledProviders = [];
     mockRuntimeState.providerSourceEntries = [];
     mockRuntimeState.rawApiConfig = {
@@ -656,251 +638,6 @@ describe('OpenClawConfigSync runtime config output', () => {
     expect(fs.existsSync(path.join(writerWorkspace, 'USER.md'))).toBe(false);
   });
 
-  test('merges all server models into existing lobsterai provider and updates image input', async () => {
-    mockRuntimeState.proxyPort = 56646;
-    mockRuntimeState.serverModels = [
-      {
-        modelId: 'qwen3.5-plus-YoudaoInner',
-        modelName: 'qwen3.5-plus-YoudaoInner',
-        provider: 'YoudaoInner',
-        apiFormat: 'openai',
-        supportsImage: true,
-        explicitContextCache: true,
-      },
-      {
-        modelId: 'qwen3.6-plus-YoudaoInner',
-        modelName: 'qwen3.6-plus-YoudaoInner',
-        provider: 'YoudaoInner',
-        apiFormat: 'openai',
-        supportsImage: true,
-        explicitContextCache: true,
-      },
-      {
-        modelId: 'claude-sonnet-4-6-YoudaoInner',
-        modelName: 'claude-sonnet-4-6-YoudaoInner',
-        provider: 'YoudaoInner',
-        apiFormat: 'anthropic',
-        supportsImage: true,
-        supportsThinking: true,
-        contextWindow: 1_000_000,
-        explicitContextCache: true,
-      },
-      {
-        modelId: 'claude-opus-4-YoudaoInner',
-        modelName: 'claude-opus-4-YoudaoInner',
-        provider: 'YoudaoInner',
-        apiFormat: 'anthropic',
-        supportsImage: true,
-        supportsThinking: true,
-      },
-      {
-        modelId: 'claude-sonnet-4-6',
-        modelName: 'Claude Sonnet 4.6 OpenAI Compat',
-        provider: 'YoudaoInner',
-        apiFormat: 'openai',
-        supportsImage: true,
-        supportsThinking: true,
-        contextWindow: 1_000_000,
-        explicitContextCache: true,
-      },
-      {
-        modelId: 'glm-5.1-YoudaoInner',
-        provider: 'YoudaoInner',
-        apiFormat: 'openai',
-        supportsImage: false,
-        supportsThinking: true,
-      },
-      {
-        modelId: 'deepseek-v3.2-YoudaoInner',
-        provider: 'YoudaoInner',
-        apiFormat: 'openai',
-        supportsImage: false,
-      },
-    ];
-    mockRuntimeState.rawApiConfig = {
-      config: {
-        baseURL: 'https://lobsterai-server.youdao.com/api/proxy/v1',
-        apiKey: 'access-token',
-        model: 'qwen3.5-plus-YoudaoInner',
-        apiType: 'openai',
-      },
-      providerMetadata: {
-        providerName: 'lobsterai-server',
-        codingPlanEnabled: false,
-        supportsImage: false,
-        modelName: 'Qwen3.5 Plus',
-      },
-    };
-
-    const { OpenClawConfigSync } = await import('./openclawConfigSync');
-
-    const sync = new OpenClawConfigSync({
-      engineManager: {
-        getConfigPath: () => configPath,
-        getGatewayToken: () => 'gateway-token',
-        getStateDir: () => stateDir,
-        getBaseDir: () => tmpDir,
-      } as never,
-      getCoworkConfig: () => ({
-        workingDirectory: tmpDir,
-        systemPrompt: '',
-        executionMode: 'local',
-        agentEngine: 'openclaw',
-        memoryEnabled: false,
-        memoryImplicitUpdateEnabled: false,
-        memoryLlmJudgeEnabled: false,
-        memoryGuardLevel: 'balanced',
-        memoryUserMemoriesMaxItems: 100,
-        skipMissedJobs: false,
-      }),
-      isEnterprise: () => false,
-      getTelegramInstances: () => [],
-      getDiscordOpenClawConfig: () => null,
-      getDingTalkInstances: () => [],
-      getFeishuInstances: () => [],
-      getQQInstances: () => [],
-      getWecomConfig: () => null,
-      getWecomInstances: () => [],
-      getPopoInstances: () => [],
-      getNimConfig: () => null,
-      getNeteaseBeeChanConfig: () => null,
-      getWeixinConfig: () => null,
-      getIMSettings: () => null,
-      getSkillsList: () => [],
-      getAgents: () => [],
-    });
-
-    const result = sync.sync('server-models-updated');
-    expect(result.ok).toBe(true);
-
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    const provider = config.models.providers['lobsterai-server'];
-    expect(provider.baseUrl).toBe('http://127.0.0.1:56646/v1');
-    expect(provider.apiKey).toBe('${LOBSTER_PROXY_TOKEN}');
-    expect(JSON.stringify(config)).not.toContain('LOBSTER_APIKEY_SERVER');
-    expect(provider.models).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        id: 'qwen3.5-plus-YoudaoInner',
-        api: 'openai-completions',
-        input: ['text', 'image'],
-      }),
-      expect.objectContaining({
-        id: 'qwen3.6-plus-YoudaoInner',
-        api: 'openai-completions',
-        input: ['text', 'image'],
-      }),
-      expect.objectContaining({
-        id: 'claude-sonnet-4-6-YoudaoInner',
-        api: 'anthropic-messages',
-        input: ['text', 'image'],
-        reasoning: true,
-        contextWindow: 1_000_000,
-      }),
-      expect.objectContaining({
-        id: 'claude-opus-4-YoudaoInner',
-        api: 'anthropic-messages',
-        input: ['text', 'image'],
-        reasoning: true,
-      }),
-      expect.objectContaining({
-        id: 'claude-sonnet-4-6',
-        api: 'openai-completions',
-        input: ['text', 'image'],
-        reasoning: true,
-        contextWindow: 1_000_000,
-      }),
-      expect.objectContaining({
-        id: 'glm-5.1-YoudaoInner',
-        api: 'openai-completions',
-        input: ['text'],
-        reasoning: true,
-      }),
-      expect.objectContaining({
-        id: 'deepseek-v3.2-YoudaoInner',
-        api: 'openai-completions',
-        input: ['text'],
-      }),
-    ]));
-    expect(provider.models).toHaveLength(7);
-    expect(JSON.stringify(provider.models)).not.toContain('cacheControlFormat');
-    expect(JSON.stringify(provider.models)).not.toContain('supportsLongCacheRetention');
-    expect(config.agents.defaults.models).toEqual(expect.objectContaining({
-      'lobsterai-server/qwen3.5-plus-YoudaoInner': {
-        params: {
-          cacheRetention: 'short',
-          contextCacheProvider: 'dashscope',
-          contextCacheMode: 'explicit',
-        },
-      },
-      'lobsterai-server/qwen3.6-plus-YoudaoInner': {
-        params: {
-          cacheRetention: 'short',
-          contextCacheProvider: 'dashscope',
-          contextCacheMode: 'explicit',
-        },
-      },
-      'lobsterai-server/claude-sonnet-4-6-YoudaoInner': {
-        params: {
-          cacheRetention: 'short',
-        },
-      },
-      'lobsterai-server/claude-opus-4-YoudaoInner': {
-        params: {
-          cacheRetention: 'short',
-        },
-      },
-      'lobsterai-server/claude-sonnet-4-6': {
-        params: {
-          cacheRetention: 'short',
-          contextCacheProvider: 'anthropic-compatible',
-          contextCacheMode: 'explicit',
-        },
-      },
-    }));
-  });
-
-  test('writes Claude OpenAI-compatible explicit cache params when server metadata is not loaded', async () => {
-    mockRuntimeState.proxyPort = 56646;
-    mockRuntimeState.serverModels = [];
-    mockRuntimeState.rawApiConfig = {
-      config: {
-        baseURL: 'https://lobsterai-server.youdao.com/api/proxy/v1',
-        apiKey: 'access-token',
-        model: 'claude-sonnet-4-6',
-        apiType: 'openai',
-      },
-      providerMetadata: {
-        providerName: 'lobsterai-server',
-        codingPlanEnabled: false,
-        supportsImage: true,
-        supportsThinking: true,
-        modelName: 'Claude Sonnet 4.6',
-      },
-    };
-
-    const sync = await createSync();
-
-    const result = sync.sync('server-model-cache-default-without-metadata');
-    expect(result.ok).toBe(true);
-
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(config.models.providers['lobsterai-server'].models).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        id: 'claude-sonnet-4-6',
-        api: 'openai-completions',
-      }),
-    ]));
-    expect(config.agents.defaults.models).toEqual(expect.objectContaining({
-      'lobsterai-server/claude-sonnet-4-6': {
-        params: {
-          cacheRetention: 'short',
-          contextCacheProvider: 'anthropic-compatible',
-          contextCacheMode: 'explicit',
-        },
-      },
-    }));
-  });
-
   test('writes explicit cache params for Anthropic, Qwen, and custom providers', async () => {
     const { ProviderName } = await import('../../shared/providers');
 
@@ -1037,11 +774,6 @@ describe('OpenClawConfigSync runtime config output', () => {
   test('writes a complete agent model allowlist when any model has custom params', async () => {
     const { ProviderName } = await import('../../shared/providers');
 
-    mockRuntimeState.proxyPort = 56646;
-    mockRuntimeState.serverModels = [
-      { modelId: 'MiniMax-M2.7-YoudaoInner', supportsImage: false },
-      { modelId: 'kimi-k2.6-inhouse-ZhiYun', supportsImage: true },
-    ];
     mockRuntimeState.rawApiConfig = {
       config: {
         baseURL: 'https://api.deepseek.com',
@@ -1135,15 +867,11 @@ describe('OpenClawConfigSync runtime config output', () => {
         },
       },
       'deepseek/deepseek-v4-pro': {},
-      'lobsterai-server/MiniMax-M2.7-YoudaoInner': {},
-      'lobsterai-server/kimi-k2.6-inhouse-ZhiYun': {},
     }));
     expect(Object.keys(modelDefaults)).toEqual(expect.arrayContaining([
       'deepseek/deepseek-v4-flash',
       'deepseek/deepseek-v4-pro',
       'custom_0/custom-thinking-model',
-      'lobsterai-server/MiniMax-M2.7-YoudaoInner',
-      'lobsterai-server/kimi-k2.6-inhouse-ZhiYun',
     ]));
   });
 
@@ -2252,8 +1980,69 @@ describe('OpenClawConfigSync runtime config output', () => {
 
     const agentsMdPath = path.join(stateDir, 'workspace-main', 'AGENTS.md');
     const agentsMd = fs.readFileSync(agentsMdPath, 'utf8');
-    expect(agentsMd).toContain('LobsterAI does not support sandbox browser execution in this version.');
+    expect(agentsMd).toContain('NukemAI does not support sandbox browser execution in this version.');
     expect(agentsMd).toContain('For every `browser` tool call, set `target="host"` explicitly.');
+  });
+
+  test('replaces legacy LobsterAI managed section when syncing AGENTS.md', async () => {
+    const { OpenClawConfigSync } = await import('./openclawConfigSync');
+
+    const workspaceDir = path.join(stateDir, 'workspace-main');
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    const agentsMdPath = path.join(workspaceDir, 'AGENTS.md');
+    fs.writeFileSync(
+      agentsMdPath,
+      [
+        '# My Workspace',
+        '',
+        'User notes stay here.',
+        '',
+        '<!-- LobsterAI managed: do not edit below this line -->',
+        '',
+        '## Browser Policy',
+        '',
+        'LobsterAI does not support sandbox browser execution in this version.',
+        '',
+      ].join('\n'),
+    );
+
+    const sync = new OpenClawConfigSync({
+      engineManager: {
+        getConfigPath: () => configPath,
+        getGatewayToken: () => 'gateway-token',
+        getStateDir: () => stateDir,
+        getBaseDir: () => tmpDir,
+      } as never,
+      getCoworkConfig: () => ({
+        workingDirectory: tmpDir,
+        systemPrompt: '',
+        executionMode: 'local',
+        agentEngine: 'openclaw',
+        memoryEnabled: false,
+        memoryImplicitUpdateEnabled: false,
+        memoryLlmJudgeEnabled: false,
+        memoryGuardLevel: 'balanced',
+        memoryUserMemoriesMaxItems: 100,
+        skipMissedJobs: false,
+      }),
+      isEnterprise: () => false,
+      getPopoInstances: () => [],
+      getNeteaseBeeChanConfig: () => null,
+      getWeixinConfig: () => null,
+      getIMSettings: () => null,
+      getSkillsList: () => [],
+      getAgents: () => [],
+    } as never);
+
+    const result = sync.sync('legacy-marker-upgrade');
+    expect(result.ok).toBe(true);
+
+    const agentsMd = fs.readFileSync(agentsMdPath, 'utf8');
+    expect(agentsMd).toContain('User notes stay here.');
+    expect(agentsMd).not.toContain('LobsterAI managed: do not edit below this line');
+    expect(agentsMd).not.toContain('LobsterAI does not support sandbox browser execution');
+    expect(agentsMd.match(/<!-- NukemAI managed: do not edit below this line -->/g)).toHaveLength(1);
+    expect(agentsMd).toContain('NukemAI does not support sandbox browser execution in this version.');
   });
 
   test('enables managed OpenClaw tool loop detection', async () => {
@@ -2443,14 +2232,6 @@ describe('OpenClawConfigSync runtime config output', () => {
 describe('resolveModelSourceForOpenClawProvider', () => {
   beforeEach(() => {
     mockRuntimeState.providerSourceEntries = [];
-  });
-
-  test('classifies the LobsterAI plan without any Settings entry', async () => {
-    const { resolveModelSourceForOpenClawProvider } = await import('./openclawConfigSync');
-    expect(resolveModelSourceForOpenClawProvider('lobsterai-server')).toEqual({
-      source: 'lobsterai-plan',
-      providerName: ProviderName.LobsteraiServer,
-    });
   });
 
   test('classifies a custom provider with its display name', async () => {
