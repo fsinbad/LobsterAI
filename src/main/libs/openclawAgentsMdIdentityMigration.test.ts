@@ -13,6 +13,7 @@ import {
 } from './openclawAgentsMdIdentityMigration';
 
 const MARKER = '<!-- LobsterAI managed: do not edit below this line -->';
+const CURRENT_MARKER = '<!-- NukemAI managed: do not edit below this line -->';
 
 const buildLegacyAgentsMd = (legacyBody = '你的名字是"小小翻译家"。'): string => [
   '# AGENTS.md - Your Workspace',
@@ -56,6 +57,18 @@ describe('removeLegacyAgentsMdIdentityBlock', () => {
     expect(result.nextContent).toContain('# AGENTS.md - Your Workspace');
     expect(result.nextContent).toContain('This folder is home. Treat it that way.');
     expect(result.nextContent).toContain(MARKER);
+    expect(result.nextContent).toContain('## System Prompt');
+    expect(result.nextContent).not.toContain('## Identity（必须遵守）');
+    expect(result.nextContent).not.toContain('小小翻译家');
+  });
+
+  test('recognizes the current NukemAI managed marker when splitting content', () => {
+    const result = removeLegacyAgentsMdIdentityBlock(
+      buildLegacyAgentsMd().replaceAll(MARKER, CURRENT_MARKER),
+    );
+
+    expect(result.changed).toBe(true);
+    expect(result.nextContent).toContain(CURRENT_MARKER);
     expect(result.nextContent).toContain('## System Prompt');
     expect(result.nextContent).not.toContain('## Identity（必须遵守）');
     expect(result.nextContent).not.toContain('小小翻译家');

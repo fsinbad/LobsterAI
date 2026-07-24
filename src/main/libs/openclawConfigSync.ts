@@ -45,6 +45,11 @@ import {
   resolveManagedSessionModelTarget,
   resolveQualifiedAgentModelRef,
 } from './openclawAgentModels';
+import {
+  AGENTS_MD_LEGACY_MANAGED_MARKER,
+  AGENTS_MD_MANAGED_MARKER,
+  findManagedMarkerIndex,
+} from './openclawAgentsMdIdentityMigration';
 import { parseChannelSessionKey } from './openclawChannelSessionSync';
 import { OpenClawConfigImpact } from './openclawConfigImpact';
 import type { OpenClawEngineManager } from './openclawEngineManager';
@@ -293,10 +298,10 @@ const MANAGED_WEB_SEARCH_POLICY_PROMPT = [
   '- Do not use `web_fetch` to fetch Google/Bing search result pages as a search substitute; use `browser` or an available search skill instead.',
   '- If you need search discovery, dynamic pages, or interactive browsing, use the built-in `browser` tool.',
   '- For login-required, JavaScript-heavy, or anti-automation pages, use `browser` instead of `web_fetch`.',
-  '- Only use the LobsterAI `web-search` skill when local command execution is available. Native channel sessions may deny `exec`, so prefer `browser` or `web_fetch` there.',
+  '- Only use the NukemAI `web-search` skill when local command execution is available. Native channel sessions may deny `exec`, so prefer `browser` or `web_fetch` there.',
   '- Exception: the `imap-smtp-email` skill must always use `exec` to run its scripts, even in native channel sessions. Do not skip it because of exec restrictions.',
   '',
-  'Do not claim you searched the web unless you actually used `browser`, `web_fetch`, or the LobsterAI `web-search` skill.',
+  'Do not claim you searched the web unless you actually used `browser`, `web_fetch`, or the NukemAI `web-search` skill.',
 ].join('\n');
 
 const BUNDLED_BROWSER_PLUGIN_ID = 'browser';
@@ -304,9 +309,9 @@ const BUNDLED_BROWSER_PLUGIN_ID = 'browser';
 const MANAGED_BROWSER_POLICY_PROMPT = [
   '## Browser Policy',
   '',
-  'LobsterAI does not support sandbox browser execution in this version.',
+  'NukemAI does not support sandbox browser execution in this version.',
   '- For every `browser` tool call, set `target="host"` explicitly.',
-  '- Do not use `target="sandbox"` or `target="node"` unless a future LobsterAI version explicitly enables it.',
+  '- Do not use `target="sandbox"` or `target="node"` unless a future NukemAI version explicitly enables it.',
   '- If a browser call fails because the sandbox browser is unavailable, retry the same action with `target="host"`.',
 ].join('\n');
 
@@ -354,7 +359,7 @@ const resolveSkillCreationPath = (): string => {
 const buildManagedSkillCreationPrompt = (skillsDirPath: string): string => [
   '## Skill Creation',
   '',
-  'When the user asks you to create a new skill, you MUST place it under the LobsterAI skills directory:',
+  'When the user asks you to create a new skill, you MUST place it under the NukemAI skills directory:',
   '',
   `  ${skillsDirPath}/<skill-name>/SKILL.md`,
   '',
@@ -3125,7 +3130,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
    * invoke LobsterAI skills.
    */
   private syncAgentsMd(workspaceDir: string, coworkConfig: CoworkConfig): string | undefined {
-    const MARKER = '<!-- NukemAI managed: do not edit below this line -->';
+    const MARKER = AGENTS_MD_MANAGED_MARKER;
 
     try {
       ensureDir(workspaceDir);
@@ -3134,8 +3139,11 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
       // Build the managed section
       const sections: string[] = [];
 
-      // Add system prompt if configured — strip MARKER to prevent content corruption
-      const systemPrompt = (coworkConfig.systemPrompt || '').trim().replaceAll(MARKER, '');
+      // Add system prompt if configured — strip markers to prevent content corruption
+      const systemPrompt = (coworkConfig.systemPrompt || '')
+        .trim()
+        .replaceAll(MARKER, '')
+        .replaceAll(AGENTS_MD_LEGACY_MANAGED_MARKER, '');
       if (systemPrompt) {
         sections.push(`## System Prompt\n\n${systemPrompt}`);
       }
@@ -3153,7 +3161,9 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
 
       // Keep scheduled-task policy after skills so native channel sessions
       // treat it as the final app-managed override for reminder handling.
-      const scheduledTaskPrompt = buildScheduledTaskEnginePrompt().replaceAll(MARKER, '');
+      const scheduledTaskPrompt = buildScheduledTaskEnginePrompt()
+        .replaceAll(MARKER, '')
+        .replaceAll(AGENTS_MD_LEGACY_MANAGED_MARKER, '');
       if (scheduledTaskPrompt) {
         sections.push(scheduledTaskPrompt);
       }
@@ -3166,8 +3176,8 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
         // File doesn't exist yet.
       }
 
-      // Extract user content (everything before the marker)
-      const markerIdx = existingContent.indexOf(MARKER);
+      // Extract user content (everything before the current or legacy marker)
+      const markerIdx = findManagedMarkerIndex(existingContent);
       const userContent =
         markerIdx >= 0 ? existingContent.slice(0, markerIdx).trimEnd() : existingContent.trimEnd();
       const preservedUserContent = userContent || readBundledOpenClawAgentsTemplate();

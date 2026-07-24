@@ -11,7 +11,8 @@ import {
 const AGENTS_MD_FILENAME = 'AGENTS.md';
 const LOBSTERAI_MIGRATIONS_DIR = path.join('.lobsterai', 'migrations');
 const LEGACY_IDENTITY_TITLE = '## Identity（必须遵守）';
-const MANAGED_MARKER = '<!-- LobsterAI managed: do not edit below this line -->';
+export const AGENTS_MD_MANAGED_MARKER = '<!-- NukemAI managed: do not edit below this line -->';
+export const AGENTS_MD_LEGACY_MANAGED_MARKER = '<!-- LobsterAI managed: do not edit below this line -->';
 const MAX_LEGACY_IDENTITY_BLOCK_CHARS = 20_000;
 
 const TEMPLATE_ANCHORS = [
@@ -48,6 +49,18 @@ const restoreLineEndings = (content: string, lineEnding: string): string =>
 const stripBom = (value: string): string => value.replace(/^\uFEFF/, '');
 
 const isBlank = (value: string): boolean => stripBom(value).trim().length === 0;
+
+/**
+ * Locate the earliest app-managed section marker. Workspaces written by older
+ * versions carry the LobsterAI marker; current versions write the NukemAI one.
+ */
+export const findManagedMarkerIndex = (content: string): number => {
+  const current = content.indexOf(AGENTS_MD_MANAGED_MARKER);
+  const legacy = content.indexOf(AGENTS_MD_LEGACY_MANAGED_MARKER);
+  if (current < 0) return legacy;
+  if (legacy < 0) return current;
+  return Math.min(current, legacy);
+};
 
 const findFirstNonBlankLine = (lines: string[], startIndex: number): number => {
   for (let index = startIndex; index < lines.length; index += 1) {
@@ -140,7 +153,7 @@ const removeLegacyBlockFromPreMarkerContent = (
 export function removeLegacyAgentsMdIdentityBlock(content: string): LegacyIdentityRemovalResult {
   const lineEnding = detectLineEnding(content);
   const normalized = normalizeLineEndings(content);
-  const markerIndex = normalized.indexOf(MANAGED_MARKER);
+  const markerIndex = findManagedMarkerIndex(normalized);
   const preMarkerContent = markerIndex >= 0 ? normalized.slice(0, markerIndex) : normalized;
   const managedContent = markerIndex >= 0 ? normalized.slice(markerIndex) : '';
   const result = removeLegacyBlockFromPreMarkerContent(preMarkerContent);
