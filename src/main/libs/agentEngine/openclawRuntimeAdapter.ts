@@ -15,7 +15,14 @@ import {
   type OpenClawSessionPatch,
   OpenClawSessionReasoningLevel,
 } from '../../../common/openclawSession';
-import { CoworkIpcChannel } from '../../../shared/cowork/constants';
+import {
+  buildBrowserAnnotationPromptSection,
+  type CoworkBrowserAnnotationMessageBatch,
+} from '../../../shared/cowork/browserAnnotations';
+import {
+  CoworkIpcChannel,
+  type CoworkSessionsChangedPayload,
+} from '../../../shared/cowork/constants';
 import {
   buildCoworkErrorDetail,
   type CoworkErrorDetail,
@@ -48,6 +55,8 @@ import type {
   KitReference,
   ResolvedKitCapabilities,
 } from '../../../shared/kit/constants';
+import { OpenClawGatewayFailureKind } from '../../../shared/openclawEngine/constants';
+import { OpenClawTranscriptSafetyStatus } from '../../../shared/openclawTranscript/constants';
 import type { Agent, CoworkExecutionMode, CoworkMessage, CoworkMessageMetadata, CoworkSession, CoworkSessionStatus, CoworkStore } from '../../coworkStore';
 import { t } from '../../i18n';
 import { MediaGenerationTool } from '../../mediaGenerationPolicy';
@@ -124,6 +133,10 @@ import {
   hasCronRunHistoryForSession,
   shouldReplaceLocalConversationWithCronHistory,
 } from './openclawCronRunHistorySync';
+import {
+  buildOpenClawTranscriptOversizedError,
+  inspectOpenClawTranscriptSafety,
+} from './openclawTranscriptSafety';
 import { OpenClawTurnHistorySync } from './openclawTurnHistorySync';
 import {
   buildSubagentChildHistorySyncPlan,
@@ -1320,6 +1333,48 @@ const normalizeEntryText = (
   return result;
 };
 
+const buildLocalReconciledEntries = (
+  messages: ReadonlyArray<CoworkMessage>,
+  platformFlags: PlatformFlags,
+): ReconciledConversationEntry[] => {
+  const entries: ReconciledConversationEntry[] = [];
+  for (const message of messages) {
+    if (message.type !== 'user' && message.type !== 'assistant') continue;
+    const text = normalizeEntryText(message.type, message.content, platformFlags);
+    const mediaKey = getLocalMediaAttachmentsKey(message.metadata);
+    if ((!text && !mediaKey) || shouldSuppressHeartbeatText(message.type, text)) continue;
+    entries.push({
+      role: message.type,
+      text,
+      timestamp: message.timestamp,
+      metadata: message.metadata,
+    });
+  }
+  return entries;
+};
+
+const getReconciliationTailState = (
+  localEntries: ReadonlyArray<ReconciledConversationEntry>,
+  authoritativeEntries: ReadonlyArray<ReconciledConversationEntry>,
+  alignment: { localIdx: number; authIdx: number } | null,
+): {
+  authoritativeTail: ReconciledConversationEntry[];
+  localTail: ReconciledConversationEntry[];
+  isInSync: boolean;
+} | null => {
+  if (!alignment || (alignment.localIdx === 0 && alignment.authIdx === 0)) return null;
+  const authoritativeTail = authoritativeEntries.slice(alignment.authIdx);
+  const localTail = localEntries.slice(alignment.localIdx);
+  return {
+    authoritativeTail,
+    localTail,
+    isInSync: localTail.length === authoritativeTail.length
+      && localTail.every((entry, index) =>
+        isSameReconciledEntry(entry, authoritativeTail[index]),
+      ),
+  };
+};
+
 const extractMessageText = extractGatewayMessageText;
 
 const summarizeGatewayMessageShape = (message: unknown): string => {
@@ -2164,6 +2219,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private gatewayClient: GatewayClientLike | null = null;
   private gatewayClientVersion: string | null = null;
   private gatewayClientEntryPath: string | null = null;
+  private gatewayClientGeneration = 0;
   /** Holds the client between start() and onHelloOk so stopGatewayClient can clean it up. */
   private pendingGatewayClient: GatewayClientLike | null = null;
   private gatewayReadyPromise: Promise<void> | null = null;
@@ -3349,7 +3405,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       store: this.store,
       rememberSessionKey: (sessionId, sessionKey) => this.rememberSessionKey(sessionId, sessionKey),
       markSessionHistoryUnsynced: (sessionId) => this.fullySyncedSessions.delete(sessionId),
-      notifySessionsChanged: () => this.notifySessionsChanged(),
+      notifySessionsChanged: (sessionId) => this.notifySessionsChanged(sessionId),
       emitSessionStatus: (sessionId, status) => this.emitSessionStatus(sessionId, status),
       emitComplete: (sessionId, sessionKey) => this.emit('complete', sessionId, sessionKey),
       emitError: (sessionId, error) => this.emit('error', sessionId, error),
@@ -3376,10 +3432,18 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     return this.options.normalizeModelRef?.(normalized) ?? normalized;
   }
 
-  private notifySessionsChanged(): void {
+  private notifySessionsChanged(sessionIds: string | readonly string[]): void {
+    const normalizedSessionIds = Array.from(new Set(
+      (Array.isArray(sessionIds) ? sessionIds : [sessionIds])
+        .map(sessionId => sessionId.trim())
+        .filter(Boolean),
+    ));
+    if (normalizedSessionIds.length === 0) return;
+
+    const payload: CoworkSessionsChangedPayload = { sessionIds: normalizedSessionIds };
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed()) {
-        win.webContents.send('cowork:sessions:changed');
+        win.webContents.send(CoworkIpcChannel.SessionsChanged, payload);
       }
     }
   }
@@ -3903,9 +3967,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         console.warn('[ChannelSync] pollChannelSessions: sessions.list returned non-array sessions:', typeof sessions, 'full result keys:', Object.keys(result as Record<string, unknown>));
         return;
       }
-      let hasNew = false;
       let channelCount = 0;
       const newSessionsToSync: Array<{ sessionId: string; sessionKey: string }> = [];
+      const newSessionIds: string[] = [];
       for (const row of sessions) {
         const key = typeof row?.key === 'string' ? row.key : '';
         if (!key) continue;
@@ -3954,22 +4018,16 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         if (sessionId && !this.knownChannelSessionIds.has(sessionId)) {
           this.knownChannelSessionIds.add(sessionId);
           this.rememberSessionKey(sessionId, key);
-          hasNew = true;
+          newSessionIds.push(sessionId);
           // Queue full history sync for newly discovered sessions
           if (!this.fullySyncedSessions.has(sessionId)) {
             newSessionsToSync.push({ sessionId, sessionKey: key });
           }
         }
       }
-      if (hasNew) {
-        let notified = 0;
-        for (const win of BrowserWindow.getAllWindows()) {
-          if (!win.isDestroyed()) {
-            win.webContents.send('cowork:sessions:changed');
-            notified++;
-          }
-        }
-        console.log('[ChannelSync] discovered', channelCount, 'channel sessions, notified', notified, 'windows');
+      if (newSessionIds.length > 0) {
+        this.notifySessionsChanged(newSessionIds);
+        console.log('[ChannelSync] discovered', channelCount, 'channel sessions, including', newSessionIds.length, 'new sessions');
       }
       // Sync full history for newly discovered sessions
       for (const { sessionId, sessionKey } of newSessionsToSync) {
@@ -4042,6 +4100,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       workflowKind: options.workflowKind,
       mediaReferences: options.mediaReferences,
       selectedTextSnippets: options.selectedTextSnippets,
+      browserAnnotations: options.browserAnnotations,
     });
   }
 
@@ -4059,6 +4118,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       workflowKind: options.workflowKind,
       mediaReferences: options.mediaReferences,
       selectedTextSnippets: options.selectedTextSnippets,
+      browserAnnotations: options.browserAnnotations,
     });
   }
 
@@ -4523,6 +4583,56 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
   }
 
+  private async assertTranscriptSafeForRun(options: {
+    sessionId: string;
+    sessionKey: string;
+    agentId: string;
+  }): Promise<void> {
+    if (typeof this.engineManager.getStateDir !== 'function') {
+      console.debug(
+        '[OpenClawRuntime] skipped transcript safety inspection because the engine state directory is unavailable.',
+        `Session ${options.sessionId}.`,
+      );
+      return;
+    }
+
+    const inspection = await inspectOpenClawTranscriptSafety({
+      stateDir: this.engineManager.getStateDir(),
+      agentId: options.agentId,
+      sessionKey: options.sessionKey,
+    });
+
+    if (inspection.status === OpenClawTranscriptSafetyStatus.Unknown) {
+      console.debug(
+        '[OpenClawRuntime] transcript safety inspection was inconclusive.',
+        `Session ${options.sessionId}.`,
+        `OpenClaw key ${options.sessionKey}.`,
+        `Reason ${inspection.reason ?? 'unknown'}.`,
+      );
+      return;
+    }
+
+    if (inspection.status === OpenClawTranscriptSafetyStatus.CompactionRequired) {
+      console.log(
+        '[OpenClawRuntime] active transcript reached the managed compaction threshold.',
+        `Session ${options.sessionId}.`,
+        `OpenClaw key ${options.sessionKey}.`,
+        `Transcript bytes ${inspection.transcriptBytes ?? 'unknown'}.`,
+      );
+      return;
+    }
+
+    if (inspection.status === OpenClawTranscriptSafetyStatus.Blocked) {
+      console.warn(
+        '[OpenClawRuntime] blocked a run before gateway transcript loading because the active transcript is oversized.',
+        `Session ${options.sessionId}.`,
+        `OpenClaw key ${options.sessionKey}.`,
+        `Transcript bytes ${inspection.transcriptBytes ?? 'unknown'}.`,
+      );
+      throw buildOpenClawTranscriptOversizedError(inspection);
+    }
+  }
+
   private async runTurn(
     sessionId: string,
     prompt: string,
@@ -4541,9 +4651,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       workflowKind?: CoworkStartOptions['workflowKind'];
       mediaReferences?: CoworkMediaAttachmentRef[];
       selectedTextSnippets?: CoworkSelectedTextSnippet[];
+      browserAnnotations?: CoworkBrowserAnnotationMessageBatch[];
     },
   ): Promise<void> {
-    if (!prompt.trim() && (!options.imageAttachments || options.imageAttachments.length === 0)) {
+    if (
+      !prompt.trim()
+      && (!options.imageAttachments || options.imageAttachments.length === 0)
+      && !options.browserAnnotations?.length
+    ) {
       throw new Error('Prompt is required.');
     }
     const imageAttachmentValidation = validateRuntimeImageAttachments(options.imageAttachments);
@@ -4583,6 +4698,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         || options.kitIds?.length
         || imageAttachmentPreviews?.length
         || options.selectedTextSnippets?.length
+        || options.browserAnnotations?.length
         || goalSettingMetadata
       )
         ? {
@@ -4595,6 +4711,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           } : {}),
           ...(imageAttachmentPreviews?.length ? { imageAttachmentPreviews } : {}),
           ...(options.selectedTextSnippets?.length ? { selectedTextSnippets: options.selectedTextSnippets } : {}),
+          ...(options.browserAnnotations?.length ? { browserAnnotations: options.browserAnnotations } : {}),
         }
         : undefined;
       if (options.selectedTextSnippets?.length) {
@@ -4623,6 +4740,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       ? parsedGoalBootstrapCommand
       : null;
     let effectivePrompt = prompt;
+
+    try {
+      await this.assertTranscriptSafeForRun({ sessionId, sessionKey, agentId });
+    } catch (error) {
+      this.store.updateSession(sessionId, { status: 'error' });
+      const message = error instanceof Error ? error.message : String(error);
+      this.emit('error', sessionId, message);
+      throw error;
+    }
 
     this.store.updateSession(sessionId, { status: 'running' });
     this.emitSessionStatus(sessionId, 'running');
@@ -4747,6 +4873,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       agentId,
       options.mediaReferences,
       options.selectedTextSnippets,
+      options.browserAnnotations,
       firstResponseTiming,
     ));
     if (this.cancelTurnStartupIfStopped(sessionId, 'outbound prompt built')) {
@@ -4882,6 +5009,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     agentId?: string,
     mediaReferences?: CoworkMediaAttachmentRef[],
     selectedTextSnippets?: CoworkSelectedTextSnippet[],
+    browserAnnotations?: CoworkBrowserAnnotationMessageBatch[],
     firstResponseTiming?: FirstResponseTiming,
   ): Promise<string> {
     const normalizedSystemPrompt = (systemPrompt ?? '').trim();
@@ -4916,6 +5044,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       sections.push(mediaReferenceSection);
     }
     const selectedTextSection = buildSelectedTextPromptSection(selectedTextSnippets);
+    const browserAnnotationSection = buildBrowserAnnotationPromptSection(browserAnnotations);
     if (selectedTextSnippets?.length && selectedTextSection) {
       console.log(
         `[OpenClawRuntime] appended ${selectedTextSnippets.length} selected text excerpts with `
@@ -4939,6 +5068,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
       if (selectedTextSection) {
         sections.push(selectedTextSection);
+      }
+      if (browserAnnotationSection) {
+        sections.push(browserAnnotationSection);
       }
       if (prompt.trim()) {
         sections.push(`[Current user request]\n${prompt}`);
@@ -5000,6 +5132,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
     if (selectedTextSection) {
       sections.push(selectedTextSection);
+    }
+    if (browserAnnotationSection) {
+      sections.push(browserAnnotationSection);
     }
     if (prompt.trim()) {
       sections.push(`[Current user request]\n${prompt}`);
@@ -5143,6 +5278,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   private async createGatewayClient(connection: OpenClawGatewayConnectionInfo): Promise<void> {
     const GatewayClient = await this.loadGatewayClientCtor(connection.clientEntryPath);
+    const clientGeneration = ++this.gatewayClientGeneration;
 
     let resolveReady: (() => void) | null = null;
     let rejectReady: ((error: Error) => void) | null = null;
@@ -5177,6 +5313,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       role: 'operator',
       scopes: ['operator.admin'],
       onHelloOk: () => {
+        if (clientGeneration !== this.gatewayClientGeneration) {
+          console.debug('[ChannelSync] ignored hello from a stale gateway client generation');
+          return;
+        }
         console.log('[ChannelSync] GatewayClient: onHelloOk — handshake succeeded');
         // Expose the client only after the connect handshake completes.
         // Setting gatewayClient earlier would let concurrent code send
@@ -5184,6 +5324,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         this.gatewayClient = client;
         this.gatewayClientVersion = connection.version;
         this.gatewayClientEntryPath = connection.clientEntryPath;
+        this.gatewayReconnectSuppressed = false;
+        this.gatewayReconnectAttempt = 0;
         this.resetGatewayRpcHealth();
         this.subscribeToGatewaySessionEvents(client);
         settleResolve();
@@ -5212,6 +5354,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       },
       onClose: (_code: number, reason: string) => {
         console.log('[ChannelSync] GatewayClient: onClose — code:', _code, 'reason:', reason, 'settled:', settled);
+        if (clientGeneration !== this.gatewayClientGeneration) {
+          console.debug('[ChannelSync] ignored close from a stale gateway client generation');
+          return;
+        }
         if (!settled) {
           // v2026.4.5+: The initial handshake may fail due to the gateway
           // being busy with plugin loading (connect.challenge timeout on the
@@ -5231,9 +5377,18 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         }
 
         console.warn('[OpenClawRuntime] gateway WS disconnected — code:', _code, 'reason:', reason);
-        const disconnectedMessage = _code === WebSocketCloseCode.MessageTooBig
-          ? (reason || 'gateway closed (1009):')
-          : (reason || 'OpenClaw gateway client disconnected');
+        const gatewayFailure = typeof this.engineManager.getLastGatewayFailure === 'function'
+          ? this.engineManager.getLastGatewayFailure()
+          : null;
+        const failureMatchesConnectionGeneration = gatewayFailure
+          && (connection.generation === undefined || gatewayFailure.generation === connection.generation);
+        const disconnectedMessage = failureMatchesConnectionGeneration
+          && gatewayFailure.kind === OpenClawGatewayFailureKind.HeapOutOfMemory
+          ? `OpenClaw gateway failed: gatewayFailureKind=${gatewayFailure.kind}; `
+            + `generation=${gatewayFailure.generation}; code=${gatewayFailure.exitCode ?? _code}`
+          : _code === WebSocketCloseCode.MessageTooBig
+            ? (reason || 'gateway closed (1009):')
+            : (reason || 'OpenClaw gateway client disconnected');
         const disconnectedError = new Error(disconnectedMessage);
         const activeSessionIds = Array.from(this.activeTurns.keys());
         activeSessionIds.forEach((sessionId) => {
@@ -5283,6 +5438,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   private stopGatewayClient(): void {
     this.gatewayStoppingIntentionally = true;
+    this.gatewayClientGeneration += 1;
     this.stopChannelPolling();
     this.cancelGatewayReconnect();
     this.stopTickWatchdog();
@@ -6236,7 +6392,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       );
     }
     if (isNewlyKnownSession) {
-      this.notifySessionsChanged();
+      this.notifySessionsChanged(sessionId);
     }
   }
 
@@ -6279,11 +6435,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           // deliberately never advance updated_at (streaming reorder guard),
           // so surface the fresh delivery in the session list explicitly.
           this.store.updateSession(conversation.sessionId, {}, { touchUpdatedAt: true });
-          for (const win of BrowserWindow.getAllWindows()) {
-            if (!win.isDestroyed()) {
-              win.webContents.send('cowork:sessions:changed');
-            }
-          }
+          this.notifySessionsChanged(conversation.sessionId);
           console.log(
             '[ChannelSync] synced IM conversation after cron delivery.',
             `Session ${conversation.sessionId}.`,
@@ -7712,11 +7864,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.clearPendingStoreUpdate(messageId);
     this.clearPendingMessageUpdate(messageId);
     this.store.deleteMessage(sessionId, messageId);
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) {
-        win.webContents.send('cowork:sessions:changed');
-      }
-    }
+    this.notifySessionsChanged(sessionId);
   }
 
   private deleteSilentAssistantMessages(sessionId: string): void {
@@ -9139,7 +9287,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       );
       this.channelSyncCursor.set(sessionId, plan.cursor);
 
-      this.notifySessionsChanged();
+      this.notifySessionsChanged(sessionId);
     } catch (error) {
       console.warn('[SubagentHistorySync] failed - sessionId:', sessionId, 'error:', error);
     }
@@ -9248,10 +9396,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
    * Reconcile local session messages with the authoritative gateway chat.history.
    *
    * This is the single source-of-truth sync method: after a turn completes,
-   * it fetches the full conversation from OpenClaw and overwrites local
-   * user/assistant messages to match exactly.  Tool messages (tool_use,
-   * tool_result, system) are kept as-is because the gateway does not
-   * expose them in chat.history.
+   * it aligns the bounded OpenClaw history window with local user/assistant
+   * messages, preserving any older local prefix outside that window. Tool
+   * messages (tool_use, tool_result, system) are kept as-is because the
+   * gateway does not expose them in chat.history.
    *
    * The reconciliation is idempotent — calling it multiple times produces
    * the same result.
@@ -9377,17 +9525,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       // Collect local user/assistant messages for comparison
       // Apply the same normalization as authoritativeEntries so alignment
       // works even when local messages still carry raw platform prefixes.
-      const session = this.store.getSession(sessionId);
-      const localEntries: Array<{ role: 'user' | 'assistant'; text: string; timestamp?: number; metadata?: Record<string, unknown> }> = [];
-      if (session) {
-        for (const msg of session.messages) {
-          if (msg.type !== 'user' && msg.type !== 'assistant') continue;
-          const text = normalizeEntryText(msg.type, msg.content, platformFlags);
-          const mediaKey = getLocalMediaAttachmentsKey(msg.metadata);
-          if ((!text && !mediaKey) || shouldSuppressHeartbeatText(msg.type, text)) continue;
-          localEntries.push({ role: msg.type, text, timestamp: msg.timestamp, metadata: msg.metadata });
-        }
-      }
+      let localMessages = this.store.getRecentConversationMessages(sessionId, limit);
+      let localEntries = buildLocalReconciledEntries(localMessages, platformFlags);
 
       // Fast path: if already in sync, skip
       const isInSync = localEntries.length === authoritativeEntries.length
@@ -9404,32 +9543,48 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
 
       // Tail-alignment: find where the gateway window overlaps local history.
-      const alignment = findTailAlignment(localEntries, authoritativeEntries);
+      let alignment = findTailAlignment(localEntries, authoritativeEntries);
+      let tailState = getReconciliationTailState(localEntries, authoritativeEntries, alignment);
+
+      // A bounded tail is enough for every steady-state poll. Only expand the
+      // local transcript when a replacement is already necessary, otherwise a
+      // gateway window of `limit` entries could truncate an older local prefix.
+      if (!tailState?.isInSync && localMessages.length === limit) {
+        const allLocalMessages = this.store.getAllConversationMessages(sessionId);
+        if (allLocalMessages.length > localMessages.length) {
+          console.debug(
+            '[Reconcile] expanding local history before replacement — sessionId:', sessionId,
+            'recent:', localMessages.length, 'all:', allLocalMessages.length,
+          );
+          localMessages = allLocalMessages;
+          localEntries = buildLocalReconciledEntries(localMessages, platformFlags);
+          alignment = findTailAlignment(localEntries, authoritativeEntries);
+          tailState = getReconciliationTailState(localEntries, authoritativeEntries, alignment);
+        }
+      }
 
       let entriesToStore: ReconciledConversationEntry[];
 
-      if (alignment && (alignment.localIdx > 0 || alignment.authIdx > 0)) {
+      if (tailState?.isInSync && alignment) {
+        console.log(
+          '[Reconcile] tail in sync — sessionId:', sessionId,
+          'preserved:', alignment.localIdx, 'tail:', tailState.localTail.length,
+          'authSkipped:', alignment.authIdx,
+        );
+        this.channelSyncCursor.set(sessionId, authoritativeEntries.length);
+        return;
+      }
+
+      if (tailState && alignment) {
         // Gateway covers only the tail — preserve older local messages
-        const authoritativeTail = authoritativeEntries.slice(alignment.authIdx);
-        const tail = localEntries.slice(alignment.localIdx);
-        const tailInSync = tail.length === authoritativeTail.length
-          && tail.every((entry, idx) =>
-            isSameReconciledEntry(entry, authoritativeTail[idx]),
-          );
-        if (tailInSync) {
-          console.log(
-            '[Reconcile] tail in sync — sessionId:', sessionId,
-            'preserved:', alignment.localIdx, 'tail:', tail.length,
-            'authSkipped:', alignment.authIdx,
-          );
-          this.channelSyncCursor.set(sessionId, authoritativeEntries.length);
-          return;
-        }
         // Concat preserved prefix with authoritative tail
-        entriesToStore = [...localEntries.slice(0, alignment.localIdx), ...authoritativeTail];
+        entriesToStore = [
+          ...localEntries.slice(0, alignment.localIdx),
+          ...tailState.authoritativeTail,
+        ];
         console.log(
           '[Reconcile] tail replace — sessionId:', sessionId,
-          'preserved:', alignment.localIdx, 'auth:', authoritativeTail.length,
+          'preserved:', alignment.localIdx, 'auth:', tailState.authoritativeTail.length,
           'authSkipped:', alignment.authIdx,
           'total:', entriesToStore.length,
         );
@@ -9448,11 +9603,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       this.channelSyncCursor.set(sessionId, authoritativeEntries.length);
 
       // Notify renderer to refresh
-      for (const win of BrowserWindow.getAllWindows()) {
-        if (!win.isDestroyed()) {
-          win.webContents.send('cowork:sessions:changed');
-        }
-      }
+      this.notifySessionsChanged(sessionId);
     } catch (error) {
       console.warn('[Reconcile] failed — sessionId:', sessionId, 'error:', error);
     }
@@ -10412,10 +10563,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         const newUserMessages = afterCount - beforeCount;
         console.log('[Debug:prefetch] reconciled (attempt', attempt, ') synced user messages:', newUserMessages, '(before:', beforeCount, 'after:', afterCount, ')');
 
-        // Emit 'message' events for newly added user messages so the renderer
-        // updates the active session view in real-time.  reconcileWithHistory
-        // writes to SQLite and sends cowork:sessions:changed, but that only
-        // refreshes the session list sidebar — not the active conversation.
+        // Emit 'message' events for newly added user messages so the active
+        // conversation updates immediately while the scoped session refresh
+        // reconciles the full persisted view asynchronously.
         if (newUserMessages > 0) {
           const session = this.store.getSession(sessionId);
           if (session) {
@@ -10537,6 +10687,21 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
    * Used by CronJobService to call cron.* APIs on the same gateway.
    */
   getGatewayClient(): GatewayClientLike | null {
+    return this.gatewayClient;
+  }
+
+  /**
+   * Resolve a connected gateway RPC client for config delivery, creating and
+   * handshaking one if needed. Resolves to null instead of throwing so callers
+   * can degrade to their own fallback path.
+   */
+  async ensureGatewayRpcClient(): Promise<GatewayClientLike | null> {
+    try {
+      await this.ensureGatewayClientReady();
+    } catch (error) {
+      console.warn('[OpenClawRuntime] ensureGatewayRpcClient failed:', error);
+      return null;
+    }
     return this.gatewayClient;
   }
 

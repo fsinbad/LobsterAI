@@ -7,6 +7,18 @@ import {
   PlusIcon as AddIcon,
 } from '@heroicons/react/24/outline';
 import { ArtifactBrowserPartition } from '@shared/artifactPreview/constants';
+import {
+  BrowserAnnotationGuestChannel,
+  BrowserAnnotationGuestCommandType,
+  type BrowserAnnotationGuestEnvelope,
+  BrowserAnnotationGuestEventType,
+  BrowserAnnotationLimit,
+  BrowserAnnotationProtocolVersion,
+  type BrowserAnnotationScreenshotRef,
+  BrowserAnnotationScreenshotStatus,
+  type CoworkBrowserAnnotation,
+  type CoworkBrowserAnnotationBatch,
+} from '@shared/cowork/browserAnnotations';
 import type { CoworkSelectedTextSnippet } from '@shared/cowork/selectedText';
 import {
   HtmlShareAccessMode,
@@ -56,6 +68,10 @@ import {
   updateLocalServiceProjectMetadata,
 } from '@/store/slices/artifactSlice';
 import {
+  removeDraftBrowserAnnotationBatch,
+  upsertDraftBrowserAnnotationBatch,
+} from '@/store/slices/coworkSlice';
+import {
   type Artifact,
   type ArtifactType,
   ArtifactTypeValue,
@@ -74,19 +90,24 @@ import {
 } from './artifactFileSharePolicy';
 import { ArtifactPreviewGlobeIcon } from './ArtifactPreviewIdentity';
 import ArtifactRenderer from './ArtifactRenderer';
+import { resolveRemovedActiveBrowserAnnotationBatch } from './browserAnnotationSession';
 import FileDirectoryView from './FileDirectoryView';
 import {
   buildLocalServiceDeploymentPermissionPlan,
   canCopyLocalServiceDeploymentLink,
+  getCommittedLocalServiceDeploymentPermission,
   getLocalServiceDeploymentPermission,
   getLocalServiceDeploymentPermissionState,
+  getLocalServiceDeploymentPermissionSubmitAction,
   getLocalServiceDeploymentProjectName,
   hasConfiguredLocalServiceCloudData,
+  isLocalServiceDeploymentPermissionDirty,
   isLocalServiceDeploymentPermissionLocked,
   isLocalServiceDeploymentStopped,
   LocalServiceDeploymentPermission,
   type LocalServiceDeploymentPermission as LocalServiceDeploymentPermissionValue,
   LocalServiceDeploymentPermissionChangeAction,
+  LocalServiceDeploymentPermissionSubmitAction,
   mergeLocalServiceDeploymentShareUpdate,
 } from './localServiceDeploymentModel';
 import NodeDeploymentPersistenceOperationStatus, {
@@ -248,6 +269,7 @@ interface NodeDeploymentDialogState {
   remotePersistence?: ShareDeploymentPersistence | null;
   error?: string;
   accessSyncError?: string;
+  accessSyncSuccess?: string;
 }
 
 interface BrowserLocalServiceContext {
@@ -590,7 +612,6 @@ interface ArtifactPanelProps {
   onOpenFileListTab?: () => void;
   onOpenBrowserTab?: () => void;
   onOpenHtmlFileInBrowser?: (artifact: Artifact) => void;
-  onBrowserAnnotationCaptured?: (payload: BrowserAnnotationPayload) => void;
   onAddSelectedText?: (snippet: CoworkSelectedTextSnippet) => void;
   selectedTextEnabled?: boolean;
   subagentPanel?: React.ReactNode;
@@ -647,6 +668,8 @@ export interface BrowserAnnotationPayload {
   element: BrowserAnnotationElementInfo;
 }
 
+const EMPTY_BROWSER_ANNOTATION_BATCHES: CoworkBrowserAnnotationBatch[] = [];
+
 const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   sessionId,
   artifacts,
@@ -668,7 +691,6 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   onOpenFileListTab,
   onOpenBrowserTab,
   onOpenHtmlFileInBrowser,
-  onBrowserAnnotationCaptured,
   onAddSelectedText,
   selectedTextEnabled = false,
   subagentPanel,
@@ -677,6 +699,12 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   const panelWidth = useSelector(selectPanelWidth);
   const activePreviewTab = useSelector((state: RootState) =>
     selectActivePreviewTab(state, sessionId),
+  );
+  const browserAnnotationBatches = useSelector(
+    (state: RootState) => (
+      state.cowork.draftBrowserAnnotationBatches[sessionId]
+      || EMPTY_BROWSER_ANNOTATION_BATCHES
+    ),
   );
   const [showFileListDrawer, setShowFileListDrawer] = useState(false);
   const [isFileListDrawerVisible, setIsFileListDrawerVisible] = useState(false);
@@ -793,6 +821,13 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   );
   const browserAddress = controlledBrowserAddress ?? localBrowserAddress;
   const browserUrl = controlledBrowserUrl ?? localBrowserUrl;
+  const browserAnnotationBatch = useMemo(
+    () => browserAnnotationBatches.find(batch => (
+      normalizeBrowserPreviewUrlForMatch(batch.pageUrl)
+      === normalizeBrowserPreviewUrlForMatch(browserUrl)
+    )),
+    [browserAnnotationBatches, browserUrl],
+  );
   const browserLocalService = isBrowserTabActive
     ? parseLocalServiceUrl(browserUrl || browserAddress)
     : null;
@@ -2315,14 +2350,16 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
                   previous.deploymentProjectDirectory,
                 ) === projectDirectory,
             );
-            const hasPendingRedeployPermission = Boolean(
+            const previousSelectedPermission = getLocalServiceDeploymentPermission(
+              previous.accessMode,
+              previous.targetShareStatus,
+            );
+            const hasPendingPermissionDraft = Boolean(
               isSameDeploymentIdentity &&
-                effectiveDeployment?.deploymentKind !== ShareDeploymentKind.StaticSite &&
-                isLocalServiceDeploymentStopped(
-                  effectiveDeployment?.shareStatus,
-                  effectiveDeployment?.status,
-                ) &&
-                previous.targetShareStatus === HtmlShareStatus.Live,
+                isLocalServiceDeploymentPermissionDirty(
+                  effectiveDeployment,
+                  previousSelectedPermission,
+                ),
             );
             return {
               ...nextDialog,
@@ -2334,11 +2371,11 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
               remotePersistence: isSameDeploymentIdentity
                 ? previous.remotePersistence
                 : undefined,
-              accessMode: hasPendingRedeployPermission
+              accessMode: hasPendingPermissionDraft
                 ? normalizeHtmlShareAccessMode(previous.accessMode)
                 : normalizeHtmlShareAccessMode(effectiveDeployment?.accessMode),
-              targetShareStatus: hasPendingRedeployPermission
-                ? HtmlShareStatus.Live
+              targetShareStatus: hasPendingPermissionDraft
+                ? previous.targetShareStatus ?? HtmlShareStatus.Live
                 : isLocalServiceDeploymentStopped(
                     effectiveDeployment?.shareStatus,
                     effectiveDeployment?.status,
@@ -2422,9 +2459,9 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     sessionId,
   ]);
 
-  const selectNodeDeploymentPermission = useCallback(async (
+  const selectNodeDeploymentPermission = useCallback((
     permission: LocalServiceDeploymentPermissionValue,
-  ): Promise<void> => {
+  ): void => {
     const snapshot = nodeDeploymentDialog;
     if (
       !snapshot ||
@@ -2440,76 +2477,86 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     if (permission === LocalServiceDeploymentPermission.Stopped && !snapshot.deployment) {
       return;
     }
+    if (
+      snapshot.deployment &&
+      isLocalServiceDeploymentPermissionLocked(snapshot.deployment.disabledSource)
+    ) {
+      return;
+    }
 
     const permissionState = getLocalServiceDeploymentPermissionState(
       permission,
       snapshot.accessMode,
     );
-    if (!snapshot.deployment) {
-      setNodeDeploymentDialog(previous => previous
-        ? {
-            ...previous,
-            accessMode: permissionState.accessMode,
-            targetShareStatus: permissionState.targetStatus,
-            error: undefined,
-          }
-        : previous);
+    setNodeDeploymentDialog(previous => {
+      if (!previous || !isNodeDeploymentEditorDialogKind(previous.kind)) return previous;
+      if (
+        previous.deployment?.deploymentId !== snapshot.deployment?.deploymentId ||
+        previous.localService?.url !== snapshot.localService?.url
+      ) {
+        return previous;
+      }
+      return {
+        ...previous,
+        phase: previous.deployment?.status === ShareDeploymentStatus.DeployFailed
+          ? previous.phase
+          : NodeDeploymentPhase.Idle,
+        accessMode: permissionState.accessMode,
+        targetShareStatus: permissionState.targetStatus,
+        error: undefined,
+        accessSyncError: undefined,
+        accessSyncSuccess: undefined,
+      };
+    });
+  }, [
+    isNodeDeploymentAccessUpdating,
+    isNodeDeploymentBusy,
+    isNodeDeploymentLookupPending,
+    nodeDeploymentDialog,
+  ]);
+
+  const submitNodeDeploymentPermissionChange = useCallback(async (): Promise<void> => {
+    const snapshot = nodeDeploymentDialog;
+    if (
+      !snapshot?.deployment ||
+      !isNodeDeploymentEditorDialogKind(snapshot.kind) ||
+      isNodeDeploymentBusy ||
+      isNodeDeploymentAccessUpdating ||
+      isNodeDeploymentLookupPending ||
+      isNodeDeploymentPending(snapshot.deployment.status)
+    ) {
       return;
     }
 
-    const plan = buildLocalServiceDeploymentPermissionPlan(snapshot.deployment, permission);
-    if (plan.some(step => step.action === LocalServiceDeploymentPermissionChangeAction.Blocked)) {
-      return;
-    }
-    const redeployStep = plan.find(
-      step => step.action === LocalServiceDeploymentPermissionChangeAction.RequireRedeploy,
+    const selectedPermission = getLocalServiceDeploymentPermission(
+      snapshot.accessMode,
+      snapshot.targetShareStatus,
     );
-    if (
-      redeployStep?.action === LocalServiceDeploymentPermissionChangeAction.RequireRedeploy
-    ) {
-      const deploymentId = snapshot.deployment.deploymentId;
-      setNodeDeploymentDialog(previous =>
-        previous?.deployment?.deploymentId === deploymentId
-          ? {
-              ...previous,
-              phase: NodeDeploymentPhase.Idle,
-              accessMode: redeployStep.accessMode,
-              targetShareStatus: HtmlShareStatus.Live,
-              accessSyncError: undefined,
-            }
-          : previous,
-      );
+    const permissionState = getLocalServiceDeploymentPermissionState(
+      selectedPermission,
+      snapshot.deployment.accessMode,
+    );
+    const submitAction = getLocalServiceDeploymentPermissionSubmitAction(
+      snapshot.deployment,
+      selectedPermission,
+    );
+    if (submitAction !== LocalServiceDeploymentPermissionSubmitAction.UpdatePermission) {
       return;
     }
-    if (plan.length === 0) {
-      if (
-        permission === LocalServiceDeploymentPermission.Stopped &&
-        isLocalServiceDeploymentStopped(
-          snapshot.deployment.shareStatus,
-          snapshot.deployment.status,
-        )
-      ) {
-        const deploymentId = snapshot.deployment.deploymentId;
-        setNodeDeploymentDialog(previous =>
-          previous?.deployment?.deploymentId === deploymentId
-            ? {
-                ...previous,
-                phase: NodeDeploymentPhase.Idle,
-                accessMode: normalizeHtmlShareAccessMode(snapshot.deployment?.accessMode),
-                targetShareStatus: HtmlShareStatus.Disabled,
-                accessSyncError: undefined,
-              }
-            : previous,
-        );
-      }
-      return;
-    }
+    const plan = buildLocalServiceDeploymentPermissionPlan(
+      snapshot.deployment,
+      selectedPermission,
+    );
 
     const api = window.electron?.htmlShare;
     const shareId = snapshot.deployment.shareId;
     if (!api || !shareId) {
       setNodeDeploymentDialog(previous => previous
-        ? { ...previous, accessSyncError: t('htmlShareAccessModeUpdateFailed') }
+        ? {
+            ...previous,
+            accessSyncError: t('htmlShareAccessModeUpdateFailed'),
+            accessSyncSuccess: undefined,
+          }
         : previous);
       return;
     }
@@ -2526,6 +2573,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
             targetShareStatus: permissionState.targetStatus,
             error: undefined,
             accessSyncError: undefined,
+            accessSyncSuccess: undefined,
           }
         : previous,
     );
@@ -2592,6 +2640,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
               accessMode: confirmedPermission.accessMode,
               targetShareStatus: confirmedPermission.targetStatus,
               accessSyncError: undefined,
+              accessSyncSuccess: t('nodeDeploymentPermissionUpdated'),
             }
           : previous,
       );
@@ -2624,6 +2673,19 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
         ),
         authoritativeDeployment.accessMode,
       );
+      const retrySubmitAction = getLocalServiceDeploymentPermissionSubmitAction(
+        authoritativeDeployment,
+        selectedPermission,
+      );
+      const shouldPreservePermissionDraft =
+        retrySubmitAction === LocalServiceDeploymentPermissionSubmitAction.UpdatePermission ||
+        retrySubmitAction === LocalServiceDeploymentPermissionSubmitAction.RedeployAndEnable;
+      const retryPermission = shouldPreservePermissionDraft
+        ? getLocalServiceDeploymentPermissionState(
+            selectedPermission,
+            authoritativeDeployment.accessMode,
+          )
+        : authoritativePermission;
       if (snapshot.localService && snapshot.projectDirectory) {
         rememberNodeDeployment(
           getNodeDeploymentLookupKey(
@@ -2643,9 +2705,10 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
               ...previous,
               phase: authoritativeStopped ? NodeDeploymentPhase.Idle : previous.phase,
               deployment: authoritativeDeployment,
-              accessMode: authoritativePermission.accessMode,
-              targetShareStatus: authoritativePermission.targetStatus,
+              accessMode: retryPermission.accessMode,
+              targetShareStatus: retryPermission.targetStatus,
               accessSyncError: message,
+              accessSyncSuccess: undefined,
             }
           : previous,
       );
@@ -2716,6 +2779,23 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   const closeNodeDeploymentDialog = useCallback(() => {
     if (isNodeDeploymentAccessUpdating) return;
     setIsNodeDeploymentDialogOpen(false);
+    setNodeDeploymentDialog(previous => {
+      const committedPermission = getCommittedLocalServiceDeploymentPermission(
+        previous?.deployment,
+      );
+      if (!previous?.deployment || !committedPermission) return previous;
+      const committedState = getLocalServiceDeploymentPermissionState(
+        committedPermission,
+        previous.deployment.accessMode,
+      );
+      return {
+        ...previous,
+        accessMode: committedState.accessMode,
+        targetShareStatus: committedState.targetStatus,
+        accessSyncError: undefined,
+        accessSyncSuccess: undefined,
+      };
+    });
     if (localServiceDeploymentRequest?.requestId) {
       onLocalServiceDeploymentRequestConsumed?.(localServiceDeploymentRequest.requestId);
     }
@@ -2778,6 +2858,31 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     }
     if (currentDialog.analysis?.blockers.length) return;
 
+    const selectedPermission = getLocalServiceDeploymentPermission(
+      currentDialog.accessMode,
+      currentDialog.targetShareStatus,
+    );
+    const permissionSubmitAction = getLocalServiceDeploymentPermissionSubmitAction(
+      currentDialog.deployment,
+      selectedPermission,
+    );
+    if (
+      permissionSubmitAction === LocalServiceDeploymentPermissionSubmitAction.UpdatePermission ||
+      permissionSubmitAction === LocalServiceDeploymentPermissionSubmitAction.Blocked
+    ) {
+      return;
+    }
+    if (
+      currentDialog.deployment?.deploymentKind !== ShareDeploymentKind.StaticSite &&
+      isLocalServiceDeploymentStopped(
+        currentDialog.deployment?.shareStatus,
+        currentDialog.deployment?.status,
+      ) &&
+      selectedPermission === LocalServiceDeploymentPermission.Stopped
+    ) {
+      return;
+    }
+
     const runId = nodeDeploymentActionRunIdRef.current + 1;
     nodeDeploymentActionRunIdRef.current = runId;
     const port = Number(currentDialog.port);
@@ -2815,6 +2920,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
           message: t('nodeDeploymentPreparingMessage'),
           error: undefined,
           accessSyncError: undefined,
+          accessSyncSuccess: undefined,
         }
       : previous);
     try {
@@ -3744,24 +3850,32 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   const isDynamicNodeDeployment = Boolean(
     nodeDeployment && nodeDeployment.deploymentKind !== ShareDeploymentKind.StaticSite,
   );
+  const nodeDeploymentSelectedPermission = getLocalServiceDeploymentPermission(
+    nodeDeploymentDialog?.accessMode,
+    nodeDeploymentDialog?.targetShareStatus,
+  );
+  const isNodeDeploymentPermissionDirty = isLocalServiceDeploymentPermissionDirty(
+    nodeDeployment,
+    nodeDeploymentSelectedPermission,
+  );
+  const nodeDeploymentPermissionSubmitAction =
+    getLocalServiceDeploymentPermissionSubmitAction(
+      nodeDeployment,
+      nodeDeploymentSelectedPermission,
+    );
   const isNodeDeploymentRedeployRequired = Boolean(
-    isDynamicNodeDeployment &&
-      isNodeDeploymentShareDisabled &&
-      nodeDeploymentDialog?.targetShareStatus === HtmlShareStatus.Live,
+    nodeDeploymentPermissionSubmitAction ===
+      LocalServiceDeploymentPermissionSubmitAction.RedeployAndEnable,
   );
   const isNodeDeploymentStoppedWithoutRedeployTarget = Boolean(
     isDynamicNodeDeployment &&
       isNodeDeploymentShareDisabled &&
-      nodeDeploymentDialog?.targetShareStatus === HtmlShareStatus.Disabled,
+      nodeDeploymentSelectedPermission === LocalServiceDeploymentPermission.Stopped,
   );
   const isNodeDeploymentAnalysisReady = Boolean(
     nodeDeploymentAnalysis?.success &&
       normalizeNodeDeploymentProjectDirectoryForCompare(nodeDeploymentAnalysis.projectDirectory) ===
         normalizeNodeDeploymentProjectDirectoryForCompare(nodeDeploymentDialog?.projectDirectory),
-  );
-  const nodeDeploymentSelectedPermission = getLocalServiceDeploymentPermission(
-    nodeDeploymentDialog?.accessMode,
-    nodeDeploymentDialog?.targetShareStatus,
   );
   const isStaticNodeDeployment =
     nodeDeploymentAnalysis?.deploymentKind === ShareDeploymentKind.StaticSite;
@@ -3780,11 +3894,26 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
       (isNodeDeploymentBusy &&
         (nodeDeploymentDialog?.phase !== NodeDeploymentPhase.Analyzing || !nodeDeployment)),
   );
+  const isNodeDeploymentPermissionSubmitDisabled = Boolean(
+    nodeDeploymentPermissionSubmitAction !==
+      LocalServiceDeploymentPermissionSubmitAction.UpdatePermission ||
+      isNodeDeploymentBusy ||
+      isNodeDeploymentAccessUpdating ||
+      isNodeDeploymentLookupPending ||
+      isNodeDeploymentPending(nodeDeployment?.status),
+  );
+  const isNodeDeploymentStopDraft = Boolean(
+    isDynamicNodeDeployment &&
+      nodeDeployment &&
+      !isNodeDeploymentShareDisabled &&
+      nodeDeploymentSelectedPermission === LocalServiceDeploymentPermission.Stopped,
+  );
   const isNodeDeploymentSubmitDisabled = Boolean(
     !isNodeDeploymentEditorDialog ||
       isNodeDeploymentPendingOperation ||
       nodeDeploymentDialog?.phase === NodeDeploymentPhase.Live ||
       isNodeDeploymentStoppedWithoutRedeployTarget ||
+      (isNodeDeploymentPermissionDirty && !isNodeDeploymentRedeployRequired) ||
       !isNodeDeploymentAnalysisReady ||
       !nodeDeploymentDialog?.projectDirectory?.trim() ||
       (!isStaticNodeDeployment && !nodeDeploymentDialog?.startCommand?.trim()) ||
@@ -3796,7 +3925,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   );
   const canCopyNodeDeploymentLink = canCopyLocalServiceDeploymentLink(
     nodeDeployment,
-    isNodeDeploymentPendingOperation,
+    isNodeDeploymentPendingOperation || isNodeDeploymentPermissionDirty,
   );
   const nodeDeploymentCopyButtonLabel =
     htmlShareCopyStatus === HtmlShareCopyStatus.Failed
@@ -3819,7 +3948,11 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
       case NodeDeploymentPhase.Failed:
       case NodeDeploymentPhase.Idle:
       default:
-        return nodeDeployment ? t('nodeDeploymentRetry') : t('nodeDeploymentSubmit');
+        return nodeDeployment
+          ? isNodeDeploymentRedeployRequired
+            ? t('nodeDeploymentRedeployAndShare')
+            : t('nodeDeploymentRetry')
+          : t('nodeDeploymentSubmit');
     }
   })();
   const showNodeDeploymentSubmitSpinner = Boolean(
@@ -3875,11 +4008,14 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
       {/* Drag handle */}
       {!isPanelExpanded && (
         <div
+          key="artifact-panel-resize-handle"
           className="w-1 shrink-0 touch-none cursor-col-resize transition-colors hover:bg-primary/30 active:bg-primary/50"
           onPointerDown={handleResizeStart}
         />
       )}
+      {/* The key preserves the preview subtree when the preceding drag handle is removed. */}
       <aside
+        key="artifact-panel-content"
         style={isPanelExpanded
           ? { width: '100%', maxWidth: 'none' }
           : { width: constrainedPanelWidth, maxWidth: constrainedMaxPanelWidth }}
@@ -4098,7 +4234,18 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
             onCurrentUrlChange={handleBrowserUrlChange}
             onTitleChange={onBrowserTitleChange}
             onLocalServiceOpen={handleBrowserLocalServiceOpen}
-            onAnnotationCaptured={onBrowserAnnotationCaptured}
+            draftKey={sessionId}
+            annotationBatch={browserAnnotationBatch}
+            onAnnotationBatchChange={batch => {
+              if (batch) {
+                dispatch(upsertDraftBrowserAnnotationBatch({ draftKey: sessionId, batch }));
+              } else if (browserAnnotationBatch) {
+                dispatch(removeDraftBrowserAnnotationBatch({
+                  draftKey: sessionId,
+                  batchId: browserAnnotationBatch.id,
+                }));
+              }
+            }}
           />
         ) : activeSpecialTab === ArtifactSpecialTab.Subagents && subagentPanel ? (
           subagentPanel
@@ -4487,7 +4634,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
                                 value={option.value}
                                 checked={nodeDeploymentSelectedPermission === option.value}
                                 disabled={isDisabled}
-                                onChange={() => void selectNodeDeploymentPermission(option.value)}
+                                onChange={() => selectNodeDeploymentPermission(option.value)}
                                 className="h-4 w-4 accent-primary"
                               />
                               <span>{option.label}</span>
@@ -4501,6 +4648,14 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
                           role="status"
                         >
                           {t('nodeDeploymentRedeployRequiredNotice')}
+                        </div>
+                      )}
+                      {isNodeDeploymentStopDraft && (
+                        <div
+                          className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200"
+                          role="status"
+                        >
+                          {t('nodeDeploymentStopDraftNotice')}
                         </div>
                       )}
                     </section>
@@ -4787,6 +4942,14 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
                         {nodeDeploymentDialog.accessSyncError}
                       </div>
                     )}
+                    {nodeDeploymentDialog.accessSyncSuccess && (
+                      <div
+                        className="mt-3 whitespace-pre-wrap text-xs leading-5 text-green-600 dark:text-green-300"
+                        role="status"
+                      >
+                        {nodeDeploymentDialog.accessSyncSuccess}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="min-h-[180px] whitespace-pre-wrap break-words rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm leading-6 text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200" role="alert">
@@ -4815,6 +4978,25 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
                     )}
                     {nodeDeploymentSubmitLabel}
                   </button>
+                  {nodeDeploymentPermissionSubmitAction ===
+                    LocalServiceDeploymentPermissionSubmitAction.UpdatePermission && (
+                    <button
+                      type="button"
+                      onClick={() => void submitNodeDeploymentPermissionChange()}
+                      disabled={isNodeDeploymentPermissionSubmitDisabled}
+                      className="inline-flex h-10 min-w-[132px] items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isNodeDeploymentAccessUpdating && (
+                        <ArrowPathIcon
+                          className="h-4 w-4 motion-safe:animate-spin"
+                          aria-hidden="true"
+                        />
+                      )}
+                      {isNodeDeploymentAccessUpdating
+                        ? t('nodeDeploymentPermissionUpdating')
+                        : t('nodeDeploymentUpdatePermissionAction')}
+                    </button>
+                  )}
                   {canCopyNodeDeploymentLink && nodeDeployment && (
                     <button
                       type="button"
@@ -4862,6 +5044,7 @@ type BrowserWebviewElement = HTMLElement & {
   getTitle?: () => string;
   getZoomFactor?: () => number;
   setZoomFactor?: (factor: number) => void;
+  send?: (channel: string, ...args: unknown[]) => void;
 };
 
 const BrowserScreenshotStatus = {
@@ -4873,12 +5056,12 @@ const BrowserScreenshotStatus = {
 type BrowserScreenshotStatus =
   (typeof BrowserScreenshotStatus)[keyof typeof BrowserScreenshotStatus];
 
-const BrowserAnnotationStatus = {
+export const BrowserAnnotationStatus = {
   Sent: 'sent',
   Cancelled: 'cancelled',
 } as const;
 
-type BrowserAnnotationStatus =
+export type BrowserAnnotationStatus =
   (typeof BrowserAnnotationStatus)[keyof typeof BrowserAnnotationStatus];
 
 const BrowserToolbarAction = {
@@ -5023,7 +5206,7 @@ interface BrowserToolbarTooltipPosition {
   placement: 'top' | 'bottom';
 }
 
-interface BrowserAnnotationResult {
+export interface BrowserAnnotationResult {
   status: BrowserAnnotationStatus;
   comment?: string;
   pageUrl?: string;
@@ -5033,7 +5216,7 @@ interface BrowserAnnotationResult {
   viewport?: BrowserAnnotationScreenshotInfo;
 }
 
-function normalizeBrowserAnnotationRect(
+export function normalizeBrowserAnnotationRect(
   rect: BrowserAnnotationRect,
   viewport: BrowserAnnotationScreenshotInfo | undefined,
   screenshot: BrowserAnnotationScreenshotInfo,
@@ -5218,7 +5401,7 @@ function mergeLocalServices(
   return Array.from(byPort.values()).slice(0, LocalServiceDisplay.Limit);
 }
 
-interface BrowserAnnotationLabels {
+export interface BrowserAnnotationLabels {
   instruction: string;
   placeholder: string;
   send: string;
@@ -5230,7 +5413,7 @@ interface BrowserAnnotationLabels {
   statusCancelled: BrowserAnnotationStatus;
 }
 
-function buildBrowserAnnotationScript(labels: BrowserAnnotationLabels): string {
+export function buildBrowserAnnotationScript(labels: BrowserAnnotationLabels): string {
   return `
 (() => {
   const labels = ${JSON.stringify(labels)};
@@ -5444,7 +5627,9 @@ interface BrowserTabContentProps {
   onCurrentUrlChange: (value: string) => void;
   onTitleChange?: (value: string) => void;
   onLocalServiceOpen?: (service: LocalWebService) => void;
-  onAnnotationCaptured?: (payload: BrowserAnnotationPayload) => void;
+  draftKey: string;
+  annotationBatch?: CoworkBrowserAnnotationBatch;
+  onAnnotationBatchChange: (batch: CoworkBrowserAnnotationBatch | null) => void;
 }
 
 const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
@@ -5457,7 +5642,9 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
   onCurrentUrlChange,
   onTitleChange,
   onLocalServiceOpen,
-  onAnnotationCaptured,
+  draftKey,
+  annotationBatch,
+  onAnnotationBatchChange,
 }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [canGoBack, setCanGoBack] = useState(false);
@@ -5467,6 +5654,18 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
     BrowserScreenshotStatus.Idle,
   );
   const [isAnnotating, setIsAnnotating] = useState(false);
+  const browserTabIdRef = useRef(crypto.randomUUID());
+  const documentIdRef = useRef(crypto.randomUUID());
+  const navigationVersionRef = useRef(1);
+  const annotationRevisionRef = useRef(0);
+  const annotationBatchRef = useRef(annotationBatch);
+  const pendingCaptureRef = useRef(new Map<string, {
+    resolve: (capture: CoworkBrowserAnnotation['capture']) => void;
+    reject: (error: Error) => void;
+    timeoutId: number;
+  }>());
+  const activeCaptureIdsRef = useRef(new Set<string>());
+  const replacedCaptureAssetsRef = useRef(new Map<string, BrowserAnnotationScreenshotRef>());
   const [localServices, setLocalServices] = useState<LocalWebService[]>([]);
   const [isLoadingLocalServices, setIsLoadingLocalServices] = useState(false);
   const [hoveredToolbarAction, setHoveredToolbarAction] = useState<BrowserToolbarAction | null>(
@@ -5527,6 +5726,226 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
     deviceScale,
     isDeviceToolbarVisible,
   ]);
+
+  const sendAnnotationCommand = useCallback((
+    type: string,
+    batch: CoworkBrowserAnnotationBatch,
+    payload: Partial<BrowserAnnotationGuestEnvelope> = {},
+  ) => {
+    annotationRevisionRef.current += 1;
+    webviewNodeRef.current?.send?.(BrowserAnnotationGuestChannel.Command, {
+      protocolVersion: BrowserAnnotationProtocolVersion,
+      type,
+      browserTabId: batch.browserTabId,
+      documentId: batch.documentId,
+      navigationVersion: batch.navigationVersion,
+      batchId: batch.id,
+      revision: annotationRevisionRef.current,
+      ...payload,
+    } satisfies BrowserAnnotationGuestEnvelope);
+  }, []);
+
+  useEffect(() => {
+    const removedBatch = resolveRemovedActiveBrowserAnnotationBatch(
+      annotationBatchRef.current,
+      annotationBatch,
+      isAnnotating,
+    );
+    annotationBatchRef.current = annotationBatch;
+    if (!removedBatch) return;
+
+    sendAnnotationCommand(BrowserAnnotationGuestCommandType.Clear, removedBatch);
+    sendAnnotationCommand(BrowserAnnotationGuestCommandType.Stop, removedBatch);
+    setIsAnnotating(false);
+  }, [annotationBatch, isAnnotating, sendAnnotationCommand]);
+
+  const commitAnnotationBatch = useCallback((batch: CoworkBrowserAnnotationBatch) => {
+    annotationBatchRef.current = batch;
+    onAnnotationBatchChange(batch);
+  }, [onAnnotationBatchChange]);
+
+  useEffect(() => {
+    if (!isAnnotating || !annotationBatch) return;
+    sendAnnotationCommand(BrowserAnnotationGuestCommandType.Sync, annotationBatch, {
+      annotations: annotationBatch.annotations,
+    });
+  }, [annotationBatch, isAnnotating, sendAnnotationCommand]);
+
+  const captureBrowserAnnotation = useCallback(async (
+    batch: CoworkBrowserAnnotationBatch,
+    annotation: CoworkBrowserAnnotation,
+  ) => {
+    if (activeCaptureIdsRef.current.has(annotation.id)) return;
+    activeCaptureIdsRef.current.add(annotation.id);
+    const requestId = annotation.screenshot.status === BrowserAnnotationScreenshotStatus.Capturing
+      ? annotation.screenshot.requestId
+      : crypto.randomUUID();
+    try {
+      const capture = await new Promise<CoworkBrowserAnnotation['capture']>((resolve, reject) => {
+        const timeoutId = window.setTimeout(() => {
+          pendingCaptureRef.current.delete(requestId);
+          reject(new Error('Browser annotation capture timed out.'));
+        }, BrowserAnnotationLimit.CaptureTimeoutMs);
+        pendingCaptureRef.current.set(requestId, { resolve, reject, timeoutId });
+        sendAnnotationCommand(BrowserAnnotationGuestCommandType.PrepareCapture, batch, {
+          requestId,
+          annotationId: annotation.id,
+        });
+      });
+      const image = await webviewNodeRef.current?.capturePage?.();
+      if (!image) throw new Error('Browser screenshot capture is unavailable.');
+      const saved = await window.electron?.artifact?.saveBrowserAnnotationAsset({
+        draftKey,
+        batchId: batch.id,
+        annotationId: annotation.id,
+        imageDataUrl: image.toDataURL(),
+        viewportWidth: capture.viewportWidth,
+        viewportHeight: capture.viewportHeight,
+        targetRect: capture.targetRect,
+        markerViewportPoint: capture.markerViewportPoint,
+        compact: batch.annotations.length >= BrowserAnnotationLimit.CompactThreshold,
+      });
+      if (!saved?.success || !saved.asset) throw new Error(saved?.error || 'Screenshot save failed.');
+      const current = annotationBatchRef.current;
+      if (!current || current.id !== batch.id) return;
+      const next = {
+        ...current,
+        updatedAt: Date.now(),
+        annotations: current.annotations.map(item => item.id === annotation.id
+          ? {
+              ...item,
+              capture,
+              screenshot: { status: BrowserAnnotationScreenshotStatus.Ready, asset: saved.asset! },
+              updatedAt: Date.now(),
+            }
+          : item),
+      };
+      commitAnnotationBatch(next);
+      sendAnnotationCommand(BrowserAnnotationGuestCommandType.Sync, next, {
+        annotations: next.annotations,
+      });
+      const replacedAsset = replacedCaptureAssetsRef.current.get(annotation.id);
+      replacedCaptureAssetsRef.current.delete(annotation.id);
+      if (replacedAsset && replacedAsset.assetId !== saved.asset.assetId) {
+        void window.electron?.artifact?.deleteBrowserAnnotationAsset({
+          draftKey,
+          batchId: batch.id,
+          annotationId: annotation.id,
+          assetId: replacedAsset.assetId,
+        });
+      }
+    } catch (error) {
+      const current = annotationBatchRef.current;
+      if (current?.id === batch.id) {
+        const next: CoworkBrowserAnnotationBatch = {
+          ...current,
+          updatedAt: Date.now(),
+          annotations: current.annotations.map(item => item.id === annotation.id
+            ? {
+                ...item,
+                screenshot: {
+                  status: BrowserAnnotationScreenshotStatus.Failed,
+                  reason: error instanceof Error && error.message.includes('timed out')
+                    ? 'timeout'
+                    : 'capture-failed',
+                  failedAt: Date.now(),
+                },
+                updatedAt: Date.now(),
+              }
+            : item),
+        };
+        commitAnnotationBatch(next);
+      }
+      const replacedAsset = replacedCaptureAssetsRef.current.get(annotation.id);
+      if (replacedAsset) {
+        replacedCaptureAssetsRef.current.delete(annotation.id);
+        void window.electron?.artifact?.deleteBrowserAnnotationAsset({
+          draftKey,
+          batchId: batch.id,
+          annotationId: annotation.id,
+          assetId: replacedAsset.assetId,
+        });
+      }
+    } finally {
+      activeCaptureIdsRef.current.delete(annotation.id);
+      sendAnnotationCommand(BrowserAnnotationGuestCommandType.ResumeAfterCapture, batch, {
+        requestId,
+        annotationId: annotation.id,
+      });
+    }
+  }, [commitAnnotationBatch, draftKey, sendAnnotationCommand]);
+
+  const handleBrowserAnnotationIpc = useCallback((event: Event) => {
+    const detail = event as Event & { channel?: string; args?: unknown[] };
+    if (detail.channel !== BrowserAnnotationGuestChannel.Event) return;
+    const message = detail.args?.[0] as BrowserAnnotationGuestEnvelope | undefined;
+    const batch = annotationBatchRef.current;
+    if (
+      !message
+      || !batch
+      || message.protocolVersion !== BrowserAnnotationProtocolVersion
+      || message.browserTabId !== batch.browserTabId
+      || message.documentId !== batch.documentId
+      || message.navigationVersion !== batch.navigationVersion
+      || message.batchId !== batch.id
+    ) return;
+    if (message.type === BrowserAnnotationGuestEventType.CloseRequested) {
+      setIsAnnotating(false);
+      sendAnnotationCommand(BrowserAnnotationGuestCommandType.Stop, batch);
+      return;
+    }
+    if (message.type === BrowserAnnotationGuestEventType.CaptureReady && message.requestId && message.capture) {
+      const pending = pendingCaptureRef.current.get(message.requestId);
+      if (!pending) return;
+      window.clearTimeout(pending.timeoutId);
+      pendingCaptureRef.current.delete(message.requestId);
+      pending.resolve(message.capture);
+      return;
+    }
+    if (message.type !== BrowserAnnotationGuestEventType.Changed || !message.annotations) return;
+    for (const incoming of message.annotations) {
+      if (incoming.screenshot.status !== BrowserAnnotationScreenshotStatus.Capturing) continue;
+      const previous = batch.annotations.find(annotation => annotation.id === incoming.id);
+      if (previous?.screenshot.status === BrowserAnnotationScreenshotStatus.Ready) {
+        replacedCaptureAssetsRef.current.set(incoming.id, previous.screenshot.asset);
+      }
+    }
+    for (const removed of batch.annotations.filter(
+      annotation => !message.annotations?.some(item => item.id === annotation.id),
+    )) {
+      if (removed.screenshot.status === BrowserAnnotationScreenshotStatus.Ready) {
+        void window.electron?.artifact?.deleteBrowserAnnotationAsset({
+          draftKey,
+          batchId: batch.id,
+          annotationId: removed.id,
+          assetId: removed.screenshot.asset.assetId,
+        });
+      }
+      const replacedAsset = replacedCaptureAssetsRef.current.get(removed.id);
+      if (replacedAsset) {
+        replacedCaptureAssetsRef.current.delete(removed.id);
+        void window.electron?.artifact?.deleteBrowserAnnotationAsset({
+          draftKey,
+          batchId: batch.id,
+          annotationId: removed.id,
+          assetId: replacedAsset.assetId,
+        });
+      }
+    }
+    const next: CoworkBrowserAnnotationBatch = {
+      ...batch,
+      annotations: message.annotations.slice(0, BrowserAnnotationLimit.MaxAnnotations),
+      pageUrl: currentUrl || batch.pageUrl,
+      pageTitle: message.annotations[0]?.anchor.pageTitle || batch.pageTitle,
+      updatedAt: Date.now(),
+    };
+    commitAnnotationBatch(next);
+    for (const annotation of next.annotations) {
+      if (annotation.screenshot.status === BrowserAnnotationScreenshotStatus.Capturing) {
+        void captureBrowserAnnotation(next, annotation);
+      }
+    }
+  }, [captureBrowserAnnotation, commitAnnotationBatch, currentUrl, draftKey, sendAnnotationCommand]);
 
   const hideAddressOpenExternal = useCallback(() => {
     setIsAddressBarFocused(false);
@@ -5745,6 +6164,16 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
       }
       syncNavigationState(webviewNode);
     };
+    const handleDocumentNavigate = (event: Event) => {
+      const activeBatch = annotationBatchRef.current;
+      if (isAnnotating && activeBatch) {
+        sendAnnotationCommand(BrowserAnnotationGuestCommandType.Stop, activeBatch);
+      }
+      setIsAnnotating(false);
+      documentIdRef.current = crypto.randomUUID();
+      navigationVersionRef.current += 1;
+      handleNavigate(event);
+    };
     const handleTitleUpdated = () => {
       syncBrowserTitle(webviewNode);
     };
@@ -5763,24 +6192,29 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
     webviewNode.addEventListener('did-start-loading', handleStartLoading);
     webviewNode.addEventListener('did-stop-loading', handleStopLoading);
     webviewNode.addEventListener('did-fail-load', handleFailLoad);
-    webviewNode.addEventListener('did-navigate', handleNavigate);
+    webviewNode.addEventListener('did-navigate', handleDocumentNavigate);
     webviewNode.addEventListener('did-navigate-in-page', handleNavigate);
     webviewNode.addEventListener('page-title-updated', handleTitleUpdated);
     webviewNode.addEventListener('dom-ready', handleDomReady);
+    webviewNode.addEventListener('ipc-message', handleBrowserAnnotationIpc);
     return () => {
       webviewNode.removeEventListener('did-start-loading', handleStartLoading);
       webviewNode.removeEventListener('did-stop-loading', handleStopLoading);
       webviewNode.removeEventListener('did-fail-load', handleFailLoad);
-      webviewNode.removeEventListener('did-navigate', handleNavigate);
+      webviewNode.removeEventListener('did-navigate', handleDocumentNavigate);
       webviewNode.removeEventListener('did-navigate-in-page', handleNavigate);
       webviewNode.removeEventListener('page-title-updated', handleTitleUpdated);
       webviewNode.removeEventListener('dom-ready', handleDomReady);
+      webviewNode.removeEventListener('ipc-message', handleBrowserAnnotationIpc);
     };
   }, [
     browserZoomFactor,
     getBrowserAddressForUrl,
+    handleBrowserAnnotationIpc,
+    isAnnotating,
     onAddressChange,
     onCurrentUrlChange,
+    sendAnnotationCommand,
     syncBrowserTitle,
     syncNavigationState,
     webviewNode,
@@ -6152,79 +6586,80 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
   }, [handleCaptureScreenshot]);
 
   const handleToggleAnnotation = useCallback(async () => {
-    if (!webviewNode?.executeJavaScript || !webviewNode.capturePage || !currentUrl) return;
+    if (!webviewNode?.send || !webviewNode.capturePage || !currentUrl) return;
     if (isAnnotating) {
       reportBrowserAction('browser_annotate_cancel');
-      await webviewNode
-        .executeJavaScript('window.__lobsterAnnotationCleanup?.()')
-        .catch(() => undefined);
+      const batch = annotationBatchRef.current;
+      if (batch) sendAnnotationCommand(BrowserAnnotationGuestCommandType.Stop, batch);
       setIsAnnotating(false);
       return;
     }
     reportBrowserAction('browser_annotate_start');
+    const now = Date.now();
+    const currentNormalizedUrl = normalizeBrowserPreviewUrlForMatch(currentUrl);
+    const existing = annotationBatchRef.current?.pageUrl
+      && normalizeBrowserPreviewUrlForMatch(annotationBatchRef.current.pageUrl) === currentNormalizedUrl
+      ? annotationBatchRef.current
+      : undefined;
+    const batch: CoworkBrowserAnnotationBatch = existing || {
+      version: 1,
+      id: crypto.randomUUID(),
+      browserTabId: browserTabIdRef.current,
+      documentId: documentIdRef.current,
+      navigationVersion: navigationVersionRef.current,
+      pageUrl: currentUrl,
+      pageTitle: webviewNode.getTitle?.() || '',
+      annotations: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    commitAnnotationBatch(batch);
     setIsAnnotating(true);
-    try {
-      const labels: BrowserAnnotationLabels = {
-        instruction: t('artifactBrowserAnnotationInstruction'),
+    sendAnnotationCommand(BrowserAnnotationGuestCommandType.Start, batch, {
+      annotations: batch.annotations,
+      labels: {
         placeholder: t('artifactBrowserAnnotationPlaceholder'),
-        send: t('artifactBrowserAnnotationSend'),
-        tag: t('artifactBrowserAnnotationLabelTag'),
-        size: t('artifactBrowserAnnotationLabelSize'),
-        color: t('artifactBrowserAnnotationLabelColor'),
-        font: t('artifactBrowserAnnotationLabelFont'),
-        statusSent: BrowserAnnotationStatus.Sent,
-        statusCancelled: BrowserAnnotationStatus.Cancelled,
-      };
-      const result = (await webviewNode.executeJavaScript(buildBrowserAnnotationScript(labels))) as
-        | BrowserAnnotationResult
-        | undefined;
-      if (result?.status !== BrowserAnnotationStatus.Sent || !result.element || !result.rect) {
-        reportBrowserAction('browser_annotate_end', {
-          result: result?.status === BrowserAnnotationStatus.Cancelled ? 'cancelled' : 'failed',
-        });
-        return;
-      }
-
-      await new Promise(resolve => window.setTimeout(resolve, 80));
-      const image = await webviewNode.capturePage();
-      const imageDataUrl = image.toDataURL();
-      const imageSize = image.getSize?.();
-      const screenshot: BrowserAnnotationScreenshotInfo = {
-        width: Math.round(imageSize?.width || result.viewport?.width || 0),
-        height: Math.round(imageSize?.height || result.viewport?.height || 0),
-        devicePixelRatio: result.viewport?.devicePixelRatio || window.devicePixelRatio || 1,
-      };
-      const annotation = normalizeBrowserAnnotationRect(result.rect, result.viewport, screenshot);
-      onAnnotationCaptured?.({
-        comment: result.comment?.trim() ?? '',
-        imageDataUrl,
-        pageUrl: result.pageUrl || currentUrl,
-        pageTitle: result.pageTitle || '',
-        screenshot,
-        annotation,
-        element: result.element,
-      });
-      reportBrowserAction('browser_annotate_send', {
-        result: 'success',
-        hasComment: Boolean(result.comment?.trim()),
-        annotationElementTag: result.element.tagName,
-      });
-    } catch {
-      reportBrowserAction('browser_annotate_send', {
-        result: 'failed',
-      });
-      window.dispatchEvent(
-        new CustomEvent('app:showToast', {
-          detail: t('artifactBrowserScreenshotFailed'),
-        }),
-      );
-    } finally {
-      await webviewNode
-        ?.executeJavaScript?.('window.__lobsterAnnotationCleanup?.()')
-        .catch(() => undefined);
-      setIsAnnotating(false);
-    }
-  }, [currentUrl, isAnnotating, onAnnotationCaptured, reportBrowserAction, webviewNode]);
+        save: t('artifactBrowserAnnotationSave'),
+        cancel: t('cancel'),
+        remove: t('delete'),
+        settings: t('artifactBrowserAnnotationSettings'),
+        text: t('artifactBrowserAnnotationText'),
+        textColor: t('artifactBrowserAnnotationTextColor'),
+        background: t('artifactBrowserAnnotationBackground'),
+        opacity: t('artifactBrowserAnnotationOpacity'),
+        font: t('artifactBrowserAnnotationFont'),
+        fontSize: t('artifactBrowserAnnotationFontSize'),
+        fontWeight: t('artifactBrowserAnnotationFontWeight'),
+        borderRadius: t('artifactBrowserAnnotationBorderRadius'),
+        borderColor: t('artifactBrowserAnnotationBorderColor'),
+        borderWidth: t('artifactBrowserAnnotationBorderWidth'),
+        width: t('artifactBrowserAnnotationWidth'),
+        height: t('artifactBrowserAnnotationHeight'),
+        padding: t('artifactBrowserAnnotationPadding'),
+        margin: t('artifactBrowserAnnotationMargin'),
+        flexDirection: t('artifactBrowserAnnotationFlexDirection'),
+        justifyContent: t('artifactBrowserAnnotationJustifyContent'),
+        alignItems: t('artifactBrowserAnnotationAlignItems'),
+        gap: t('artifactBrowserAnnotationGap'),
+        top: t('artifactBrowserAnnotationTop'),
+        right: t('artifactBrowserAnnotationRight'),
+        bottom: t('artifactBrowserAnnotationBottom'),
+        left: t('artifactBrowserAnnotationLeft'),
+        horizontal: t('artifactBrowserAnnotationHorizontal'),
+        vertical: t('artifactBrowserAnnotationVertical'),
+        horizontalReverse: t('artifactBrowserAnnotationHorizontalReverse'),
+        verticalReverse: t('artifactBrowserAnnotationVerticalReverse'),
+        start: t('artifactBrowserAnnotationStart'),
+        center: t('artifactBrowserAnnotationCenter'),
+        end: t('artifactBrowserAnnotationEnd'),
+        spaceBetween: t('artifactBrowserAnnotationSpaceBetween'),
+        spaceAround: t('artifactBrowserAnnotationSpaceAround'),
+        spaceEvenly: t('artifactBrowserAnnotationSpaceEvenly'),
+        stretch: t('artifactBrowserAnnotationStretch'),
+        complexText: t('artifactBrowserAnnotationComplexText'),
+      },
+    });
+  }, [commitAnnotationBatch, currentUrl, isAnnotating, reportBrowserAction, sendAnnotationCommand, webviewNode]);
 
   const screenshotButtonTitle =
     screenshotStatus === BrowserScreenshotStatus.Copied
@@ -6235,7 +6670,7 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
 
   const hoveredToolbarLabel =
     hoveredToolbarAction === BrowserToolbarAction.Annotate
-      ? t('artifactBrowserAnnotate')
+      ? t(isAnnotating ? 'artifactBrowserAnnotating' : 'artifactBrowserAnnotate')
       : hoveredToolbarAction === BrowserToolbarAction.OpenExternal
         ? t('artifactBrowserOpenExternal')
         : '';
@@ -6327,7 +6762,7 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
         </div>
         <div
           ref={annotateButtonRef}
-          className="flex h-7 w-7 shrink-0 items-center justify-center"
+          className="flex h-7 shrink-0 items-center justify-center"
           onMouseEnter={() => setHoveredToolbarAction(BrowserToolbarAction.Annotate)}
           onMouseLeave={() => setHoveredToolbarAction(null)}
         >
@@ -6335,27 +6770,23 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
             type="button"
             onClick={handleToggleAnnotation}
             disabled={!currentUrl}
-            className={`inline-flex h-7 w-7 items-center justify-center rounded text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-35 ${
+            className={`inline-flex h-7 items-center justify-center rounded text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-35 ${
               isAnnotating
-                ? 'bg-primary/10 text-primary'
-                : 'text-secondary hover:bg-surface hover:text-foreground'
+                ? 'gap-1.5 bg-primary/10 px-2 text-primary hover:bg-primary/15'
+                : 'w-7 text-secondary hover:bg-surface hover:text-foreground'
             }`}
-            aria-label={t('artifactBrowserAnnotate')}
+            aria-label={t(isAnnotating ? 'artifactBrowserAnnotating' : 'artifactBrowserAnnotate')}
             title={isAnnotating ? t('artifactBrowserAnnotating') : t('artifactBrowserAnnotate')}
           >
             <AnnotateIcon />
+            {isAnnotating ? (
+              <span className="whitespace-nowrap">
+                {t('artifactBrowserAnnotating')}
+                {annotationBatch?.annotations.length ? ` · ${annotationBatch.annotations.length}` : ''}
+              </span>
+            ) : null}
           </button>
         </div>
-        {isAnnotating && (
-          <button
-            type="button"
-            onClick={handleToggleAnnotation}
-            className="shrink-0 rounded-md bg-primary/10 px-2 py-1 text-xs text-primary transition-colors hover:bg-primary/15"
-            title={t('artifactBrowserAnnotating')}
-          >
-            {t('artifactBrowserAnnotating')}
-          </button>
-        )}
         <button
           ref={browserMenuButtonRef}
           type="button"
