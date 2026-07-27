@@ -22,7 +22,7 @@ describe('buildMediaGenerationTurnInstruction', () => {
     expect(instruction).toContain('action="register_asset" succeeds');
     expect(instruction).toContain('action="apply" with the same skinId');
     expect(instruction).toContain('Never start parallel generations');
-    expect(instruction).toContain('lobsterai_skin_manage');
+    expect(instruction).toContain('nukemai_skin_manage');
     expect(instruction).not.toContain('lobsterai_image_generate');
     expect(instruction).not.toContain('lobsterai_video_generate');
     expect(instruction).not.toContain('NukemAI media generation tools - NOT AVAILABLE');

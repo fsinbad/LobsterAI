@@ -4,7 +4,7 @@
   "description": "Image/video generation and AI skin management tools powered by NukemAI.",
   "contracts": {
     "tools": [
-      "lobsterai_skin_manage"
+      "nukemai_skin_manage"
     ]
   },
   "configSchema": {

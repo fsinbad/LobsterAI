@@ -31,9 +31,9 @@ describe('OpenClaw extension manifests', () => {
     expect(readContractTools('ask-user-question')).toEqual(['AskUserQuestion']);
   });
 
-  test('declares the LobsterAI skin agent tool contract', () => {
+  test('declares the NukemAI skin agent tool contract', () => {
     expect(readContractTools('lobster-media-generation')).toEqual([
-      'lobsterai_skin_manage',
+      'nukemai_skin_manage',
     ]);
   });
 

@@ -27,7 +27,7 @@ type MediaToolResponse = {
 const DEFAULT_TIMEOUT_MS = 150_000;
 
 const MediaToolName = {
-  SkinManage: 'lobsterai_skin_manage',
+  SkinManage: 'nukemai_skin_manage',
 } as const;
 
 const SkinManageAction = {
@@ -224,7 +224,7 @@ const plugin = {
       };
     });
 
-    api.logger.info('[lobster-media-generation] registered lobsterai_skin_manage tool.');
+    api.logger.info('[lobster-media-generation] registered nukemai_skin_manage tool.');
   },
 };
 
