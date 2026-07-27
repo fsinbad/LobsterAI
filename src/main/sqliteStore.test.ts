@@ -142,6 +142,24 @@ test('upgrades legacy default agent name during migration', async () => {
   store.close();
 });
 
+test('upgrades pre-rebrand default agent name during migration', async () => {
+  const userDataPath = createTempUserDataPath();
+  createLegacyDatabase(userDataPath);
+
+  const db = new Database(path.join(userDataPath, DB_FILENAME));
+  db.prepare("UPDATE agents SET name = ? WHERE id = 'main'").run(DefaultAgentProfile.LegacyName);
+  db.close();
+
+  const store = await SqliteStore.create(userDataPath);
+  const row = store.getDatabase()
+    .prepare("SELECT name FROM agents WHERE id = 'main'")
+    .get() as { name: string };
+
+  expect(row.name).toBe(DefaultAgentProfile.Name);
+
+  store.close();
+});
+
 test('migrates legacy agent icons to the default svg avatar', async () => {
   const userDataPath = createTempUserDataPath();
   createLegacyDatabase(userDataPath);

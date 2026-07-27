@@ -525,7 +525,9 @@ export class SqliteStore {
           .run(AgentId.Main, DefaultAgentProfile.Name, existingSystemPrompt, DefaultAgentAvatarIcon, now, now);
       } else {
         const normalizedName = mainAgent.name.trim();
-        const shouldUpgradeName = !normalizedName || normalizedName.toLowerCase() === LegacyAgentName.Main;
+        const shouldUpgradeName = !normalizedName
+          || normalizedName.toLowerCase() === LegacyAgentName.Main
+          || normalizedName === DefaultAgentProfile.LegacyName;
         if (shouldUpgradeName) {
           this.db
             .prepare('UPDATE agents SET name = ?, updated_at = ? WHERE id = ?')
