@@ -1,10 +1,9 @@
 /**
- * Where the failing model comes from in LobsterAI terms, so users can tell at
- * a glance whether an error concerns the LobsterAI plan, a vendor coding plan
- * they configured, or their own custom provider.
+ * Where the failing model comes from in NukemAI terms, so users can tell at
+ * a glance whether an error concerns a vendor coding plan they configured or
+ * their own custom provider.
  */
 export const CoworkErrorModelSource = {
-  LobsterAIPlan: 'lobsterai-plan',
   CodingPlan: 'coding-plan',
   CustomProvider: 'custom-provider',
   BuiltinOAuth: 'builtin-oauth',

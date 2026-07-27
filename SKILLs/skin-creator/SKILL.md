@@ -1,13 +1,13 @@
 ---
 name: skin-creator
-description: Create and apply a two-asset LobsterAI visual skin from the user's style description. Use only when the AI Skin Designer kit supplies the structured skin_pack workflow marker; do not use for ordinary theme or image requests.
+description: Create and apply a two-asset NukemAI visual skin from the user's style description. Use only when the AI Skin Designer kit supplies the structured skin_pack workflow marker; do not use for ordinary theme or image requests.
 official: true
 version: 0.2.0
 ---
 
-# LobsterAI Skin Creator
+# NukemAI Skin Creator
 
-Create one complete LobsterAI MVP skin from the user's visual direction. The workflow is deliberately narrow: generate one workspace backdrop and one home emblem, register both through the trusted skin tool, then apply the completed skin.
+Create one complete NukemAI MVP skin from the user's visual direction. The workflow is deliberately narrow: generate one workspace backdrop and one home emblem, register both through the trusted skin tool, then apply the completed skin.
 
 Read [references/asset-contract.md](references/asset-contract.md) before the first image generation call.
 
@@ -24,9 +24,9 @@ Read [references/asset-contract.md](references/asset-contract.md) before the fir
 - Register each successful asset immediately. Do not start the next generation until `lobsterai_skin_manage` confirms registration.
 - Additional serial attempts are allowed when generation fails, returns no usable local output, or the current candidate cannot satisfy a required slot. Never run image generations in parallel or switch backend silently.
 - Never write skin files, application configuration, CSS, or databases directly. Only `lobsterai_skin_manage` may register or apply a skin.
-- Do not choose or name a LobsterAI color theme. LobsterAI deterministically infers the presentation's preferred light or dark appearance from its validated palette and reuses the existing theme system when the completed skin is applied.
+- Do not choose or name a NukemAI color theme. NukemAI deterministically infers the presentation's preferred light or dark appearance from its validated palette and reuses the existing theme system when the completed skin is applied.
 - Do not create icons, sprite sheets, wallpapers for other views, custom fonts, arbitrary CSS, or layout changes in this MVP.
-- Do not add title-bar assets, title-bar content, home-layout changes, or component-position changes. LobsterAI may apply the validated palette to allow-listed application and conversation title-bar surfaces.
+- Do not add title-bar assets, title-bar content, home-layout changes, or component-position changes. NukemAI may apply the validated palette to allow-listed application and conversation title-bar surfaces.
 
 ## Workflow
 
@@ -114,7 +114,7 @@ Proceed only after registration succeeds.
 
 Generate exactly one square emblem using the same style bible, backend, and model. When the selected model supports reference images, use the registered backdrop source as a style reference; otherwise repeat the same style bible in the prompt. Use a stable filename hint such as `lobster-skin-emblem.png`.
 
-The emblem must not contain words or letters. Do not rely on transparency. Generate a full-bleed square tile whose background reaches all four canvas edges; LobsterAI owns the displayed corner radius. Do not bake an inset rounded card, white outer canvas, border, frame, or padding into the image.
+The emblem must not contain words or letters. Do not rely on transparency. Generate a full-bleed square tile whose background reaches all four canvas edges; NukemAI owns the displayed corner radius. Do not bake an inset rounded card, white outer canvas, border, frame, or padding into the image.
 
 After terminal success, register it:
 
@@ -141,7 +141,7 @@ Then call:
 ```
 
 Tell the user that the skin was applied and can be removed from Appearance settings. Avoid extra generation once both required slots are ready.
-LobsterAI may automatically select a compatible light or dark color theme when applying the skin. Disabling or deleting the skin does not restore the previously selected color theme.
+NukemAI may automatically select a compatible light or dark color theme when applying the skin. Disabling or deleting the skin does not restore the previously selected color theme.
 
 ## Failure handling
 

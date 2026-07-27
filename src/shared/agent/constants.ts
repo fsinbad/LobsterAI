@@ -57,5 +57,7 @@ export const LegacyAgentName = {
 } as const;
 
 export const DefaultAgentProfile = {
-  Name: 'LobsterAI',
+  Name: 'NukemAI',
+  /** Pre-rebrand default profile name stored in existing user databases. */
+  LegacyName: 'LobsterAI',
 } as const;

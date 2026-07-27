@@ -1558,7 +1558,7 @@ export function resolveOpenClawRuntimeErrorMessage(
 export type OpenClawRuntimeErrorDetailOptions = {
   /** Turn model reference ("providerId/modelId") used when gateway metadata lacks provider/model. */
   fallbackModelRef?: string;
-  /** Classifies an OpenClaw provider id back to its LobsterAI Settings entry. */
+  /** Classifies an OpenClaw provider id back to its NukemAI Settings entry. */
   resolveModelSource?: (openclawProviderId: string) => OpenClawProviderModelSource | undefined;
 };
 
@@ -1953,7 +1953,7 @@ const buildMediaReferencePromptSection = (mediaReferences?: CoworkMediaAttachmen
   if (refs.length === 0) return '';
 
   const lines = [
-    '[LobsterAI media reference mapping]',
+    '[NukemAI media reference mapping]',
     'The current user request contains explicit @ media tokens. Treat these mappings as authoritative and do not guess which uploaded attachment a token means.',
     'When calling the native image_generate tool, pass mapped file paths or URLs as tool arguments. Do not pass @ media tokens as image, images, firstFrame, lastFrame, referenceImages, media.url, video, or videos values.',
     'For image_generate, prefer image with the mapped path for one referenced image and images for multiple referenced images.',
@@ -1968,7 +1968,7 @@ const buildMediaReferencePromptSection = (mediaReferences?: CoworkMediaAttachmen
     const locations = [
       ref.localPath ? `localPath "${sanitizeMediaReferenceText(ref.localPath)}"` : '',
       ref.remoteUrl ? `remoteUrl "${sanitizeMediaReferenceText(ref.remoteUrl)}"` : '',
-      !ref.localPath && !ref.remoteUrl && ref.dataUrl ? 'dataUrl fallback available through LobsterAI host' : '',
+      !ref.localPath && !ref.remoteUrl && ref.dataUrl ? 'dataUrl fallback available through NukemAI host' : '',
     ].filter(Boolean);
     const locationText = locations.length > 0 ? `, ${locations.join(', ')}` : '';
     lines.push(`- ${ref.token}: ${mediaType} attachment #${ref.index}, file "${sanitizeMediaReferenceText(ref.fileName)}", MIME ${sanitizeMediaReferenceText(ref.mimeType)}${locationText}.`);
@@ -2186,7 +2186,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   /**
    * Server-side agent timeout in seconds (mirrors agents.defaults.timeoutSeconds in openclaw config).
    * Used to set a client-side fallback timer that fires slightly after the server timeout,
-   * so LobsterAI can recover even when the gateway fails to deliver the abort event.
+   * so NukemAI can recover even when the gateway fails to deliver the abort event.
    */
   agentTimeoutSeconds = OPENCLAW_AGENT_TIMEOUT_SECONDS;
   private static readonly CLIENT_TIMEOUT_GRACE_MS = 30_000;
@@ -3757,7 +3757,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
    * Ensure the gateway WebSocket client is connected.
    * Called when IM channels (e.g. Telegram) are enabled in OpenClaw mode
    * so that channel-originated events can be received without waiting
-   * for a LobsterAI-initiated session.
+   * for a NukemAI-initiated session.
    */
   async connectGatewayIfNeeded(): Promise<void> {
     this.gatewayReconnectSuppressed = false;
@@ -4110,7 +4110,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         clientSteerId,
         reason,
         error: reason === CoworkSteerRejectReason.RuntimeUnsupported
-          ? 'The current OpenClaw runtime does not expose same-turn steering yet. Rebuild the pinned runtime with LobsterAI patches.'
+          ? 'The current OpenClaw runtime does not expose same-turn steering yet. Rebuild the pinned runtime with NukemAI patches.'
           : message,
       };
     }
@@ -5037,9 +5037,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   private buildSystemPromptPrefix(systemPrompt: string): string {
     return [
-      '[LobsterAI system instructions]',
+      '[NukemAI system instructions]',
       'Apply the instructions below as the highest-priority guidance for this session.',
-      'If earlier LobsterAI system instructions exist, replace them with this version.',
+      'If earlier NukemAI system instructions exist, replace them with this version.',
       systemPrompt,
     ].join('\n');
   }
@@ -5084,7 +5084,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
 
     const sections = [
-      '[Context bridge from previous LobsterAI conversation]',
+      '[Context bridge from previous NukemAI conversation]',
       'Use this prior context for continuity. Focus your final answer on the current request.',
     ];
 
@@ -5196,7 +5196,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const client = new GatewayClient({
       url: connection.url,
       token: connection.token,
-      clientDisplayName: 'LobsterAI',
+      clientDisplayName: 'NukemAI',
       clientVersion: app.getVersion(),
       mode: 'backend',
       caps: [OPENCLAW_GATEWAY_TOOL_EVENTS_CAP],
@@ -5569,7 +5569,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     return this.normalizeModelRef(rawCurrentModel);
   }
 
-  /** Builds the persisted error detail, annotated with the failing model's LobsterAI source. */
+  /** Builds the persisted error detail, annotated with the failing model's NukemAI source. */
   private buildTurnErrorDetail(
     sessionId: string,
     turn: ActiveTurn | undefined,
@@ -9858,7 +9858,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   /**
    * Sync user messages from gateway chat.history that haven't been added to the local store yet.
    * Used for channel-originated sessions (e.g. Telegram) where user messages arrive via the
-   * gateway rather than the LobsterAI UI.
+   * gateway rather than the NukemAI UI.
    *
    * Called at the start of a new turn (via prefetchChannelUserMessages) so that user messages
    * appear before the assistant's streaming response. Both chat and agent events are buffered

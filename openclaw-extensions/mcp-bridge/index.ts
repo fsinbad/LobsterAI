@@ -201,7 +201,7 @@ const invokeBridge = async (
 const plugin = {
   id: 'mcp-bridge',
   name: 'MCP Bridge',
-  description: 'Expose LobsterAI-managed MCP servers as native OpenClaw tools.',
+  description: 'Expose NukemAI-managed MCP servers as native OpenClaw tools.',
   configSchema: {
     parse(value: unknown): McpBridgePluginConfig {
       return parsePluginConfig(value);

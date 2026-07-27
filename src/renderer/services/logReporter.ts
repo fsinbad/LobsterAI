@@ -5,7 +5,7 @@ export const LogReporterEndpoint = {
 } as const;
 
 export const LogReporterProduct = {
-  LobsterAI: 'wisdom',
+  NukemAI: 'wisdom',
 } as const;
 
 export const LogReporterCategory = {
@@ -13,53 +13,53 @@ export const LogReporterCategory = {
 } as const;
 
 export const LogReporterActionPrefix = {
-  LobsterAI: 'lobsterai_',
+  NukemAI: 'nukemai_',
 } as const;
 
 export const LogReporterAction = {
-  AgentCreateAction: 'lobsterai_agent_create_action',
-  AgentSettingsAction: 'lobsterai_agent_settings_action',
-  AgentEngineMaintenanceAction: 'lobsterai_agent_engine_maintenance_action',
-  AgentEngineSettingChanged: 'lobsterai_agent_engine_setting_changed',
-  AboutAction: 'lobsterai_about_action',
-  AccountMenuAction: 'lobsterai_account_menu_action',
-  AppStarted: 'lobsterai_app_started',
-  AppearanceSettingChanged: 'lobsterai_appearance_setting_changed',
-  ArtifactPreviewAction: 'lobsterai_artifact_preview_action',
-  BrowserSettingChanged: 'lobsterai_browser_setting_changed',
-  CustomModelConnectionTested: 'lobsterai_custom_model_connection_tested',
-  CustomModelSettingsSaved: 'lobsterai_custom_model_settings_saved',
-  ConversationBlockAction: 'lobsterai_conversation_block_action',
-  ConversationMessageAction: 'lobsterai_conversation_message_action',
-  ConversationNavigationAction: 'lobsterai_conversation_navigation_action',
-  DreamingSettingChanged: 'lobsterai_dreaming_setting_changed',
-  EmailSkillConnectionTested: 'lobsterai_email_skill_connection_tested',
-  EmailSkillSettingsSaved: 'lobsterai_email_skill_settings_saved',
-  ExpertKitAction: 'lobsterai_expert_kit_action',
-  ExpertKitSelected: 'lobsterai_expert_kit_selected',
-  GeneralSettingChanged: 'lobsterai_general_setting_changed',
-  ImConnectionTested: 'lobsterai_im_connection_tested',
-  ImGatewayToggled: 'lobsterai_im_gateway_toggled',
-  ImInstanceChanged: 'lobsterai_im_instance_changed',
-  ImSettingsSaved: 'lobsterai_im_settings_saved',
-  MemoryEntryChanged: 'lobsterai_memory_entry_changed',
-  MemorySettingChanged: 'lobsterai_memory_setting_changed',
-  McpEnabled: 'lobsterai_mcp_enabled',
-  McpAction: 'lobsterai_mcp_action',
-  ModelSelected: 'lobsterai_model_selected',
-  PlanModeEnabled: 'lobsterai_plan_mode_enabled',
-  PluginAction: 'lobsterai_plugin_action',
-  PluginSettingsSaved: 'lobsterai_plugin_settings_saved',
-  PromptControlAction: 'lobsterai_prompt_control_action',
-  PromptSubmit: 'lobsterai_prompt_submit',
-  PromptTemplateAction: 'lobsterai_prompt_template_action',
-  ShortcutSettingChanged: 'lobsterai_shortcut_setting_changed',
-  SidebarAction: 'lobsterai_sidebar_action',
-  SkillAction: 'lobsterai_skill_action',
-  SkillEnabled: 'lobsterai_skill_enabled',
-  ScheduledTaskAction: 'lobsterai_scheduled_task_action',
-  TaskSearchAction: 'lobsterai_task_search_action',
-  UsageAnalyticsEnabled: 'lobsterai_usage_analytics_enabled',
+  AgentCreateAction: 'nukemai_agent_create_action',
+  AgentSettingsAction: 'nukemai_agent_settings_action',
+  AgentEngineMaintenanceAction: 'nukemai_agent_engine_maintenance_action',
+  AgentEngineSettingChanged: 'nukemai_agent_engine_setting_changed',
+  AboutAction: 'nukemai_about_action',
+  AccountMenuAction: 'nukemai_account_menu_action',
+  AppStarted: 'nukemai_app_started',
+  AppearanceSettingChanged: 'nukemai_appearance_setting_changed',
+  ArtifactPreviewAction: 'nukemai_artifact_preview_action',
+  BrowserSettingChanged: 'nukemai_browser_setting_changed',
+  CustomModelConnectionTested: 'nukemai_custom_model_connection_tested',
+  CustomModelSettingsSaved: 'nukemai_custom_model_settings_saved',
+  ConversationBlockAction: 'nukemai_conversation_block_action',
+  ConversationMessageAction: 'nukemai_conversation_message_action',
+  ConversationNavigationAction: 'nukemai_conversation_navigation_action',
+  DreamingSettingChanged: 'nukemai_dreaming_setting_changed',
+  EmailSkillConnectionTested: 'nukemai_email_skill_connection_tested',
+  EmailSkillSettingsSaved: 'nukemai_email_skill_settings_saved',
+  ExpertKitAction: 'nukemai_expert_kit_action',
+  ExpertKitSelected: 'nukemai_expert_kit_selected',
+  GeneralSettingChanged: 'nukemai_general_setting_changed',
+  ImConnectionTested: 'nukemai_im_connection_tested',
+  ImGatewayToggled: 'nukemai_im_gateway_toggled',
+  ImInstanceChanged: 'nukemai_im_instance_changed',
+  ImSettingsSaved: 'nukemai_im_settings_saved',
+  MemoryEntryChanged: 'nukemai_memory_entry_changed',
+  MemorySettingChanged: 'nukemai_memory_setting_changed',
+  McpEnabled: 'nukemai_mcp_enabled',
+  McpAction: 'nukemai_mcp_action',
+  ModelSelected: 'nukemai_model_selected',
+  PlanModeEnabled: 'nukemai_plan_mode_enabled',
+  PluginAction: 'nukemai_plugin_action',
+  PluginSettingsSaved: 'nukemai_plugin_settings_saved',
+  PromptControlAction: 'nukemai_prompt_control_action',
+  PromptSubmit: 'nukemai_prompt_submit',
+  PromptTemplateAction: 'nukemai_prompt_template_action',
+  ShortcutSettingChanged: 'nukemai_shortcut_setting_changed',
+  SidebarAction: 'nukemai_sidebar_action',
+  SkillAction: 'nukemai_skill_action',
+  SkillEnabled: 'nukemai_skill_enabled',
+  ScheduledTaskAction: 'nukemai_scheduled_task_action',
+  TaskSearchAction: 'nukemai_task_search_action',
+  UsageAnalyticsEnabled: 'nukemai_usage_analytics_enabled',
 } as const;
 
 export const LogReporterEntry = {
@@ -68,14 +68,14 @@ export const LogReporterEntry = {
 
 type LogParamValue = string | number | boolean | null | undefined;
 
-export type LogEventAction = `${typeof LogReporterActionPrefix.LobsterAI}${string}`;
+export type LogEventAction = `${typeof LogReporterActionPrefix.NukemAI}${string}`;
 
 export type LogEventParams = Record<string, LogParamValue> & {
   action: LogEventAction;
 };
 
 const logCommons = {
-  _npid: LogReporterProduct.LobsterAI,
+  _npid: LogReporterProduct.NukemAI,
   _ncat: LogReporterCategory.Actions,
 } as const;
 

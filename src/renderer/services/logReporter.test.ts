@@ -26,12 +26,12 @@ vi.mock('./installationId', () => ({
 }));
 
 import {
+  buildLogUrl,
   LogReporterAction,
   LogReporterActionPrefix,
   LogReporterEndpoint,
   LogReporterEntry,
   reportYdAnalyzer,
-  buildLogUrl,
 } from './logReporter';
 
 afterEach(() => {
@@ -42,7 +42,7 @@ afterEach(() => {
 test('returns an empty string when the analyzer endpoint is removed', () => {
   const result = buildLogUrl(
     {
-      action: `${LogReporterActionPrefix.LobsterAI}skill_enabled`,
+      action: `${LogReporterActionPrefix.NukemAI}skill_enabled`,
       skillId: 'xlsx',
       enabled: true,
     },

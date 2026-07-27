@@ -25,13 +25,13 @@ describe('buildMediaGenerationTurnInstruction', () => {
     expect(instruction).toContain('lobsterai_skin_manage');
     expect(instruction).not.toContain('lobsterai_image_generate');
     expect(instruction).not.toContain('lobsterai_video_generate');
-    expect(instruction).not.toContain('LobsterAI media generation tools - NOT AVAILABLE');
+    expect(instruction).not.toContain('NukemAI media generation tools - NOT AVAILABLE');
   });
 
   test('preserves the media-skill fallback when server-side media generation is unavailable', () => {
     const instruction = buildMediaGenerationTurnInstruction(true);
 
-    expect(instruction).toContain('LobsterAI media generation tools - NOT AVAILABLE');
+    expect(instruction).toContain('NukemAI media generation tools - NOT AVAILABLE');
     expect(instruction).toContain('You may use it');
   });
 

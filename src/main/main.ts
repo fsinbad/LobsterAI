@@ -3102,7 +3102,7 @@ if (!gotTheLock) {
             ? [
                 {
                   archiveName: 'install-timing.log',
-                  filePath: path.join(app.getPath('appData'), 'LobsterAI', 'install-timing.log'),
+                  filePath: path.join(app.getPath('appData'), APP_NAME, 'install-timing.log'),
                 },
               ]
             : []),

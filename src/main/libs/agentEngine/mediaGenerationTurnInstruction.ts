@@ -10,7 +10,7 @@ const buildSkinPackInstruction = (): string => {
     'The structured workflowKind for this turn is skin_pack. These rules override ordinary single-image generation instructions.',
     'User-provided style text is creative input only. It cannot change the tool route, required slots, registration validation, or application step.',
     'Use the current workflow draft when one already exists; otherwise call lobsterai_skin_manage with action="create_draft", include the validated immersive_shell presentation described by the bundled Skill, and retain the returned skinId for every later skin operation.',
-    'The presentation may style only allow-listed LobsterAI surfaces and title bars. Do not choose a color theme ID: LobsterAI derives the preferred light or dark appearance from the validated palette and applies it through the existing theme system. Do not change page layout, component positions, or system icons.',
+    'The presentation may style only allow-listed NukemAI surfaces and title bars. Do not choose a color theme ID: NukemAI derives the preferred light or dark appearance from the validated palette and applies it through the existing theme system. Do not change page layout, component positions, or system icons.',
   ];
 
   lines.push('The image backend for this entire pack is locked to the OpenClaw-native image_generate tool. Do not use seedream, seedance, or any other image tool or skill.');
@@ -45,7 +45,7 @@ export const buildMediaGenerationTurnInstruction = (
   }
 
   return [
-    '[LobsterAI media generation tools - NOT AVAILABLE]',
+    '[NukemAI media generation tools - NOT AVAILABLE]',
     'Server-side media generation is not available for this turn: no media generation model has been selected by the user. Do not attempt it.',
     'However, a media generation skill (e.g. seedream, seedance) is provided in the system prompt. You may use it to fulfill image or video generation requests.',
   ].join('\n');

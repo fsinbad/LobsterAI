@@ -1,7 +1,7 @@
 {
   "id": "lobster-media-generation",
   "name": "LobsterMediaGeneration",
-  "description": "Image/video generation and AI skin management tools powered by LobsterAI.",
+  "description": "Image/video generation and AI skin management tools powered by NukemAI.",
   "contracts": {
     "tools": [
       "lobsterai_skin_manage"
@@ -13,7 +13,7 @@
     "properties": {
       "callbackUrl": {
         "type": "string",
-        "description": "LobsterAI HTTP callback URL for media generation requests"
+        "description": "NukemAI HTTP callback URL for media generation requests"
       },
       "secret": {
         "type": "string",

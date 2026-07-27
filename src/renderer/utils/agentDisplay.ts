@@ -17,7 +17,8 @@ export const isDefaultAgentProfileName = (agent: Pick<AgentDisplaySource, 'id' |
   const normalizedName = agent.name?.trim() ?? '';
   return !normalizedName
     || normalizedName.toLowerCase() === LegacyAgentName.Main
-    || normalizedName === DefaultAgentProfile.Name;
+    || normalizedName === DefaultAgentProfile.Name
+    || normalizedName === DefaultAgentProfile.LegacyName;
 };
 
 export const getAgentDisplayName = (agent: Pick<AgentDisplaySource, 'id' | 'name'>): string => {

@@ -168,7 +168,7 @@ const SkinManageSchema = Type.Union([
 const plugin = {
   id: 'lobster-media-generation',
   name: 'LobsterMediaGeneration',
-  description: 'AI skin management tool powered by LobsterAI.',
+  description: 'AI skin management tool powered by NukemAI.',
   configSchema: {
     parse(value: unknown): PluginConfig {
       return parsePluginConfig(value);
@@ -191,10 +191,10 @@ const plugin = {
         name: MediaToolName.SkinManage,
         label: 'AI Skin Management',
         description: [
-          'Create and manage a LobsterAI AI skin pack through the trusted desktop callback.',
+          'Create and manage a NukemAI AI skin pack through the trusted desktop callback.',
           'This tool manages drafts and assets; it does not generate images.',
           'For a new pack, call create_draft with a name and an optional validated immersive-shell presentation first.',
-          'LobsterAI deterministically infers a preferred light or dark appearance from presentation colors and applies it through the existing theme system; do not choose a color theme ID.',
+          'NukemAI deterministically infers a preferred light or dark appearance from presentation colors and applies it through the existing theme system; do not choose a color theme ID.',
           'Only allow-listed application and conversation title bars may use presentation colors. Page layout, system icons, and arbitrary CSS are never skin-controlled.',
           'Register only generated local files returned by an image tool.',
           'The only supported asset slots are workspace.backdrop followed by home.emblem.',
