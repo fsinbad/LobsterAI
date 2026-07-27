@@ -953,13 +953,12 @@ describe('shouldParseFilePathsFromToolResult', () => {
     expect(shouldParseFilePathsFromToolResult('image_generate')).toBe(true);
   });
 
-  test('returns true for lobsterai_image_generate tool', () => {
-    expect(shouldParseFilePathsFromToolResult('lobsterai_image_generate')).toBe(true);
+  test('returns false for removed lobsterai_image_generate tool', () => {
+    expect(shouldParseFilePathsFromToolResult('lobsterai_image_generate')).toBe(false);
   });
 
   test('is case-insensitive', () => {
     expect(shouldParseFilePathsFromToolResult('Image_Generate')).toBe(true);
-    expect(shouldParseFilePathsFromToolResult('LOBSTERAI_IMAGE_GENERATE')).toBe(true);
   });
 
   test('returns false for Bash tool (find/ls output should not become artifacts)', () => {

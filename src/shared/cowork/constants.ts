@@ -34,7 +34,6 @@ export const COWORK_TEMP_DIR_NAME = '.cowork-temp';
 export const COWORK_TEMP_ATTACHMENTS_DIR_NAME = 'attachments';
 
 export const CoworkIpcChannel = {
-  MediaStatusPollUpdate: 'cowork:media:statusPollUpdate',
   ForkSession: 'cowork:session:fork',
   SubTaskHistory: 'cowork:subTask:history',
   SubagentList: 'cowork:subagent:list',

@@ -59,7 +59,6 @@ import { OpenClawGatewayFailureKind } from '../../../shared/openclawEngine/const
 import { OpenClawTranscriptSafetyStatus } from '../../../shared/openclawTranscript/constants';
 import type { Agent, CoworkExecutionMode, CoworkMessage, CoworkMessageMetadata, CoworkSession, CoworkSessionStatus, CoworkStore } from '../../coworkStore';
 import { t } from '../../i18n';
-import { MediaGenerationTool } from '../../mediaGenerationPolicy';
 import type { SubagentMessageStore } from '../../subagentMessageStore';
 import type { SubagentRunStore } from '../../subagentRunStore';
 import { setCoworkProxySessionId } from '../coworkOpenAICompatProxy';
@@ -205,9 +204,6 @@ export const OPENCLAW_CHAT_SEND_PAYLOAD_SAFE_LIMIT_BYTES =
   OPENCLAW_CHAT_SEND_PAYLOAD_LIMIT_BYTES - OPENCLAW_CHAT_SEND_PAYLOAD_SAFETY_MARGIN_BYTES;
 const WebSocketCloseCode = {
   MessageTooBig: 1009,
-} as const;
-const MediaGenerationToolAction = {
-  Status: 'status',
 } as const;
 
 type OpenClawGoalCommandAction =
@@ -623,9 +619,6 @@ type ActiveTurn = {
   toolUseMessageIdByToolCallId: Map<string, string>;
   toolResultMessageIdByToolCallId: Map<string, string>;
   toolResultTextByToolCallId: Map<string, string>;
-  mediaStatusPollCountByToolCallId: Map<string, number>;
-  mediaStatusPollCountByTaskId: Map<string, number>;
-  mediaStatusPollBaseByToolCallId: Map<string, number>;
   contextMaintenanceToolCallIds: Set<string>;
   planModeSuppressedToolCallIds: Set<string>;
   stopRequested: boolean;
@@ -1935,105 +1928,6 @@ const extractToolDetails = (payload: unknown): Record<string, unknown> | undefin
   return isRecord(payload.details) ? payload.details : undefined;
 };
 
-const readMediaPollCount = (value: unknown): number | undefined => (
-  typeof value === 'number' && Number.isFinite(value) && value > 0
-    ? Math.floor(value)
-    : undefined
-);
-
-const getMediaStatusToolArgs = (
-  toolName: string,
-  args: unknown,
-): { taskId: string; mediaType: 'image' | 'video' } | null => {
-  if (toolName !== MediaGenerationTool.Image && toolName !== MediaGenerationTool.Video) {
-    return null;
-  }
-  if (!isRecord(args) || args.action !== MediaGenerationToolAction.Status) {
-    return null;
-  }
-  const taskId = typeof args.taskId === 'string' ? args.taskId.trim() : '';
-  if (!taskId) return null;
-  return {
-    taskId,
-    mediaType: toolName === MediaGenerationTool.Video ? 'video' : 'image',
-  };
-};
-
-const extractMediaStatusFromText = (text: string): string | undefined => {
-  const match = text.match(/^Status:\s*(\S+)/m);
-  return match?.[1];
-};
-
-const extractMediaTaskIdFromText = (text: string): string | undefined => {
-  const match = text.match(/^Task ID:\s*(\S+)/m);
-  return match?.[1];
-};
-
-const resolveMediaStatusToolDetails = (
-  turn: ActiveTurn,
-  toolCallId: string,
-  toolName: string,
-  args: unknown,
-  payload: unknown,
-  phase: 'update' | 'result',
-  text: string,
-): Record<string, unknown> | undefined => {
-  const details = extractToolDetails(payload);
-  const mediaArgs = getMediaStatusToolArgs(toolName, args);
-  if (!mediaArgs) return details;
-
-  const existingPollCount = turn.mediaStatusPollCountByToolCallId.get(toolCallId) ?? 0;
-  const existingTaskPollCount = turn.mediaStatusPollCountByTaskId.get(mediaArgs.taskId) ?? 0;
-  const detailPollCount = readMediaPollCount(details?.pollCount);
-  let basePollCount = turn.mediaStatusPollBaseByToolCallId.get(toolCallId);
-  if (basePollCount == null) {
-    basePollCount = detailPollCount != null && detailPollCount > existingTaskPollCount
-      ? 0
-      : existingTaskPollCount;
-    turn.mediaStatusPollBaseByToolCallId.set(toolCallId, basePollCount);
-  }
-  const nextPollCount = phase === 'update'
-    ? (detailPollCount != null
-      ? basePollCount + detailPollCount
-      : Math.max(existingPollCount, existingTaskPollCount) + 1)
-    : (detailPollCount != null
-      ? basePollCount + detailPollCount
-      : (Math.max(existingPollCount, existingTaskPollCount) || undefined));
-
-  let resolvedPollCount = nextPollCount;
-  if (nextPollCount != null) {
-    const mergedPollCount = Math.max(existingPollCount, existingTaskPollCount, nextPollCount);
-    resolvedPollCount = mergedPollCount;
-    turn.mediaStatusPollCountByToolCallId.set(
-      toolCallId,
-      mergedPollCount,
-    );
-    turn.mediaStatusPollCountByTaskId.set(mediaArgs.taskId, mergedPollCount);
-  }
-
-  const status = typeof details?.status === 'string'
-    ? details.status
-    : extractMediaStatusFromText(text);
-  const textTaskId = extractMediaTaskIdFromText(text);
-  const upstreamTaskId = typeof details?.upstreamTaskId === 'string'
-    ? details.upstreamTaskId
-    : textTaskId;
-  const nextDetails = {
-    ...(details ?? {}),
-  };
-  delete nextDetails.pollCount;
-
-  return {
-    ...nextDetails,
-    taskId: typeof details?.taskId === 'string' ? details.taskId : mediaArgs.taskId,
-    ...(upstreamTaskId ? { upstreamTaskId } : {}),
-    ...(status ? { status } : {}),
-    ...(resolvedPollCount != null && resolvedPollCount > 1 ? { pollCount: resolvedPollCount } : {}),
-    isMediaStatusPolling: true,
-    mediaType: mediaArgs.mediaType,
-  };
-};
-
 const toToolInputRecord = (value: unknown): Record<string, unknown> => {
   if (isRecord(value)) {
     return value;
@@ -2061,8 +1955,8 @@ const buildMediaReferencePromptSection = (mediaReferences?: CoworkMediaAttachmen
   const lines = [
     '[LobsterAI media reference mapping]',
     'The current user request contains explicit @ media tokens. Treat these mappings as authoritative and do not guess which uploaded attachment a token means.',
-    'When calling lobsterai_image_generate or lobsterai_video_generate, pass mapped file paths or URLs as tool arguments. Do not pass @ media tokens as image, images, firstFrame, lastFrame, referenceImages, media.url, video, or videos values.',
-    'For lobsterai_image_generate, prefer image with the mapped path for one referenced image and images for multiple referenced images.',
+    'When calling the native image_generate tool, pass mapped file paths or URLs as tool arguments. Do not pass @ media tokens as image, images, firstFrame, lastFrame, referenceImages, media.url, video, or videos values.',
+    'For image_generate, prefer image with the mapped path for one referenced image and images for multiple referenced images.',
   ];
 
   for (const ref of refs) {
@@ -4851,7 +4745,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       systemPromptText,
       planModeExecutionApproved ? buildPlanModeExecutionOverridePrompt() : '',
       buildMediaGenerationTurnInstruction(
-        options.mediaSelection,
         hasMediaSkillActive,
         options.workflowKind,
       ),
@@ -4914,9 +4807,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       toolUseMessageIdByToolCallId: new Map(),
       toolResultMessageIdByToolCallId: new Map(),
       toolResultTextByToolCallId: new Map(),
-      mediaStatusPollCountByToolCallId: new Map(),
-      mediaStatusPollCountByTaskId: new Map(),
-      mediaStatusPollBaseByToolCallId: new Map(),
       contextMaintenanceToolCallIds: new Set(),
       planModeSuppressedToolCallIds: new Set(),
       startedAtMs: Date.now(),
@@ -7496,15 +7386,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     if (phase === 'update') {
       const incoming = extractToolText(data.partialResult);
-      const updateDetails = resolveMediaStatusToolDetails(
-        turn,
-        toolCallId,
-        toolName,
-        data.args,
-        data.partialResult,
-        'update',
-        incoming,
-      );
+      const updateDetails = extractToolDetails(data.partialResult);
       if (!incoming.trim() && !updateDetails) return;
 
       const previous = turn.toolResultTextByToolCallId.get(toolCallId) ?? '';
@@ -7549,15 +7431,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     if (phase === 'result') {
       const incoming = extractToolText(data.result);
-      const toolDetails = resolveMediaStatusToolDetails(
-        turn,
-        toolCallId,
-        toolName,
-        data.args,
-        data.result,
-        'result',
-        incoming,
-      );
+      const toolDetails = extractToolDetails(data.result);
       const previous = turn.toolResultTextByToolCallId.get(toolCallId) ?? '';
       const isError = resolveToolEventIsError(data);
       const finalContent = incoming.trim() ? incoming : previous;
@@ -10507,9 +10381,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       toolUseMessageIdByToolCallId: new Map(),
       toolResultMessageIdByToolCallId: new Map(),
       toolResultTextByToolCallId: new Map(),
-      mediaStatusPollCountByToolCallId: new Map(),
-      mediaStatusPollCountByTaskId: new Map(),
-      mediaStatusPollBaseByToolCallId: new Map(),
       contextMaintenanceToolCallIds: new Set(),
       planModeSuppressedToolCallIds: new Set(),
       startedAtMs: Date.now(),

@@ -86,9 +86,8 @@ Preserve the returned `skinId` for all subsequent calls.
 
 Follow the structured system instruction for this turn:
 
-- LobsterAI route: call `lobsterai_image_generate` with `action="list"`, choose one available image model when no model is already fixed, then keep that model.
-- OpenClaw route: use `image_generate` with `action="list"`, select one ready provider/model, then keep that model.
-- Unavailable route: stop and explain that a supported image provider or LobsterAI media entitlement is required.
+- Use `image_generate` with `action="list"`, select one ready provider/model, then keep that model.
+- If no usable image route exists, stop and explain that a supported image provider is required.
 
 Listing models is not an image-generation attempt.
 
@@ -96,10 +95,7 @@ Listing models is not an image-generation attempt.
 
 Generate exactly one 16:9 or closest supported landscape image. The prompt must include the shared style bible, the same presentation palette, the intended focus coordinates, and the backdrop contract. Prefer a 2K-class output when supported. Use a stable filename hint such as `lobster-skin-backdrop.png`.
 
-If the generation returns a pending task:
-
-- for `lobsterai_image_generate`, call `action="status"` once with the task ID; the tool owns adaptive polling;
-- for `image_generate`, wait for its completion event and continue from this workflow.
+If the generation returns a pending task, wait for its completion event and continue from this workflow.
 
 After terminal success, call:
 

@@ -557,11 +557,6 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.on('cowork:stream:messageUpdate', handler);
       return () => ipcRenderer.removeListener('cowork:stream:messageUpdate', handler);
     },
-    onMediaStatusPollUpdate: (callback: (data: { sessionId: string; toolCallId: string; details: Record<string, unknown> }) => void) => {
-      const handler = (_event: any, data: { sessionId: string; toolCallId: string; details: Record<string, unknown> }) => callback(data);
-      ipcRenderer.on(CoworkIpcChannel.MediaStatusPollUpdate, handler);
-      return () => ipcRenderer.removeListener(CoworkIpcChannel.MediaStatusPollUpdate, handler);
-    },
     onStreamSessionStatus: (callback: (data: { sessionId: string; status: string }) => void) => {
       const handler = (_event: any, data: { sessionId: string; status: string }) => callback(data);
       ipcRenderer.on('cowork:stream:sessionStatus', handler);
@@ -1033,12 +1028,6 @@ contextBridge.exposeInMainWorld('electron', {
   },
   networkStatus: {
     send: (status: 'online' | 'offline') => ipcRenderer.send('network:status-change', status),
-  },
-  media: {
-    getModels: (type: 'image' | 'video') =>
-      ipcRenderer.invoke('media:getModels', type) as Promise<{ success: boolean; models?: unknown[]; error?: string }>,
-    getTaskStatus: (taskId: number, type: 'image' | 'video') =>
-      ipcRenderer.invoke('media:getTaskStatus', taskId, type) as Promise<{ success: boolean; task?: unknown; error?: string }>,
   },
   feishu: {
     install: {

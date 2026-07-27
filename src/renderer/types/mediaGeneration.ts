@@ -1,19 +1,5 @@
 export type MediaGenerationMode = 'auto' | 'image' | 'video' | 'none';
 
-export interface MediaModel {
-  modelId: string;
-  displayName: string;
-  provider: string;
-  mediaType: 'image' | 'video';
-  generationTimeout: number;
-  pricing: Record<string, unknown>;
-  pricingDescription?: string;
-  capabilities?: string;
-  description?: string;
-  unitCredits?: number;
-  unitLabel?: string;
-}
-
 export interface MediaQuotaStatus {
   subscribed: boolean;
   planName: string;

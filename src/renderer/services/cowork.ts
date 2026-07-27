@@ -52,7 +52,6 @@ import {
   updateSessionStatus,
   updateSessionTitle,
   updateSteerStatus,
-  updateToolUseMediaStatus,
 } from '../store/slices/coworkSlice';
 import { clearActiveSkills, setActiveSkillIds } from '../store/slices/skillSlice';
 import type {
@@ -273,18 +272,6 @@ class CoworkService {
       store.dispatch(updateMessageContent({ sessionId, messageId, content, metadata }));
     });
     this.streamListenerCleanups.push(messageUpdateCleanup);
-
-    const mediaStatusPollCleanup = cowork.onMediaStatusPollUpdate?.(({ sessionId, toolCallId, details }) => {
-      const session = store.getState().cowork.sessions.find(s => s.id === sessionId);
-      if (session?.status !== 'completed') {
-        store.dispatch(updateSessionStatus({ sessionId, status: 'running' }));
-        this.queuedFollowUpCoordinator.handleSessionRunning(sessionId);
-      }
-      store.dispatch(updateToolUseMediaStatus({ sessionId, toolCallId, details }));
-    });
-    if (mediaStatusPollCleanup) {
-      this.streamListenerCleanups.push(mediaStatusPollCleanup);
-    }
 
     const sessionStatusCleanup = cowork.onStreamSessionStatus?.(({ sessionId, status }) => {
       const coworkState = store.getState().cowork;

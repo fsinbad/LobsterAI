@@ -1066,9 +1066,6 @@ interface IElectronAPI {
         metadata?: Record<string, unknown>;
       }) => void,
     ) => () => void;
-    onMediaStatusPollUpdate?: (
-      callback: (data: { sessionId: string; toolCallId: string; details: Record<string, unknown> }) => void,
-    ) => () => void;
     onStreamSessionStatus: (
       callback: (data: { sessionId: string; status: CoworkSessionStatus }) => void,
     ) => () => void;
@@ -1734,10 +1731,6 @@ interface IElectronAPI {
     getPendingCallback: () => Promise<string | null>;
     onCallback: (callback: (data: { code: string }) => void) => () => void;
     onQuotaChanged: (callback: () => void) => () => void;
-  };
-  media: {
-    getModels: (type: 'image' | 'video') => Promise<{ success: boolean; models?: Array<{ modelId: string; displayName: string; provider: string; mediaType: string; generationTimeout: number; pricing: Record<string, unknown> }>; error?: string }>;
-    getTaskStatus: (taskId: number, type: 'image' | 'video') => Promise<{ success: boolean; task?: Record<string, unknown>; error?: string }>;
   };
   enterprise: {
     getConfig: () => Promise<{

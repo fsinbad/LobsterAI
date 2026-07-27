@@ -221,7 +221,6 @@ import {
 } from './libs/htmlPreviewServer';
 import { getKeyfromAttribution, initializeKeyfromAttribution } from './libs/keyfromAttribution';
 import { exportLogsZip } from './libs/logExport';
-import { inferImageMimeTypeFromDataUrl, type PersistedGeneratedImageAsset, persistGeneratedImageAssets, type PersistGeneratedImageAssetsResult, persistGeneratedVideoAssets, type RemoteGeneratedMediaAsset } from './libs/mediaAssetPersistence';
 import { migrateAgentModelRefs, parsePrimaryModelRef, resolveQualifiedAgentModelRef } from './libs/openclawAgentModels';
 import {
   buildManagedSessionKey,
@@ -278,12 +277,7 @@ import {
 } from './libs/systemProxy';
 import { getLogFilePath, getRecentMainLogEntries, initLogger } from './logger';
 import { type AskUserResponse, McpRuntime } from './mcp/mcpRuntime';
-import {
-  MediaGenerationGateReason,
-  MediaGenerationTool,
-  type MediaSelectionState,
-  resolveMediaGenerationGate,
-} from './mediaGenerationPolicy';
+import { type MediaSelectionState } from './mediaGenerationPolicy';
 import {
   applyMediaReferencesToGenerationParams,
   type MediaAttachmentRefMain,
@@ -2605,40 +2599,6 @@ const mediaSelectionBySession = new Map<string, MediaSelectionState>();
 
 // Media attachment references per session (for @ mentions, FR-9)
 const mediaReferencesBySession = new Map<string, MediaAttachmentRefMain[]>();
-const persistedGeneratedImageAssetsByUrl = new Map<string, PersistedGeneratedImageAsset>();
-const persistedGeneratedVideoAssetsByUrl = new Map<string, PersistedGeneratedImageAsset>();
-
-const resolveGeneratedMediaAssetMimeType = (mediaType: 'image' | 'video', url: string): string => {
-  if (mediaType === 'image') {
-    return inferImageMimeTypeFromDataUrl(url) || 'image/png';
-  }
-  return 'video/mp4';
-};
-
-// Async video task polling (FR-8)
-interface MediaTaskTracker {
-  taskId: string;
-  sessionId: string;
-  mediaType: 'image' | 'video';
-  model: string;
-  startedAt: number;
-  pollCount: number;
-  timeoutMs: number;
-  lastPollAt?: number;
-}
-const pendingMediaTasks = new Map<string, MediaTaskTracker>();
-const mediaStatusPollCounts = new Map<string, number>();
-const mediaTasksHandledByStatusPolling = new Set<string>();
-let mediaTaskPollTimer: ReturnType<typeof setInterval> | null = null;
-const MEDIA_POLL_FAST_MS = 10_000;
-const MEDIA_POLL_SLOW_MS = 30_000;
-const MEDIA_POLL_MEDIUM_MS = 120_000;
-const MEDIA_POLL_IDLE_MS = 600_000;
-const MEDIA_POLL_FAST_COUNT = 6;
-const MEDIA_POLL_SLOW_COUNT = 18;
-const MEDIA_POLL_MEDIUM_COUNT = 10;
-const MEDIA_TASK_DEFAULT_TIMEOUT_MS = 172_800_000;
-const TERMINAL_MEDIA_TASK_STATUSES = new Set(['succeeded', 'failed', 'cancelled']);
 
 const normalizeOptionalMediaModelId = (modelId: string | undefined): string | undefined => {
   const canonicalModelId = canonicalizeMediaModelId(modelId);
@@ -2811,12 +2771,6 @@ const resolveHappyHorse11Selection = (
     imageCount,
   };
 };
-
-type MediaStatusPollUpdate = {
-  sessionId: string;
-  toolCallId: string;
-  details: Record<string, unknown>;
-};
 let lastReloadAt = 0;
 const MIN_RELOAD_INTERVAL_MS = 5000;
 type AppConfigSettings = {
@@ -2865,39 +2819,6 @@ const resolveThemeFromConfig = (config?: AppConfigSettings): 'light' | 'dark' =>
 const getInitialTheme = (): 'light' | 'dark' => {
   const config = getStore().get<AppConfigSettings>('app_config');
   return resolveThemeFromConfig(config);
-};
-
-const getMediaStatusPollKey = (sessionId: string | null, taskId: string): string =>
-  `${sessionId ?? 'unknown'}:${taskId}`;
-
-const incrementMediaStatusPollCount = (sessionId: string | null, taskId: string): number => {
-  const key = getMediaStatusPollKey(sessionId, taskId);
-  const nextCount = (mediaStatusPollCounts.get(key) ?? 0) + 1;
-  mediaStatusPollCounts.set(key, nextCount);
-  return nextCount;
-};
-
-const markMediaTaskHandledByStatusPolling = (sessionId: string, taskId: string): void => {
-  mediaTasksHandledByStatusPolling.add(getMediaStatusPollKey(sessionId, taskId));
-  pendingMediaTasks.delete(taskId);
-};
-
-const isMediaTaskHandledByStatusPolling = (sessionId: string, taskId: string): boolean =>
-  mediaTasksHandledByStatusPolling.has(getMediaStatusPollKey(sessionId, taskId));
-
-const clearMediaStatusPollCountsForSession = (sessionId: string): void => {
-  for (const key of mediaStatusPollCounts.keys()) {
-    if (key.startsWith(`${sessionId}:`)) {
-      mediaStatusPollCounts.delete(key);
-    }
-  }
-};
-
-const emitMediaStatusPollUpdate = (update: MediaStatusPollUpdate): void => {
-  BrowserWindow.getAllWindows().forEach(win => {
-    if (win.isDestroyed()) return;
-    win.webContents.send(CoworkIpcChannel.MediaStatusPollUpdate, update);
-  });
 };
 
 const getTitleBarOverlayOptions = () => {
@@ -3405,155 +3326,6 @@ if (!gotTheLock) {
   };
 
   getMcpRuntime().setMediaGenerationHandler(handleMediaGenerationCallback);
-
-  const registerMediaTaskForPolling = (tracker: MediaTaskTracker) => {
-    pendingMediaTasks.set(tracker.taskId, tracker);
-    ensureMediaPollTimerRunning();
-  };
-
-  const ensureMediaPollTimerRunning = () => {
-    if (mediaTaskPollTimer) return;
-    mediaTaskPollTimer = setInterval(() => {
-      void pollPendingMediaTasks();
-    }, MEDIA_POLL_FAST_MS);
-  };
-
-  const stopMediaPollTimer = () => {
-    if (mediaTaskPollTimer) {
-      clearInterval(mediaTaskPollTimer);
-      mediaTaskPollTimer = null;
-    }
-  };
-
-  const pollPendingMediaTasks = async () => {
-    // Stubbed after auth system removal.
-    stopMediaPollTimer();
-  };
-;
-
-  const emitMediaTaskMessage = (sessionId: string, content: string, metadata?: Record<string, unknown>) => {
-    let message: CoworkMessage = {
-      id: `media-task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      type: 'system' as const,
-      content,
-      timestamp: Date.now(),
-      ...(metadata ? { metadata } : {}),
-    };
-    try {
-      message = getCoworkStore().addMessage(sessionId, {
-        type: 'system',
-        content,
-        ...(metadata ? { metadata } : {}),
-      });
-    } catch {
-      // Session may have been deleted
-    }
-    BrowserWindow.getAllWindows().forEach(win => {
-      if (!win.isDestroyed()) {
-        win.webContents.send('cowork:stream:message', { sessionId, message });
-      }
-    });
-  };
-
-  const persistGeneratedImages = async (
-    sessionId: string,
-    assets: RemoteGeneratedMediaAsset[],
-  ): Promise<PersistGeneratedImageAssetsResult | null> => {
-    const imageAssets = assets.filter(asset => asset.type === 'image' && asset.url.trim());
-    if (imageAssets.length === 0) return null;
-
-    const sessionForAssets = getCoworkStore().getSession(sessionId);
-    const cwd = sessionForAssets?.cwd?.trim();
-    if (!cwd) {
-      console.warn('[MediaGeneration] skipped image persistence because the session working directory was missing.');
-      return null;
-    }
-
-    const cachedAssets: PersistedGeneratedImageAsset[] = [];
-    const pendingAssets = imageAssets.filter(asset => {
-      const key = `${sessionId}:${asset.url.trim()}`;
-      const cached = persistedGeneratedImageAssetsByUrl.get(key);
-      if (cached) {
-        cachedAssets.push(cached);
-        return false;
-      }
-      return true;
-    });
-    if (pendingAssets.length === 0) {
-      return cachedAssets.length > 0 ? { saved: cachedAssets, failed: [] } : null;
-    }
-
-    try {
-      const result = await persistGeneratedImageAssets({
-        cwd,
-        assets: pendingAssets,
-        fetchAsset: url => session.defaultSession.fetch(url),
-      });
-      for (const saved of result.saved) {
-        persistedGeneratedImageAssetsByUrl.set(`${sessionId}:${saved.originalUrl || saved.url}`, saved);
-      }
-      for (const failed of result.failed) {
-        console.warn('[MediaGeneration] failed to persist generated image:', serializeForLog({ sessionId, error: failed.error }));
-      }
-      return {
-        saved: [...cachedAssets, ...result.saved],
-        failed: result.failed,
-      };
-    } catch (error) {
-      console.warn('[MediaGeneration] failed to persist generated image assets:', error);
-      return cachedAssets.length > 0 ? { saved: cachedAssets, failed: [] } : null;
-    }
-  };
-
-  const persistGeneratedVideos = async (
-    sessionId: string,
-    assets: RemoteGeneratedMediaAsset[],
-  ): Promise<PersistGeneratedImageAssetsResult | null> => {
-    const videoAssets = assets.filter(asset => asset.type === 'video' && asset.url.trim());
-    if (videoAssets.length === 0) return null;
-
-    const sessionForAssets = getCoworkStore().getSession(sessionId);
-    const cwd = sessionForAssets?.cwd?.trim();
-    if (!cwd) {
-      console.warn('[MediaGeneration] skipped video persistence because the session working directory was missing.');
-      return null;
-    }
-
-    const cachedAssets: PersistedGeneratedImageAsset[] = [];
-    const pendingAssets = videoAssets.filter(asset => {
-      const key = `${sessionId}:${asset.url.trim()}`;
-      const cached = persistedGeneratedVideoAssetsByUrl.get(key);
-      if (cached) {
-        cachedAssets.push(cached);
-        return false;
-      }
-      return true;
-    });
-    if (pendingAssets.length === 0) {
-      return cachedAssets.length > 0 ? { saved: cachedAssets, failed: [] } : null;
-    }
-
-    try {
-      const result = await persistGeneratedVideoAssets({
-        cwd,
-        assets: pendingAssets,
-        fetchAsset: url => session.defaultSession.fetch(url),
-      });
-      for (const saved of result.saved) {
-        persistedGeneratedVideoAssetsByUrl.set(`${sessionId}:${saved.originalUrl || saved.url}`, saved);
-      }
-      for (const failed of result.failed) {
-        console.warn('[MediaGeneration] failed to persist generated video:', serializeForLog({ sessionId, error: failed.error }));
-      }
-      return {
-        saved: [...cachedAssets, ...result.saved],
-        failed: result.failed,
-      };
-    } catch (error) {
-      console.warn('[MediaGeneration] failed to persist generated video assets:', error);
-      return cachedAssets.length > 0 ? { saved: cachedAssets, failed: [] } : null;
-    }
-  };
 
   // Skills IPC handlers
   registerSkillHandlers({
@@ -4539,14 +4311,6 @@ if (!gotTheLock) {
       skinRuntimeController?.handleSessionDeleted(sessionId);
       mediaReferencesBySession.delete(sessionId);
       getDesktopNotificationManager().handleSessionDeleted(sessionId);
-      // Remove any pending media tasks for this session
-      for (const [taskId, tracker] of pendingMediaTasks) {
-        if (tracker.sessionId === sessionId) pendingMediaTasks.delete(taskId);
-      }
-      for (const key of mediaTasksHandledByStatusPolling) {
-        if (key.startsWith(`${sessionId}:`)) mediaTasksHandledByStatusPolling.delete(key);
-      }
-      clearMediaStatusPollCountsForSession(sessionId);
       // Clean up IM session mapping so that new channel messages
       // create a fresh session instead of referencing a deleted one.
       try {
@@ -8379,10 +8143,6 @@ if (!gotTheLock) {
     console.log(`[Main] App cleanup started for ${reason}`);
     destroyTray();
     skillManager?.stopWatching();
-    stopMediaPollTimer();
-    pendingMediaTasks.clear();
-    mediaTasksHandledByStatusPolling.clear();
-    mediaStatusPollCounts.clear();
 
     // Stop Cowork sessions without blocking shutdown.
     if (coworkEngineRouter) {
