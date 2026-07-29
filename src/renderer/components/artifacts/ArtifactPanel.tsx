@@ -5,6 +5,7 @@ import {
   DocumentIcon as DataFileIcon,
   FolderIcon as DataFolderIcon,
   PlusIcon as AddIcon,
+  ShareIcon,
 } from '@heroicons/react/24/outline';
 import { ArtifactBrowserPartition } from '@shared/artifactPreview/constants';
 import {
@@ -46,6 +47,11 @@ import {
   ShareDeploymentStatus,
 } from '@shared/shareDeployment/constants';
 import { findShareDeploymentPersistencePathConflict } from '@shared/shareDeployment/persistencePaths';
+import {
+  type SiteDeploymentQuota,
+  SiteErrorCode,
+  type SiteQuotaCandidate,
+} from '@shared/site/constants';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
@@ -80,10 +86,14 @@ import {
 import { openLocalPathWithToast, revealLocalPathWithToast } from '@/utils/localFileActions';
 
 import CopyIcon from '../icons/CopyIcon';
+import ServiceDeploymentIcon from '../icons/ServiceDeploymentIcon';
 import {
+  ArtifactPreviewActionSource,
+  ArtifactPublishEntryPoint,
   getArtifactBrowserUrlType,
   reportArtifactPreviewAction,
 } from './artifactAnalytics';
+import { useOptionalArtifactFileShare } from './ArtifactFileShareController';
 import {
   type ArtifactFileShareRequest as HtmlSharePendingRequest,
   ArtifactFileShareRequestSource as HtmlSharePendingSource,
@@ -121,6 +131,7 @@ import {
   type OfficePreviewZoomControlsConfig,
 } from './renderers/OfficePreviewActionsContext';
 import { OfficeZoomControls } from './renderers/OfficeZoomControls';
+import SiteQuotaReplacementDialog from './SiteQuotaReplacementDialog';
 
 const t = (key: string) => i18nService.t(key);
 
@@ -284,6 +295,14 @@ interface NodeDeploymentLaunchContext {
   localService: LocalWebService;
   projectDirectory?: string;
   projectCandidates?: ShareDeploymentProjectCandidate[];
+}
+
+interface SiteQuotaDialogState {
+  quota: SiteDeploymentQuota;
+  launchContext: NodeDeploymentLaunchContext;
+  targetShareId?: string;
+  keyword: string;
+  error?: string;
 }
 
 function isNodeDeploymentDialogForLocalService(
@@ -617,6 +636,14 @@ interface ArtifactPanelProps {
   subagentPanel?: React.ReactNode;
 }
 
+interface BrowserPublishAction {
+  kind: ArtifactToolbarPublishActionKindValue;
+  label: string;
+  disabled: boolean;
+  busy: boolean;
+  onClick: () => void;
+}
+
 export const BrowserAnnotationShape = {
   Rectangle: 'rectangle',
 } as const;
@@ -696,6 +723,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   subagentPanel,
 }) => {
   const dispatch = useDispatch();
+  const artifactFileShare = useOptionalArtifactFileShare();
   const panelWidth = useSelector(selectPanelWidth);
   const activePreviewTab = useSelector((state: RootState) =>
     selectActivePreviewTab(state, sessionId),
@@ -730,6 +758,8 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   const [isNodeDeploymentLookupPending, setIsNodeDeploymentLookupPending] = useState(false);
   const [isNodeDeploymentBusy, setIsNodeDeploymentBusy] = useState(false);
   const [isNodeDeploymentAccessUpdating, setIsNodeDeploymentAccessUpdating] = useState(false);
+  const [siteQuotaDialog, setSiteQuotaDialog] = useState<SiteQuotaDialogState | null>(null);
+  const [isSiteQuotaActionBusy, setIsSiteQuotaActionBusy] = useState(false);
   const [isHtmlShareStatusUpdating, setIsHtmlShareStatusUpdating] = useState(false);
   const [htmlShareCopyStatus, setHtmlShareCopyStatus] =
     useState<HtmlShareCopyStatus>(HtmlShareCopyStatus.Idle);
@@ -765,6 +795,10 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     ? (artifactsById.get(browserHtmlArtifactId) ?? null)
     : null;
   const isBrowserTabActive = !selectedArtifact && activeSpecialTab === ArtifactSpecialTab.Browser;
+  const artifactToolbarPublishTarget = resolveArtifactPreviewToolbarPublishTarget(
+    selectedArtifact,
+    Boolean(artifactFileShare),
+  );
   const selectedArtifactId = selectedArtifact?.id ?? null;
   const activeTab = activePreviewTab?.contentView ?? ArtifactContentView.Preview;
   const canShowCodeView = Boolean(selectedArtifact && !NON_CODE_TYPES.has(selectedArtifact.type));
@@ -789,7 +823,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   ) => {
     reportArtifactPreviewAction({
       actionType,
-      source: 'artifact_panel',
+      source: ArtifactPreviewActionSource.ArtifactPanel,
       artifact: selectedArtifact,
       params: {
         tabCount: artifacts.length,
@@ -828,7 +862,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     )),
     [browserAnnotationBatches, browserUrl],
   );
-  const browserLocalService = isBrowserTabActive
+  const browserLocalService = isBrowserTabActive && !browserHtmlArtifact
     ? parseLocalServiceUrl(browserUrl || browserAddress)
     : null;
   const browserLocalServiceUrl = browserLocalService?.url;
@@ -842,6 +876,19 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     browserLocalServiceOrigin &&
       browserLocalServiceOrigin === contextLocalServiceOrigin,
   );
+  const browserLocalServiceArtifactFromContext =
+    browserLocalServiceContextMatches && browserLocalServiceContext?.artifactId
+      ? artifactsById.get(browserLocalServiceContext.artifactId)
+      : undefined;
+  const browserLocalServiceArtifact = (
+    browserLocalServiceArtifactFromContext?.type === ArtifactTypeValue.LocalService
+      ? browserLocalServiceArtifactFromContext
+      : [...artifacts].reverse().find(artifact =>
+          artifact.type === ArtifactTypeValue.LocalService &&
+          normalizeLocalServiceOriginForCompare(artifact.url || artifact.content) ===
+            browserLocalServiceOrigin
+        )
+  );
   const rememberedNodeDeploymentProjectDirectory = browserLocalServiceUrl
     ? ''
     : '';
@@ -849,11 +896,20 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     browserLocalServiceOrigin && browserLocalServiceContextMatches
       ? browserLocalServiceContext?.projectDirectory?.trim() || ''
       : '';
+  const artifactNodeDeploymentProjectDirectory =
+    browserLocalServiceArtifact?.localService?.projectDirectory?.trim() || '';
   const browserLocalServiceProjectDirectory =
-    contextNodeDeploymentProjectDirectory || rememberedNodeDeploymentProjectDirectory;
+    contextNodeDeploymentProjectDirectory ||
+    artifactNodeDeploymentProjectDirectory ||
+    rememberedNodeDeploymentProjectDirectory;
   const selectedNodeDeploymentLookupKey = browserLocalServiceUrl
     ? getNodeDeploymentLookupKey(sessionId, browserLocalServiceUrl, browserLocalServiceProjectDirectory)
     : undefined;
+  const browserToolbarPublishTarget = resolveBrowserToolbarPublishTarget({
+    htmlArtifact: isBrowserTabActive ? browserHtmlArtifact : null,
+    localService: browserLocalService,
+    shareAvailable: Boolean(artifactFileShare),
+  });
   const isHtmlSharing =
     htmlSharePhase === HtmlSharePhase.Checking ||
     htmlSharePhase === HtmlSharePhase.Packing ||
@@ -1473,6 +1529,14 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     [activePreviewTab, dispatch, reportSelectedArtifactAction, sessionId],
   );
 
+  const handleShareSelectedArtifact = useCallback(() => {
+    if (!artifactFileShare || !artifactToolbarPublishTarget) return;
+    void artifactFileShare.openShare(artifactToolbarPublishTarget.artifact, {
+      source: ArtifactPreviewActionSource.ArtifactPanel,
+      entryPoint: ArtifactPublishEntryPoint.ArtifactToolbar,
+    });
+  }, [artifactFileShare, artifactToolbarPublishTarget]);
+
   const handleCopy = useCallback(async () => {
     if (!selectedArtifact) return;
     try {
@@ -1881,6 +1945,34 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     ],
   );
 
+  const fetchSiteDeploymentQuota = useCallback(async (
+    launchContext: NodeDeploymentLaunchContext,
+    targetShareId?: string,
+    keyword = '',
+    page = 1,
+  ): Promise<SiteDeploymentQuota> => {
+    const result = await window.electron?.sites?.getDeploymentQuota({
+      targetShareId,
+      keyword,
+      page,
+      pageSize: 10,
+    });
+    if (!result?.success || !result.data) {
+      throw new Error(result?.error || t('siteQuotaLoadFailed'));
+    }
+    if (!result.data.allowed) {
+      setNodeDeploymentDialog(null);
+      setIsNodeDeploymentDialogOpen(false);
+      setSiteQuotaDialog({
+        quota: result.data,
+        launchContext,
+        targetShareId,
+        keyword,
+      });
+    }
+    return result.data;
+  }, []);
+
   const handleShareLocalServiceDeployment = useCallback(async (
     launchContext: NodeDeploymentLaunchContext,
   ) => {
@@ -1959,6 +2051,15 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
         existingDeployment = existing.deployment ?? null;
         rememberNodeDeployment(lookupKey, existingDeployment);
       }
+      const resolvedLaunchContext: NodeDeploymentLaunchContext = {
+        ...launchContext,
+        projectDirectory,
+      };
+      const quota = await fetchSiteDeploymentQuota(
+        resolvedLaunchContext,
+        existingDeployment?.shareId,
+      );
+      if (nodeDeploymentActionRunIdRef.current !== runId || !quota.allowed) return;
       if (existingDeployment) {
         rememberLocalServiceProjectDirectory(
           localService.url,
@@ -2007,6 +2108,148 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     resolveNodeDeploymentProjectDirectory,
     sessionId,
   ]);
+
+  const handleShareBrowserHtmlArtifact = useCallback(() => {
+    if (
+      !artifactFileShare ||
+      browserToolbarPublishTarget?.kind !== ArtifactToolbarPublishActionKind.Share
+    ) {
+      return;
+    }
+    void artifactFileShare.openShare(browserToolbarPublishTarget.artifact, {
+      source: ArtifactPreviewActionSource.ArtifactBrowser,
+      entryPoint: ArtifactPublishEntryPoint.BrowserToolbar,
+    });
+  }, [artifactFileShare, browserToolbarPublishTarget]);
+
+  const handleDeployBrowserLocalService = useCallback(() => {
+    if (browserToolbarPublishTarget?.kind !== ArtifactToolbarPublishActionKind.Deploy) return;
+    const currentLocalService = parseLocalServiceUrl(browserUrl || browserAddress);
+    if (
+      !currentLocalService ||
+      normalizeLocalServiceOriginForCompare(currentLocalService.url) !==
+        normalizeLocalServiceOriginForCompare(browserToolbarPublishTarget.localService.url)
+    ) {
+      return;
+    }
+
+    const projectDirectory = browserLocalServiceProjectDirectory || undefined;
+    const projectCandidates =
+      browserLocalServiceContextMatches && browserLocalServiceContext?.projectCandidates?.length
+        ? browserLocalServiceContext.projectCandidates
+        : browserLocalServiceArtifact?.localService?.projectCandidates ?? [];
+    const localService: LocalWebService = {
+      ...currentLocalService,
+      title: browserLocalServiceArtifact?.title || currentLocalService.title,
+      ...(projectDirectory ? { projectDirectory } : {}),
+      ...(projectCandidates.length
+        ? { projectCandidates }
+        : {}),
+    };
+    const currentLookup = selectedNodeDeploymentLookupKey &&
+      nodeDeploymentLookupRef.current?.sourceKey === selectedNodeDeploymentLookupKey
+      ? nodeDeploymentLookupRef.current
+      : null;
+    reportArtifactPreviewAction({
+      actionType: 'deployment_entry_click',
+      source: ArtifactPreviewActionSource.ArtifactBrowser,
+      artifact: browserLocalServiceArtifact,
+      params: {
+        entryPoint: ArtifactPublishEntryPoint.BrowserToolbar,
+        browserUrlType: getArtifactBrowserUrlType(currentLocalService.url),
+        hasArtifactContext: Boolean(
+          browserLocalServiceArtifact || browserLocalServiceContextMatches,
+        ),
+        hasProjectDirectory: Boolean(projectDirectory),
+        hasExistingDeployment: Boolean(currentLookup?.deployment),
+      },
+    });
+    void handleShareLocalServiceDeployment({
+      localService,
+      projectDirectory,
+      projectCandidates,
+    });
+  }, [
+    browserAddress,
+    browserLocalServiceArtifact,
+    browserLocalServiceContext,
+    browserLocalServiceContextMatches,
+    browserLocalServiceProjectDirectory,
+    browserToolbarPublishTarget,
+    browserUrl,
+    handleShareLocalServiceDeployment,
+    selectedNodeDeploymentLookupKey,
+  ]);
+
+  const querySiteQuotaCandidates = useCallback(async (keyword: string, page: number) => {
+    const snapshot = siteQuotaDialog;
+    if (!snapshot || isSiteQuotaActionBusy) return;
+    setIsSiteQuotaActionBusy(true);
+    try {
+      const quota = await fetchSiteDeploymentQuota(
+        snapshot.launchContext,
+        snapshot.targetShareId,
+        keyword,
+        page,
+      );
+      setSiteQuotaDialog(previous => previous
+        ? { ...previous, quota, keyword, error: undefined }
+        : previous);
+    } catch (error) {
+      setSiteQuotaDialog(previous => previous
+        ? {
+            ...previous,
+            error: error instanceof Error ? error.message : t('siteQuotaLoadFailed'),
+          }
+        : previous);
+    } finally {
+      setIsSiteQuotaActionBusy(false);
+    }
+  }, [fetchSiteDeploymentQuota, isSiteQuotaActionBusy, siteQuotaDialog]);
+
+  const stopSiteForQuotaAndContinue = useCallback(async (candidate: SiteQuotaCandidate) => {
+    const snapshot = siteQuotaDialog;
+    if (!snapshot || isSiteQuotaActionBusy) return;
+    setIsSiteQuotaActionBusy(true);
+    try {
+      const stopped = await window.electron?.sites?.updateAccessStatus({
+        shareId: candidate.shareId,
+        status: HtmlShareStatus.Disabled,
+      });
+      if (!stopped?.success) {
+        throw new Error(stopped?.error || t('siteQuotaStopFailed'));
+      }
+      const refreshed = await window.electron?.sites?.getDeploymentQuota({
+        targetShareId: snapshot.targetShareId,
+        page: 1,
+        pageSize: 10,
+      });
+      if (!refreshed?.success || !refreshed.data) {
+        throw new Error(refreshed?.error || t('siteQuotaLoadFailed'));
+      }
+      const refreshedQuota = refreshed.data;
+      if (!refreshedQuota.allowed) {
+        setSiteQuotaDialog(previous => previous
+          ? { ...previous, quota: refreshedQuota, keyword: '', error: undefined }
+          : previous);
+        return;
+      }
+      const launchContext = snapshot.launchContext;
+      setSiteQuotaDialog(null);
+      setNodeDeploymentDialog(null);
+      setIsNodeDeploymentDialogOpen(false);
+      window.setTimeout(() => void handleShareLocalServiceDeployment(launchContext), 0);
+    } catch (error) {
+      setSiteQuotaDialog(previous => previous
+        ? {
+            ...previous,
+            error: error instanceof Error ? error.message : t('siteQuotaStopFailed'),
+          }
+        : previous);
+    } finally {
+      setIsSiteQuotaActionBusy(false);
+    }
+  }, [handleShareLocalServiceDeployment, isSiteQuotaActionBusy, siteQuotaDialog]);
 
   useEffect(() => {
     const request = localServiceDeploymentRequest;
@@ -2909,6 +3152,12 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     const startCommand = isStaticDeployment
       ? ''
       : currentDialog.startCommand || currentDialog.analysis?.startCommand || 'npm run start';
+    const quotaLaunchContext: NodeDeploymentLaunchContext = {
+      localService: currentDialog.localService,
+      projectDirectory: currentDialog.projectDirectory,
+    };
+    let quotaReservationId: string | undefined;
+    let deploymentAccepted = false;
 
     setIsNodeDeploymentBusy(true);
     setIsNodeDeploymentDialogOpen(true);
@@ -2924,6 +3173,21 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
         }
       : previous);
     try {
+      const reservation = await window.electron?.sites?.createQuotaReservation({
+        requestKey: window.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`,
+        targetShareId: currentDialog.deployment?.shareId,
+      });
+      if (!reservation?.success || !reservation.data?.reservationId) {
+        if (reservation?.code === SiteErrorCode.DeploymentQuotaExceeded) {
+          await fetchSiteDeploymentQuota(
+            quotaLaunchContext,
+            currentDialog.deployment?.shareId,
+          );
+          return;
+        }
+        throw new Error(reservation?.error || t('siteQuotaReservationFailed'));
+      }
+      quotaReservationId = reservation.data.reservationId;
       setNodeDeploymentDialog(previous => previous
         ? {
             ...previous,
@@ -2957,11 +3221,20 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
         persistence: normalizeNodeDeploymentPersistenceForSubmit(currentDialog.persistence),
         persistenceUpdateMode:
           currentDialog.persistenceUpdateMode ?? ShareDeploymentPersistenceUpdateMode.Preserve,
+        quotaReservationId,
       });
       if (nodeDeploymentActionRunIdRef.current !== runId) return;
       if (!result?.success || !result.deployment) {
+        if (result?.code === SiteErrorCode.DeploymentQuotaExceeded) {
+          await fetchSiteDeploymentQuota(
+            quotaLaunchContext,
+            currentDialog.deployment?.shareId,
+          );
+          return;
+        }
         throw new Error(result?.error || t('nodeDeploymentFailedMessage'));
       }
+      deploymentAccepted = true;
       const deployment = result.deployment;
       const accessStatusError = result.accessSyncError;
       rememberLocalServiceProjectDirectory(
@@ -3006,6 +3279,9 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
           }
         : previous);
     } finally {
+      if (quotaReservationId && !deploymentAccepted) {
+        await window.electron?.sites?.releaseQuotaReservation(quotaReservationId).catch(() => undefined);
+      }
       if (nodeDeploymentActionRunIdRef.current === runId) {
         setIsNodeDeploymentBusy(false);
       }
@@ -3013,6 +3289,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   }, [
     isNodeDeploymentBusy,
     isNodeDeploymentAccessUpdating,
+    fetchSiteDeploymentQuota,
     nodeDeploymentDialog,
     openNodeDeploymentStatusDialog,
     rememberLocalServiceProjectDirectory,
@@ -4002,6 +4279,52 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     nodeDeploymentDialog?.projectDirectory,
     t('nodeDeploymentLocalService'),
   );
+  const isBrowserDeploymentActionBusy = Boolean(
+    isNodeDeploymentLookupPending ||
+      isNodeDeploymentBusy ||
+      isHtmlSharing,
+  );
+  const browserDeploymentActionLabel = (() => {
+    if (isNodeDeploymentLookupPending) {
+      return t('nodeDeploymentButtonChecking');
+    }
+    if (!isNodeDeploymentBusy) return t('nodeDeploymentProgressDeploy');
+    switch (nodeDeploymentDialog?.phase) {
+      case NodeDeploymentPhase.Analyzing:
+        return t('nodeDeploymentButtonAnalyzing');
+      case NodeDeploymentPhase.Uploading:
+        return t('nodeDeploymentButtonBuildingUploading');
+      case NodeDeploymentPhase.Deploying:
+        return t('nodeDeploymentButtonDeploying');
+      case NodeDeploymentPhase.Checking:
+      case NodeDeploymentPhase.Live:
+      case NodeDeploymentPhase.Failed:
+      case NodeDeploymentPhase.Idle:
+      default:
+        return t('nodeDeploymentButtonChecking');
+    }
+  })();
+  const browserPublishAction: BrowserPublishAction | undefined = (() => {
+    if (browserToolbarPublishTarget?.kind === ArtifactToolbarPublishActionKind.Share) {
+      return {
+        kind: ArtifactToolbarPublishActionKind.Share,
+        label: t('htmlShare'),
+        disabled: false,
+        busy: false,
+        onClick: handleShareBrowserHtmlArtifact,
+      };
+    }
+    if (browserToolbarPublishTarget?.kind === ArtifactToolbarPublishActionKind.Deploy) {
+      return {
+        kind: ArtifactToolbarPublishActionKind.Deploy,
+        label: browserDeploymentActionLabel,
+        disabled: isBrowserDeploymentActionBusy,
+        busy: isBrowserDeploymentActionBusy,
+        onClick: handleDeployBrowserLocalService,
+      };
+    }
+    return undefined;
+  })();
 
   return (
     <>
@@ -4035,6 +4358,17 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
                 {selectedArtifact.fileName || selectedArtifact.title}
               </span>
               <span className="flex-1" />
+              {artifactToolbarPublishTarget && (
+                <button
+                  type="button"
+                  onClick={handleShareSelectedArtifact}
+                  className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-secondary transition-colors hover:bg-surface hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45"
+                  aria-label={t('htmlShare')}
+                  title={t('htmlShare')}
+                >
+                  <ShareIcon className="h-4 w-4" />
+                </button>
+              )}
               {showArtifactActionsMenu && (
                 <div className="relative">
                   <button
@@ -4234,6 +4568,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
             onCurrentUrlChange={handleBrowserUrlChange}
             onTitleChange={onBrowserTitleChange}
             onLocalServiceOpen={handleBrowserLocalServiceOpen}
+            publishAction={browserPublishAction}
             draftKey={sessionId}
             annotationBatch={browserAnnotationBatch}
             onAnnotationBatchChange={batch => {
@@ -5627,6 +5962,7 @@ interface BrowserTabContentProps {
   onCurrentUrlChange: (value: string) => void;
   onTitleChange?: (value: string) => void;
   onLocalServiceOpen?: (service: LocalWebService) => void;
+  publishAction?: BrowserPublishAction;
   draftKey: string;
   annotationBatch?: CoworkBrowserAnnotationBatch;
   onAnnotationBatchChange: (batch: CoworkBrowserAnnotationBatch | null) => void;
@@ -5642,6 +5978,7 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
   onCurrentUrlChange,
   onTitleChange,
   onLocalServiceOpen,
+  publishAction,
   draftKey,
   annotationBatch,
   onAnnotationBatchChange,
@@ -6678,7 +7015,7 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
     Boolean(currentUrl) && (isAddressBarFocused || isAddressOpenExternalHovered);
   return (
     <div className="relative flex h-full min-h-0 flex-col bg-background">
-      <div className="flex h-12 shrink-0 items-center gap-1.5 border-b border-border px-3">
+      <div className="flex h-10 shrink-0 items-center gap-1.5 border-b border-border px-3">
         <button
           type="button"
           onClick={() => {
@@ -6686,7 +7023,7 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
             webviewNode?.goBack?.();
           }}
           disabled={!canGoBack}
-          className="inline-flex h-7 w-7 items-center justify-center rounded text-secondary transition-colors hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-35"
+          className="inline-flex h-7 w-7 items-center justify-center rounded text-secondary transition-colors hover:bg-surface hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45 disabled:cursor-not-allowed disabled:opacity-35"
           title={t('artifactBrowserBack')}
         >
           <ChevronLeftIcon />
@@ -6698,7 +7035,7 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
             webviewNode?.goForward?.();
           }}
           disabled={!canGoForward}
-          className="inline-flex h-7 w-7 items-center justify-center rounded text-secondary transition-colors hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-35"
+          className="inline-flex h-7 w-7 items-center justify-center rounded text-secondary transition-colors hover:bg-surface hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45 disabled:cursor-not-allowed disabled:opacity-35"
           title={t('artifactBrowserForward')}
         >
           <ChevronRightBrowserIcon />
@@ -6714,14 +7051,14 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
             }
           }}
           disabled={!currentUrl}
-          className="inline-flex h-7 w-7 items-center justify-center rounded text-secondary transition-colors hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-35"
+          className="inline-flex h-7 w-7 items-center justify-center rounded text-secondary transition-colors hover:bg-surface hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45 disabled:cursor-not-allowed disabled:opacity-35"
           title={isLoading ? t('artifactBrowserStop') : t('artifactBrowserReload')}
         >
           {isLoading ? <StopIcon /> : <RefreshIcon />}
         </button>
         <div
           ref={addressBarRef}
-          className="relative flex min-w-0 flex-1 items-center rounded-md border border-border bg-surface px-2 pr-10 transition-colors focus-within:border-primary"
+          className="relative flex h-7 min-w-0 flex-1 items-center rounded-md border border-transparent bg-transparent px-2 pr-10 transition-colors hover:bg-surface focus-within:border-border focus-within:bg-surface"
           onFocusCapture={handleAddressBarFocusCapture}
           onBlurCapture={handleAddressBarBlurCapture}
           onMouseDown={handleAddressBarMouseDown}
@@ -6734,7 +7071,7 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
             onKeyDown={handleAddressKeyDown}
             onFocus={handleAddressFocus}
             placeholder={t('artifactBrowserUrlPlaceholder')}
-            className="h-7 min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted"
+            className="h-full min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted"
           />
           <div
             ref={openExternalButtonRef}
@@ -6760,53 +7097,76 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
             </button>
           </div>
         </div>
-        <div
-          ref={annotateButtonRef}
-          className="flex h-7 shrink-0 items-center justify-center"
-          onMouseEnter={() => setHoveredToolbarAction(BrowserToolbarAction.Annotate)}
-          onMouseLeave={() => setHoveredToolbarAction(null)}
-        >
-          <button
-            type="button"
-            onClick={handleToggleAnnotation}
-            disabled={!currentUrl}
-            className={`inline-flex h-7 items-center justify-center rounded text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-35 ${
-              isAnnotating
-                ? 'gap-1.5 bg-primary/10 px-2 text-primary hover:bg-primary/15'
-                : 'w-7 text-secondary hover:bg-surface hover:text-foreground'
-            }`}
-            aria-label={t(isAnnotating ? 'artifactBrowserAnnotating' : 'artifactBrowserAnnotate')}
-            title={isAnnotating ? t('artifactBrowserAnnotating') : t('artifactBrowserAnnotate')}
+        <div className="flex shrink-0 items-center gap-1">
+          {publishAction && (
+            <button
+              type="button"
+              onClick={publishAction.onClick}
+              disabled={publishAction.disabled}
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-secondary transition-colors hover:bg-surface hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45 disabled:cursor-not-allowed disabled:opacity-35"
+              aria-label={publishAction.label}
+              title={publishAction.label}
+            >
+              {publishAction.busy ? (
+                <span
+                  className="h-4 w-4 animate-spin rounded-full border-2 border-primary/30 border-t-primary"
+                  aria-hidden="true"
+                />
+              ) : publishAction.kind === ArtifactToolbarPublishActionKind.Share ? (
+                <ShareIcon className="h-4 w-4" />
+              ) : (
+                <ServiceDeploymentIcon className="h-[18px] w-[18px] translate-y-[1.5px]" />
+              )}
+            </button>
+          )}
+          <div
+            ref={annotateButtonRef}
+            className="flex h-7 shrink-0 items-center justify-center"
+            onMouseEnter={() => setHoveredToolbarAction(BrowserToolbarAction.Annotate)}
+            onMouseLeave={() => setHoveredToolbarAction(null)}
           >
-            <AnnotateIcon />
-            {isAnnotating ? (
-              <span className="whitespace-nowrap">
-                {t('artifactBrowserAnnotating')}
-                {annotationBatch?.annotations.length ? ` · ${annotationBatch.annotations.length}` : ''}
-              </span>
-            ) : null}
+            <button
+              type="button"
+              onClick={handleToggleAnnotation}
+              disabled={!currentUrl}
+              className={`inline-flex h-7 items-center justify-center rounded text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45 disabled:cursor-not-allowed disabled:opacity-35 ${
+                isAnnotating
+                  ? 'gap-1.5 bg-primary/10 px-2 text-primary hover:bg-primary/15'
+                  : 'w-7 text-secondary hover:bg-surface hover:text-foreground'
+              }`}
+              aria-label={t(isAnnotating ? 'artifactBrowserAnnotating' : 'artifactBrowserAnnotate')}
+              title={isAnnotating ? t('artifactBrowserAnnotating') : t('artifactBrowserAnnotate')}
+            >
+              <AnnotateIcon />
+              {isAnnotating ? (
+                <span className="whitespace-nowrap">
+                  {t('artifactBrowserAnnotating')}
+                  {annotationBatch?.annotations.length ? ` · ${annotationBatch.annotations.length}` : ''}
+                </span>
+              ) : null}
+            </button>
+          </div>
+          <button
+            ref={browserMenuButtonRef}
+            type="button"
+            onClick={() => setIsBrowserMenuOpen(value => {
+              const nextOpen = !value;
+              reportBrowserAction('browser_more_menu_toggle', {
+                targetOpen: nextOpen,
+              });
+              return nextOpen;
+            })}
+            className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45 ${
+              isBrowserMenuOpen
+                ? 'bg-surface text-foreground'
+                : 'text-secondary hover:bg-surface hover:text-foreground'
+            }`}
+            aria-label={t('artifactBrowserMenu')}
+            title={t('artifactBrowserMenu')}
+          >
+            <MoreVerticalIcon />
           </button>
         </div>
-        <button
-          ref={browserMenuButtonRef}
-          type="button"
-          onClick={() => setIsBrowserMenuOpen(value => {
-            const nextOpen = !value;
-            reportBrowserAction('browser_more_menu_toggle', {
-              targetOpen: nextOpen,
-            });
-            return nextOpen;
-          })}
-          className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded transition-colors ${
-            isBrowserMenuOpen
-              ? 'bg-surface text-foreground'
-              : 'text-secondary hover:bg-surface hover:text-foreground'
-          }`}
-          aria-label={t('artifactBrowserMenu')}
-          title={t('artifactBrowserMenu')}
-        >
-          <MoreVerticalIcon />
-        </button>
       </div>
       {isBrowserMenuOpen && (
         <div
@@ -7114,24 +7474,24 @@ const BrowserIcon = () => (
 
 const AnnotateIcon = () => (
   <svg
-    width="14"
-    height="14"
-    viewBox="0 0 16 16"
+    width="18"
+    height="18"
+    viewBox="0 0 20 20"
     fill="none"
     stroke="currentColor"
-    strokeWidth="1.5"
+    strokeWidth="1.55"
     strokeLinecap="round"
     strokeLinejoin="round"
   >
-    <path d="M8 2.25c3.35 0 6 2.2 6 5.05 0 2.84-2.65 5.05-6 5.05-.7 0-1.36-.1-1.98-.29L3.55 13.5c-.46.27-.96-.23-.69-.69l1.06-1.82C2.74 10.08 2 8.79 2 7.3c0-2.85 2.65-5.05 6-5.05z" />
-    <path d="M8 5.75v3.5M6.25 7.5h3.5" />
+    <path d="M10 2.7c4.75 0 8.35 3.05 8.35 6.9 0 3.8-3.6 6.85-8.35 6.85-.95 0-1.86-.13-2.72-.4l-3.45 1.62 1.38-2.55C3 13.85 1.65 11.9 1.65 9.6 1.65 5.75 5.25 2.7 10 2.7z" />
+    <path d="M10 6.65v5.9M7.05 9.6h5.9" />
   </svg>
 );
 
 const ChevronLeftIcon = () => (
   <svg
-    width="14"
-    height="14"
+    width="16"
+    height="16"
     viewBox="0 0 16 16"
     fill="none"
     stroke="currentColor"
@@ -7145,8 +7505,8 @@ const ChevronLeftIcon = () => (
 
 const ChevronRightBrowserIcon = () => (
   <svg
-    width="14"
-    height="14"
+    width="16"
+    height="16"
     viewBox="0 0 16 16"
     fill="none"
     stroke="currentColor"
@@ -7160,8 +7520,8 @@ const ChevronRightBrowserIcon = () => (
 
 const StopIcon = () => (
   <svg
-    width="14"
-    height="14"
+    width="16"
+    height="16"
     viewBox="0 0 16 16"
     fill="none"
     stroke="currentColor"
@@ -7192,8 +7552,8 @@ const OpenExternalIcon = () => (
 
 const BrowserAddressOpenExternalIcon = () => (
   <svg
-    width="13"
-    height="13"
+    width="14"
+    height="14"
     viewBox="0 0 16 16"
     fill="none"
     stroke="currentColor"
@@ -7250,8 +7610,8 @@ const FileListIcon = () => (
 
 const RefreshIcon = () => (
   <svg
-    width="14"
-    height="14"
+    width="16"
+    height="16"
     viewBox="0 0 16 16"
     fill="none"
     stroke="currentColor"
@@ -7267,7 +7627,7 @@ const RefreshIcon = () => (
 );
 
 const MoreVerticalIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
     <circle cx="8" cy="3.5" r="1.1" />
     <circle cx="8" cy="8" r="1.1" />
     <circle cx="8" cy="12.5" r="1.1" />

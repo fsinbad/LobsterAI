@@ -23,6 +23,7 @@ import { McpView } from './components/mcp';
 import { ScheduledTasksView } from './components/scheduledTasks';
 import Settings, { type SettingsOpenOptions } from './components/Settings';
 import Sidebar from './components/Sidebar';
+import { SitesView } from './components/sites';
 import { SkillsView } from './components/skills';
 import SkinBackdrop, { SkinBackdropVariant } from './components/skin/SkinBackdrop';
 import SkinPresentationScope from './components/skin/SkinPresentationScope';
@@ -45,6 +46,7 @@ import type { ApiConfig } from './services/api';
 import { apiService } from './services/api';
 import { configService } from './services/config';
 import { coworkService } from './services/cowork';
+import { isTestModeEnabled } from './services/endpoints';
 import { i18nService } from './services/i18n';
 import { LogReporterAction, reportYdAnalyzer } from './services/logReporter';
 import { scheduledTaskService } from './services/scheduledTask';
@@ -121,7 +123,7 @@ const logAppUpdateRendererLifecycle = (
 const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsOptions, setSettingsOptions] = useState<SettingsOpenOptions & { requestId: number }>({ requestId: 0 });
-  const [mainView, setMainView] = useState<'cowork' | 'skills' | 'scheduledTasks' | 'kits' | 'mcp'>('cowork');
+  const [mainView, setMainView] = useState<'cowork' | 'skills' | 'scheduledTasks' | 'kits' | 'mcp' | 'sites'>('cowork');
   const [isInitialized, setIsInitialized] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -386,6 +388,10 @@ const App: React.FC = () => {
     setMainView('mcp');
   }, []);
 
+  const handleShowSites = useCallback(() => {
+    setMainView('sites');
+  }, []);
+
   const handleShowKits = useCallback(() => {
     setMainView('kits');
   }, []);
@@ -466,6 +472,26 @@ const App: React.FC = () => {
       mode: CoworkCollaborationMode.Default,
     }));
     setMainView('cowork');
+  }, [dispatch]);
+
+  const handleCreateSiteByChat = useCallback((prompt: string) => {
+    coworkService.clearSession({ restoreAgentSkills: true });
+    dispatch(clearSelection());
+    dispatch(clearDraftAttachments('__home__'));
+    dispatch(clearDraftSelectedTextSnippets('__home__'));
+    dispatch(setActiveKitIds([]));
+    dispatch(setDraftKitIds({ draftKey: '__home__', kitIds: [] }));
+    dispatch(setDraftCollaborationMode({
+      draftKey: '__home__',
+      mode: CoworkCollaborationMode.Default,
+    }));
+    dispatch(setDraftPrompt({ sessionId: '__home__', draft: prompt }));
+    setMainView('cowork');
+    window.setTimeout(() => {
+      window.dispatchEvent(new CustomEvent(CoworkUiEvent.FocusInput, {
+        detail: { clear: false, resetCollaborationMode: true, text: prompt },
+      }));
+    }, 0);
   }, [dispatch]);
 
   const showToast = useCallback((message: string) => {
@@ -1266,6 +1292,7 @@ const App: React.FC = () => {
           onShowScheduledTasks={handleShowScheduledTasks}
           onShowKits={handleShowKits}
           onShowMcp={handleShowMcp}
+          onShowSites={handleShowSites}
           onNewChat={handleNewChat}
           isCollapsed={isSidebarCollapsed}
           onToggleCollapse={handleToggleSidebar}
@@ -1313,6 +1340,15 @@ const App: React.FC = () => {
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}
                 updateBadge={collapsedHeaderUpdateBadge}
+              />
+            ) : mainView === 'sites' ? (
+              <SitesView
+                isAuthenticated={Boolean(authUser)}
+                onCreateSiteByChat={handleCreateSiteByChat}
+                isSidebarCollapsed={isSidebarCollapsed}
+                onToggleSidebar={handleToggleSidebar}
+                updateBadge={collapsedHeaderUpdateBadge}
+                readOnly={enterpriseConfig?.ui?.sites === 'readonly'}
               />
             ) : (
               <CoworkView

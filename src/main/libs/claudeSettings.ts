@@ -1,4 +1,11 @@
 import { type ApiFormat,type ProviderConfig, ProviderName, ProviderRegistry, resolveCodingPlanBaseUrl } from '../../shared/providers';
+import {
+  applyModelRuntimeProfileMetadata,
+  ModelRuntimeProfile,
+  type ModelRuntimeProfile as ModelRuntimeProfileType,
+  normalizeModelIdForComparison,
+  parseModelRuntimeProfile,
+} from '../../shared/providers/modelRuntimeProfiles';
 import type { SqliteStore } from '../sqliteStore';
 import type { CoworkApiConfig } from './coworkConfigStore';
 import { type AnthropicApiFormat,normalizeProviderApiFormat } from './coworkFormatTransform';
@@ -34,8 +41,10 @@ type ProviderModelConfig = {
   id: string;
   name: string;
   supportsImage?: boolean;
+  supportsVideo?: boolean;
   supportsThinking?: boolean;
   contextWindow?: number;
+  maxTokens?: number;
   customParams?: Record<string, unknown>;
 };
 
@@ -43,8 +52,10 @@ type ProviderModelInputConfig = {
   id: string;
   name?: string;
   supportsImage?: boolean;
+  supportsVideo?: boolean;
   supportsThinking?: boolean;
   contextWindow?: number;
+  maxTokens?: number;
   customParams?: Record<string, unknown>;
 };
 
@@ -53,10 +64,58 @@ export type ServerModelMetadata = {
   modelName?: string;
   provider?: string;
   apiFormat?: string;
+  runtimeProfile?: ModelRuntimeProfileType;
   supportsImage?: boolean;
+  supportsVideo?: boolean;
   supportsThinking?: boolean;
+  supportsToolCalling?: boolean;
+  agenticReady?: boolean;
   contextWindow?: number;
+  maxTokens?: number;
   explicitContextCache?: boolean;
+};
+
+type CachedServerModelMetadata = Omit<ServerModelMetadata, 'modelId'> & {
+  invalidRuntimeProfile?: boolean;
+};
+
+export type ServerModelMetadataInput =
+  Omit<ServerModelMetadata, 'runtimeProfile'>
+  & { runtimeProfile?: unknown };
+
+export const ServerModelRunGateReason = {
+  MetadataMissing: 'metadata_missing',
+  RuntimeProfileMissing: 'runtime_profile_missing',
+  RuntimeProfileUnsupported: 'runtime_profile_unsupported',
+  TransportUnsupported: 'transport_unsupported',
+  ToolCallingUnavailable: 'tool_calling_unavailable',
+  AgenticNotReady: 'agentic_not_ready',
+} as const;
+
+export type ServerModelRunGateReason =
+  typeof ServerModelRunGateReason[keyof typeof ServerModelRunGateReason];
+
+export type ServerModelRunGateResult =
+  | { allowed: true; metadata: ServerModelMetadata }
+  | { allowed: false; reason: ServerModelRunGateReason };
+
+const KIMI_K3_SERVER_MODEL_IDS = new Set([
+  'kimik3',
+  'kimik3youdaoinner',
+]);
+
+export const isKnownPackageKimiK3ModelId = (modelId: string): boolean =>
+  modelId.trim().toLowerCase() === 'kimi-k3-youdaoinner';
+
+const isServerKimiK3Candidate = (
+  metadata: Pick<ServerModelMetadataInput, 'modelId' | 'modelName' | 'provider'>,
+): boolean => {
+  const normalizedProvider = metadata.provider?.trim().toLowerCase();
+  const normalizedName = metadata.modelName
+    ? normalizeModelIdForComparison(metadata.modelName)
+    : '';
+  return KIMI_K3_SERVER_MODEL_IDS.has(normalizeModelIdForComparison(metadata.modelId))
+    || (normalizedProvider === 'moonshot' && normalizedName === 'kimik3');
 };
 
 export type ApiConfigResolution = {
@@ -66,10 +125,13 @@ export type ApiConfigResolution = {
     providerName: string;
     authType?: ProviderConfig['authType'];
     codingPlanEnabled: boolean;
+    runtimeProfile?: ModelRuntimeProfileType;
     supportsImage?: boolean;
+    supportsVideo?: boolean;
     supportsThinking?: boolean;
     modelName?: string;
     contextWindow?: number;
+    maxTokens?: number;
   };
 };
 
@@ -94,6 +156,16 @@ function normalizeProviderModels(providerName: string, models?: ProviderModelInp
         model.id,
         model.supportsThinking,
       );
+      const supportsVideo = ProviderRegistry.resolveModelSupportsVideo(
+        providerName,
+        model.id,
+        model.supportsVideo,
+      );
+      const maxTokens = ProviderRegistry.resolveModelMaxTokens(
+        providerName,
+        model.id,
+        model.maxTokens,
+      );
       return {
         ...model,
         name: model.name || model.id,
@@ -102,8 +174,10 @@ function normalizeProviderModels(providerName: string, models?: ProviderModelInp
           model.id,
           model.supportsImage,
         ),
+        ...(supportsVideo ? { supportsVideo } : {}),
         ...(supportsThinking ? { supportsThinking } : {}),
         ...(contextWindow !== undefined ? { contextWindow } : {}),
+        ...(maxTokens !== undefined ? { maxTokens } : {}),
       };
     });
 }
@@ -121,10 +195,13 @@ type MatchedProvider = {
   modelId: string;
   apiFormat: AnthropicApiFormat;
   baseURL: string;
+  runtimeProfile?: ModelRuntimeProfileType;
   supportsImage?: boolean;
+  supportsVideo?: boolean;
   supportsThinking?: boolean;
   modelName?: string;
   contextWindow?: number;
+  maxTokens?: number;
 };
 
 function getEffectiveProviderApiFormat(providerName: string, apiFormat: unknown): AnthropicApiFormat {
@@ -286,9 +363,11 @@ function resolveMatchedProvider(appConfig: AppConfig): { matched: MatchedProvide
       apiFormat,
       baseURL,
       supportsImage: matchedModel?.supportsImage,
+      supportsVideo: matchedModel?.supportsVideo,
       supportsThinking: matchedModel?.supportsThinking,
       modelName: matchedModel?.name,
       contextWindow: matchedModel?.contextWindow,
+      maxTokens: matchedModel?.maxTokens,
     },
   };
 }
@@ -338,8 +417,13 @@ export function resolveCurrentApiConfig(target: OpenAICompatProxyTarget = 'local
       providerMetadata: {
         providerName: matched.providerName,
         codingPlanEnabled: !!matched.providerConfig.codingPlanEnabled,
+        runtimeProfile: matched.runtimeProfile,
         supportsImage: matched.supportsImage,
+        supportsVideo: matched.supportsVideo,
         supportsThinking: matched.supportsThinking,
+        modelName: matched.modelName,
+        contextWindow: matched.contextWindow,
+        maxTokens: matched.maxTokens,
       },
     };
   }
@@ -377,6 +461,13 @@ export function resolveCurrentApiConfig(target: OpenAICompatProxyTarget = 'local
     providerMetadata: {
       providerName: matched.providerName,
       codingPlanEnabled: !!matched.providerConfig.codingPlanEnabled,
+      runtimeProfile: matched.runtimeProfile,
+      supportsImage: matched.supportsImage,
+      supportsVideo: matched.supportsVideo,
+      supportsThinking: matched.supportsThinking,
+      modelName: matched.modelName,
+      contextWindow: matched.contextWindow,
+      maxTokens: matched.maxTokens,
     },
   };
 }
@@ -425,8 +516,17 @@ export function resolveRawApiConfig(): ApiConfigResolution {
   }
 
   console.log('[ClaudeSettings] resolved raw API config:', JSON.stringify({
-    ...matched,
-    providerConfig: { ...matched.providerConfig, apiKey: apiKey ? '***' : '' },
+    providerName: matched.providerName,
+    modelId: matched.modelId,
+    apiFormat: effectiveApiFormat,
+    runtimeProfile: matched.runtimeProfile,
+    supportsImage: matched.supportsImage,
+    supportsVideo: matched.supportsVideo,
+    supportsThinking: matched.supportsThinking,
+    contextWindow: matched.contextWindow,
+    maxTokens: matched.maxTokens,
+    codingPlanEnabled: !!matched.providerConfig.codingPlanEnabled,
+    authType: matched.providerConfig.authType,
   }));
   // OpenClaw's gateway requires a non-empty apiKey for every provider — even
   // local servers (Ollama, vLLM, etc.) that don't enforce auth.  When the user
@@ -445,10 +545,13 @@ export function resolveRawApiConfig(): ApiConfigResolution {
       providerName: matched.providerName,
       authType: matched.providerConfig.authType,
       codingPlanEnabled: !!matched.providerConfig.codingPlanEnabled,
+      runtimeProfile: matched.runtimeProfile,
       supportsImage: matched.supportsImage,
+      supportsVideo: matched.supportsVideo,
       supportsThinking: matched.supportsThinking,
       modelName: matched.modelName,
       contextWindow: matched.contextWindow,
+      maxTokens: matched.maxTokens,
     },
   };
 }

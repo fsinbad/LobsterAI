@@ -29,6 +29,7 @@ import SidebarAutomationIcon from './icons/SidebarAutomationIcon';
 import SidebarKitsIcon from './icons/SidebarKitsIcon';
 import SidebarMcpIcon from './icons/SidebarMcpIcon';
 import SidebarSearchIcon from './icons/SidebarSearchIcon';
+import SidebarSitesIcon from './icons/SidebarSitesIcon';
 import SidebarToggleIcon from './icons/SidebarToggleIcon';
 import SkillIcon from './icons/SkillIcon';
 import TrashIcon from './icons/TrashIcon';
@@ -41,6 +42,7 @@ interface SidebarProps {
   onShowScheduledTasks: () => void;
   onShowKits: () => void;
   onShowMcp: () => void;
+  onShowSites: () => void;
   onNewChat: () => void;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
@@ -128,6 +130,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   onShowScheduledTasks,
   onShowKits,
   onShowMcp,
+  onShowSites,
   onNewChat,
   isCollapsed,
   onToggleCollapse,
@@ -609,6 +612,21 @@ const Sidebar: React.FC<SidebarProps> = ({
             <SidebarMcpIcon className="h-4 w-4 shrink-0" />
             {i18nService.t('mcpServers')}
           </button>
+          {!hideSites && (
+            <button
+              type="button"
+              onClick={() => {
+                reportSidebarAction('open_sites', { activeView, isCollapsed });
+                setIsSearchOpen(false);
+                onShowSites();
+              }}
+              className={activeView === 'sites' ? activeSidebarNavItemClassName : sidebarNavItemClassName}
+              aria-current={activeView === 'sites' ? 'page' : undefined}
+            >
+              <SidebarSitesIcon className="h-4 w-4 shrink-0" />
+              {i18nService.t('sitesTitle')}
+            </button>
+          )}
         </div>
       </div>
       <div className="relative min-h-0 flex-1">

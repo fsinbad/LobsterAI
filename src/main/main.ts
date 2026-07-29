@@ -52,6 +52,17 @@ import {
   normalizeBrowserAnnotationBatches,
 } from '../shared/cowork/browserAnnotations';
 import {
+  COWORK_BTW_EVENT_QUESTION_MAX_CHARS,
+  COWORK_BTW_IDENTIFIER_MAX_CHARS,
+  COWORK_BTW_RESULT_MAX_CHARS,
+  type CoworkBtwAbortRequest,
+  type CoworkBtwAbortResponse,
+  type CoworkBtwEntry,
+  type CoworkBtwSubmitRequest,
+  type CoworkBtwSubmitResponse,
+  normalizeCoworkBtwQuestion,
+} from '../shared/cowork/btw';
+import {
   COWORK_MESSAGE_PAGE_SIZE,
   COWORK_SESSION_PAGE_SIZE,
   COWORK_TEMP_ATTACHMENTS_DIR_NAME,
@@ -150,6 +161,7 @@ import {
   registerScheduledTaskHandlers,
 } from './ipcHandlers/scheduledTask';
 import { registerSessionDiagnosticsHandlers } from './ipcHandlers/sessionDiagnostics';
+import { registerSiteIpcHandlers } from './ipcHandlers/site';
 import { registerSkillHandlers } from './ipcHandlers/skills';
 import {
   type CoworkAgentEngine,
@@ -162,6 +174,8 @@ import type { BrowserAnnotationAssetIdentity, SaveBrowserAnnotationAssetInput } 
 import { BrowserAnnotationAssetStore } from './libs/browserAnnotationAssetStore';
 import {
   getCurrentApiConfig,
+  getServerModelMetadata,
+  isKnownPackageKimiK3ModelId,
   resolveAllEnabledProviderConfigs,
   resolveCurrentApiConfig,
   resolveRawApiConfig,
@@ -268,7 +282,10 @@ import { ensurePythonRuntimeReady } from './libs/pythonRuntime';
 import { sanitizeUrlForLog, serializeForLog } from './libs/sanitizeForLog';
 import { SqliteBackupTrigger } from './libs/sqliteBackup/constants';
 import { SqliteBackupManager } from './libs/sqliteBackup/sqliteBackupManager';
-import { runStartupCacheWarmup } from './libs/startupCacheWarmup';
+import {
+  buildServerModelCapabilityHeaders,
+  runStartupCacheWarmup,
+} from './libs/startupCacheWarmup';
 import {
   applySystemProxyEnv,
   resolveSystemProxyUrlForTargets,
@@ -556,6 +573,20 @@ const buildAvailableOpenClawProviders = (): Record<string, { models: Array<{ id:
         providerMap[selection.providerId].models.push({ id: selection.sessionModelId });
       }
     }
+  }
+
+  const serverModelIds = getAllServerModelMetadata()
+    .map(model => model.modelId.trim())
+    .filter(Boolean);
+  if (serverModelIds.length > 0) {
+    const serverProvider = providerMap[OpenClawProviderId.LobsteraiServer]
+      ?? { models: [] };
+    for (const modelId of serverModelIds) {
+      if (!serverProvider.models.some(model => model.id === modelId)) {
+        serverProvider.models.push({ id: modelId });
+      }
+    }
+    providerMap[OpenClawProviderId.LobsteraiServer] = serverProvider;
   }
 
   return providerMap;
@@ -1153,9 +1184,9 @@ const bootstrapOpenClawEngine = async (
   return promise;
 };
 
-// Module-level handle so ensureOpenClawRunningForCowork can await any in-flight
-// proactive token refresh before syncing config to the gateway.
-let pendingTokenRefresh: Promise<string | null> | null = null;
+// Injected after the auth session manager is created. This keeps gateway startup
+// able to await an in-flight refresh without exposing refresh internals globally.
+let waitForPendingTokenRefresh: () => Promise<void> = async () => {};
 
 const ensureOpenClawRunningForCowork = async () => {
   const configApplyStatus = await waitForOpenClawConfigApply('cowork engine startup');
@@ -1168,10 +1199,7 @@ const ensureOpenClawRunningForCowork = async () => {
   if (status.phase === 'running') {
     // Token proxy handles dynamic token injection — no need to restart
     // the gateway for token changes. Just wait for any in-flight refresh.
-    if (pendingTokenRefresh) {
-      console.log('[OpenClaw] ensureRunning: awaiting pending token refresh before proceeding');
-      await pendingTokenRefresh.catch(() => {});
-    }
+    await waitForPendingTokenRefresh();
     return manager.getStatus();
   }
   if (status.phase === 'starting') {
@@ -1180,10 +1208,7 @@ const ensureOpenClawRunningForCowork = async () => {
 
   // Wait for any in-flight token refresh so that the gateway starts with
   // a fresh token rather than the stale one that triggered the refresh.
-  if (pendingTokenRefresh) {
-    console.log('[OpenClaw] ensureRunning: awaiting pending token refresh before gateway start');
-    await pendingTokenRefresh.catch(() => {});
-  }
+  await waitForPendingTokenRefresh();
 
   // Ensure AskUser server is started and config is synced before launching the gateway,
   // so that mcp.servers config is available in openclaw.json when the gateway loads.
@@ -1578,11 +1603,7 @@ const _syncOpenClawConfigImpl = async (
     console.log(`${D()} SECRET ENV VARS CHANGED!`);
     if (added.length) console.log(`${D()}   added: ${added.join(', ')}`);
     if (removed.length) console.log(`${D()}   removed: ${removed.join(', ')}`);
-    for (const k of modified) {
-      const p = (effectivePrevSecretEnvVars[k] || '').slice(0, 12);
-      const n = (effectiveNextSecretEnvVars[k] || '').slice(0, 12);
-      console.log(`${D()}   modified: ${k} prev=${p}… next=${n}…`);
-    }
+    if (modified.length) console.log(`${D()}   modified: ${modified.join(', ')}`);
   } else {
     console.log(`${D()} secretEnvVars unchanged (${Object.keys(effectiveNextSecretEnvVars).length}/${Object.keys(nextSecretEnvVars).length} referenced keys)`);
   }
@@ -1917,6 +1938,32 @@ const bindCoworkRuntimeForwarder = (): void => {
         win.webContents.send('cowork:stream:sessionStatus', { sessionId, status });
       } catch (error) {
         console.error('[CoworkRuntime] failed to forward session status:', error);
+      }
+    });
+  });
+
+  runtime.on('btwResult', (sessionId: string, result: CoworkBtwEntry) => {
+    const safeResult: CoworkBtwEntry = {
+      ...result,
+      sessionId,
+      question: truncateIpcString(result.question, COWORK_BTW_EVENT_QUESTION_MAX_CHARS),
+      ...(result.answer !== undefined
+        ? { answer: truncateIpcString(result.answer, COWORK_BTW_RESULT_MAX_CHARS) }
+        : {}),
+      ...(result.error !== undefined
+        ? { error: truncateIpcString(result.error, IPC_STRING_MAX_CHARS) }
+        : {}),
+    };
+    const windows = BrowserWindow.getAllWindows();
+    windows.forEach(win => {
+      if (win.isDestroyed()) return;
+      try {
+        win.webContents.send(CoworkIpcChannel.StreamBtwResult, {
+          sessionId,
+          result: safeResult,
+        });
+      } catch (error) {
+        console.error('[CoworkBtw] failed to forward side-question result:', error);
       }
     });
   });
@@ -3805,6 +3852,15 @@ if (!gotTheLock) {
           `Image attachments ${options.imageAttachments?.length ?? 0}.`,
           `Agent ${options.agentId || 'main'}.`,
         );
+        const modelRunGate = await ensureServerModelReadyForRun(
+          resolveCoworkRunModelRef({
+            modelOverride: options.modelOverride,
+            agentId: options.agentId,
+          }),
+        );
+        if (modelRunGate.allowed === false) {
+          return { success: false, error: modelRunGate.error };
+        }
         const engineStatus = await ensureOpenClawRunningForCowork();
         if (engineStatus.phase !== 'running') {
           return getEngineNotReadyResponse(engineStatus);
@@ -4015,6 +4071,12 @@ if (!gotTheLock) {
           `Prompt length ${options.prompt.length}.`,
           `Image attachments ${options.imageAttachments?.length ?? 0}.`,
         );
+        const modelRunGate = await ensureServerModelReadyForRun(
+          resolveCoworkRunModelRef({ sessionId: options.sessionId }),
+        );
+        if (modelRunGate.allowed === false) {
+          return { success: false, error: modelRunGate.error };
+        }
         const engineStatus = await ensureOpenClawRunningForCowork();
         if (engineStatus.phase !== 'running') {
           return getEngineNotReadyResponse(engineStatus);
@@ -4137,6 +4199,143 @@ if (!gotTheLock) {
     },
   );
 
+  ipcMain.handle(CoworkIpcChannel.SubmitBtw, async (
+    _event,
+    options: CoworkBtwSubmitRequest,
+  ): Promise<CoworkBtwSubmitResponse> => {
+    const sessionId = typeof options?.sessionId === 'string' ? options.sessionId.trim() : '';
+    const question = typeof options?.question === 'string'
+      ? normalizeCoworkBtwQuestion(options.question)
+      : '';
+    const runId = typeof options?.runId === 'string' ? options.runId.trim() : '';
+    if (!sessionId || !question || !runId) {
+      return {
+        success: false,
+        runId,
+        error: t('coworkBtwRequestRequired'),
+      };
+    }
+    if (
+      sessionId.length > COWORK_BTW_IDENTIFIER_MAX_CHARS
+      || runId.length > COWORK_BTW_IDENTIFIER_MAX_CHARS
+    ) {
+      return {
+        success: false,
+        runId: runId.slice(0, COWORK_BTW_IDENTIFIER_MAX_CHARS),
+        error: t('coworkBtwInvalidIdentifier'),
+      };
+    }
+    if (/[\r\n]/.test(question)) {
+      return {
+        success: false,
+        runId,
+        error: t('coworkBtwSingleLine'),
+      };
+    }
+    try {
+      console.debug(
+        '[CoworkBtw] side-question IPC received.',
+        `Session ${sessionId}.`,
+        `Run ${runId}.`,
+        `Question chars ${question.length}.`,
+      );
+      const engineStatus = await ensureOpenClawRunningForCowork();
+      if (engineStatus.phase !== 'running') {
+        return {
+          ...getEngineNotReadyResponse(engineStatus),
+          runId,
+        };
+      }
+      const runtime = getCoworkEngineRouter();
+      if (!runtime.submitBtw) {
+        return {
+          success: false,
+          runId,
+          error: t('coworkBtwUnavailable'),
+        };
+      }
+      const result = await runtime.submitBtw(sessionId, question, runId);
+      console.debug(
+        '[CoworkBtw] side-question IPC completed.',
+        `Session ${sessionId}.`,
+        `Run ${runId}.`,
+        `Success ${result.success ? 'yes' : 'no'}.`,
+      );
+      return result;
+    } catch (error) {
+      console.error(
+        '[CoworkBtw] side-question IPC failed.',
+        `Session ${sessionId}.`,
+        `Run ${runId}.`,
+        error,
+      );
+      return {
+        success: false,
+        runId,
+        error: error instanceof Error ? error.message : t('coworkBtwSubmitFailed'),
+      };
+    }
+  });
+
+  ipcMain.handle(CoworkIpcChannel.AbortBtw, async (
+    _event,
+    options: CoworkBtwAbortRequest,
+  ): Promise<CoworkBtwAbortResponse> => {
+    const sessionId = typeof options?.sessionId === 'string' ? options.sessionId.trim() : '';
+    const runId = typeof options?.runId === 'string' ? options.runId.trim() : '';
+    if (
+      !sessionId
+      || !runId
+      || sessionId.length > COWORK_BTW_IDENTIFIER_MAX_CHARS
+      || runId.length > COWORK_BTW_IDENTIFIER_MAX_CHARS
+    ) {
+      return {
+        success: false,
+        aborted: false,
+        runId: runId.slice(0, COWORK_BTW_IDENTIFIER_MAX_CHARS),
+        error: t('coworkBtwInvalidIdentifier'),
+      };
+    }
+
+    try {
+      console.debug(
+        '[CoworkBtw] side-question stop IPC received.',
+        `Session ${sessionId}.`,
+        `Run ${runId}.`,
+      );
+      const runtime = getCoworkEngineRouter();
+      if (!runtime.abortBtw) {
+        return {
+          success: false,
+          aborted: false,
+          runId,
+          error: t('coworkBtwUnavailable'),
+        };
+      }
+      const result = await runtime.abortBtw(sessionId, runId);
+      console.debug(
+        '[CoworkBtw] side-question stop IPC completed.',
+        `Session ${sessionId}.`,
+        `Run ${runId}.`,
+        `Aborted ${result.aborted ? 'yes' : 'no'}.`,
+      );
+      return result;
+    } catch (error) {
+      console.error(
+        '[CoworkBtw] side-question stop IPC failed.',
+        `Session ${sessionId}.`,
+        `Run ${runId}.`,
+        error,
+      );
+      return {
+        success: false,
+        aborted: false,
+        runId,
+        error: t('coworkBtwStopFailed'),
+      };
+    }
+  });
+
   ipcMain.handle(CoworkIpcChannel.SubmitSteer, async (
     _event,
     options: { sessionId: string; text: string; clientSteerId: string },
@@ -4246,7 +4445,7 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('cowork:session:stop', async (_event, sessionId: string) => {
+  ipcMain.handle(CoworkIpcChannel.StopSession, async (_event, sessionId: string) => {
     try {
       const runtime = getCoworkEngineRouter();
       runtime.stopSession(sessionId);
@@ -8321,10 +8520,13 @@ if (!gotTheLock) {
       try {
         const { refreshCopilotTokenNow } = await import('./libs/copilotTokenManager');
         const refreshed = await refreshCopilotTokenNow();
-        return refreshed.copilotToken;
+        return {
+          outcome: AuthRefreshOutcome.Success,
+          accessToken: refreshed.copilotToken,
+        };
       } catch (err) {
         console.warn('[Auth] Copilot proxy token refresh failed:', err);
-        return null;
+        return { outcome: AuthRefreshOutcome.TransientFailure };
       }
     });
 

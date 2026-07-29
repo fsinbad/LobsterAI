@@ -19,6 +19,11 @@ import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
 
 import {
+  CoworkBtwCommandValidationError,
+  createCoworkBtwRunId,
+  parseCoworkBtwCommand,
+} from '../../../shared/cowork/btw';
+import {
   type CoworkGoal,
   CoworkGoalStatus,
   formatCoworkGoalUsage,
@@ -104,6 +109,7 @@ import TrashIcon from '../icons/TrashIcon';
 import XMarkIcon from '../icons/XMarkIcon';
 import { ActiveKitBadge, KitsButton } from '../kits';
 import ModelSelector, {
+  isModelAgenticBlocked,
   ModelAccessPromptKind,
   ModelAccessPromptModal,
   type ModelSelectorChangeMeta,
@@ -504,6 +510,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     };
 
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const draftKeyRef = useRef(draftKey);
+    draftKeyRef.current = draftKey;
     const addMenuButtonRef = useRef<HTMLButtonElement>(null);
     const addMenuRef = useRef<HTMLDivElement>(null);
     const goalEditTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -1136,8 +1144,65 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     reportPromptControl,
   ]);
 
-  const handleSubmit = useCallback(async (submitMethod: 'button' | 'keyboard' = 'button') => {
-    const effectiveSubmitMethod = submitMethod;
+  const handleSubmit = useCallback(async (submitMethod: 'button' | 'keyboard' | 'voice' = 'button') => {
+    let effectiveSubmitMethod = submitMethod;
+    const btwCommand = !goalInputActive && !steerInputActive && !isVoiceRecording
+      ? parseCoworkBtwCommand(value)
+      : { matched: false } as const;
+    if (btwCommand.matched) {
+      if (btwCommand.error === CoworkBtwCommandValidationError.EmptyQuestion) {
+        showToast(i18nService.t('coworkBtwEmptyQuestion'));
+        return;
+      }
+      if (btwCommand.error === CoworkBtwCommandValidationError.MultilineUnsupported) {
+        showToast(i18nService.t('coworkBtwMultilineUnsupported'));
+        return;
+      }
+      if (!sessionId) {
+        showToast(i18nService.t('coworkBtwRequiresSession'));
+        return;
+      }
+      if (disabled || isPatchingModel) {
+        reportPromptControl('submit_blocked', {
+          blockedReason: disabled ? 'disabled' : 'model_patching',
+          submitMethod: effectiveSubmitMethod,
+          ...getPromptTextAnalyticsParams(btwCommand.question),
+        });
+        return;
+      }
+
+      const runId = createCoworkBtwRunId();
+      const submittedDraft = value;
+      const accepted = await coworkService.submitBtw({
+        sessionId,
+        question: btwCommand.question,
+        runId,
+      });
+      if (!accepted) {
+        return;
+      }
+      const currentTextareaValue = textareaRef.current?.value;
+      if (draftKeyRef.current === draftKey && currentTextareaValue === submittedDraft) {
+        setValue('');
+        dispatch(setDraftPrompt({ sessionId: draftKey, draft: '' }));
+        inputSourceOverrideRef.current = null;
+      }
+      reportPromptSubmit({
+        ...getPromptContextAnalyticsParams(),
+        submitMethod: effectiveSubmitMethod,
+        promptLength: btwCommand.question.length,
+        promptLineCount: 1,
+        hasPrompt: true,
+        params: {
+          inputSource: 'btw',
+          mediaReferenceCount: 0,
+          selectedTextSnippetCount: 0,
+          effectiveCollaborationMode: CoworkCollaborationMode.Default,
+        },
+      });
+      return;
+    }
+
     const shouldSubmitAsSteer = isStreaming
       && !goalInputActive
       && !!sessionId

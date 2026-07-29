@@ -9,6 +9,13 @@ import { ArtifactPreviewIpc } from '../shared/artifactPreview/constants';
 import { BrowserIpc, type BrowserRuntimeProfile } from '../shared/browserWebAccess/constants';
 import { ClipboardIpc } from '../shared/clipboard/constants';
 import type { CoworkBrowserAnnotationMessageBatch } from '../shared/cowork/browserAnnotations';
+import type {
+  CoworkBtwAbortRequest,
+  CoworkBtwAbortResponse,
+  CoworkBtwEntry,
+  CoworkBtwSubmitRequest,
+  CoworkBtwSubmitResponse,
+} from '../shared/cowork/btw';
 import {
   CoworkIpcChannel,
   type CoworkSessionsChangedPayload,
@@ -37,6 +44,16 @@ import { OpenClawEngineIpc } from '../shared/openclawEngine/constants';
 import { PermissionIpcChannel } from '../shared/permissions/constants';
 import type { Platform } from '../shared/platform';
 import { type ShellGetBrowserAppsInput, ShellIpc } from '../shared/shell/constants';
+import {
+  type SiteAnalyticsOptions,
+  type SiteDeploymentQuotaOptions,
+  SiteIpc,
+  type SiteListOptions,
+  type SiteQuotaReservationInput,
+  type SiteUpdateAccessModeInput,
+  type SiteUpdateAccessStatusInput,
+  type SiteUpdateTitleInput,
+} from '../shared/site/constants';
 import { SkinIpc } from '../shared/skin/constants';
 import type {
   SkinApplyResponse,
@@ -403,11 +420,16 @@ contextBridge.exposeInMainWorld('electron', {
         dataUrl?: string; role?: string;
       }>;
     }) => ipcRenderer.invoke('cowork:session:continue', options),
+    submitBtw: (options: CoworkBtwSubmitRequest): Promise<CoworkBtwSubmitResponse> =>
+      ipcRenderer.invoke(CoworkIpcChannel.SubmitBtw, options),
+    abortBtw: (options: CoworkBtwAbortRequest): Promise<CoworkBtwAbortResponse> =>
+      ipcRenderer.invoke(CoworkIpcChannel.AbortBtw, options),
     submitSteer: (options: { sessionId: string; text: string; clientSteerId: string }) =>
       ipcRenderer.invoke(CoworkIpcChannel.SubmitSteer, options),
     runGoalCommand: (options: { sessionId: string; command: string }) =>
       ipcRenderer.invoke(CoworkIpcChannel.GoalCommand, options),
-    stopSession: (sessionId: string) => ipcRenderer.invoke('cowork:session:stop', sessionId),
+    stopSession: (sessionId: string) =>
+      ipcRenderer.invoke(CoworkIpcChannel.StopSession, sessionId),
     deleteSession: (sessionId: string) => ipcRenderer.invoke('cowork:session:delete', sessionId),
     deleteSessions: (sessionIds: string[]) =>
       ipcRenderer.invoke('cowork:session:deleteBatch', sessionIds),
@@ -571,6 +593,16 @@ contextBridge.exposeInMainWorld('electron', {
       const handler = (_event: any, data: { sessionId: string; goal: any }) => callback(data);
       ipcRenderer.on(CoworkIpcChannel.StreamGoal, handler);
       return () => ipcRenderer.removeListener(CoworkIpcChannel.StreamGoal, handler);
+    },
+    onStreamBtwResult: (
+      callback: (data: { sessionId: string; result: CoworkBtwEntry }) => void,
+    ) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: { sessionId: string; result: CoworkBtwEntry },
+      ) => callback(data);
+      ipcRenderer.on(CoworkIpcChannel.StreamBtwResult, handler);
+      return () => ipcRenderer.removeListener(CoworkIpcChannel.StreamBtwResult, handler);
     },
     onStreamContextMaintenance: (
       callback: (data: { sessionId: string; active: boolean }) => void,
