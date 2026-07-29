@@ -103,7 +103,6 @@ const mapExecutionModeToSandboxMode = (
  * Also used by the runtime adapter's client-side timeout watchdog.
  */
 export const OPENCLAW_AGENT_TIMEOUT_SECONDS = 3600;
-export const OPENCLAW_LOBSTERAI_MODEL_TIMEOUT_SECONDS = 330;
 export const OPENCLAW_HEARTBEAT_EVERY_ENABLED = '1h';
 export const OPENCLAW_HEARTBEAT_EVERY_DISABLED = '0m';
 const DINGTALK_OPENCLAW_CHANNEL = 'dingtalk-connector';
@@ -1071,11 +1070,9 @@ export const buildProviderSelection = (options: {
     : options.modelId;
 
   const providerModelName = resolveModelDisplayName(sessionModelId, options.modelName);
-  const runtimeProfileSource = providerName === ProviderName.LobsteraiServer
-    ? ModelRuntimeProfileSource.Server
-    : CUSTOM_PROVIDER_NAME_PATTERN.test(providerName)
-      ? ModelRuntimeProfileSource.Custom
-      : ModelRuntimeProfileSource.BuiltIn;
+  const runtimeProfileSource = CUSTOM_PROVIDER_NAME_PATTERN.test(providerName)
+    ? ModelRuntimeProfileSource.Custom
+    : ModelRuntimeProfileSource.BuiltIn;
   const runtimeProfile = resolveModelRuntimeProfile({
     source: runtimeProfileSource,
     providerId: descriptor.providerId,
@@ -1163,9 +1160,6 @@ export const buildProviderSelection = (options: {
       api,
       ...(apiKey ? { apiKey } : {}),
       auth,
-      ...(descriptor.providerId === OpenClawProviderId.LobsteraiServer
-        ? { timeoutSeconds: OPENCLAW_LOBSTERAI_MODEL_TIMEOUT_SECONDS }
-        : {}),
       ...(request ? { request } : {}),
       models: [
         {
@@ -1318,21 +1312,6 @@ const buildCompleteAgentModelDefaults = (
   return modelDefaults;
 };
 
-const upsertProviderModel = (
-  providerConfig: OpenClawProviderSelection['providerConfig'],
-  model: OpenClawProviderSelection['providerConfig']['models'][number],
-): void => {
-  const existingIndex = providerConfig.models.findIndex(existing => existing.id === model.id);
-  if (existingIndex >= 0) {
-    providerConfig.models[existingIndex] = {
-      ...providerConfig.models[existingIndex],
-      ...model,
-    };
-    return;
-  }
-  providerConfig.models.push(model);
-};
-
 const OPENCLAW_TRANSPORT_APIS = new Set<OpenClawTransportApi>([
   'anthropic-messages',
   'openai-completions',
@@ -1429,29 +1408,6 @@ const collectCompatibilityOwnerProfile = (
   if (!selection.compatibilityOwnerProfile) return;
   profiles[selection.primaryModel] = selection.compatibilityOwnerProfile;
 };
-
-type ServerModelTransportMetadata = {
-  modelId: string;
-  apiFormat?: string;
-  runtimeProfile?: unknown;
-};
-
-export const findInvalidKimiK3ServerTransports = (
-  serverModels: ServerModelTransportMetadata[],
-): Array<{ modelId: string; apiFormat: string }> => (
-  serverModels
-    .filter(model => model.runtimeProfile === ModelRuntimeProfile.MoonshotKimiK3)
-    .map(model => ({
-      modelId: model.modelId,
-      apiFormat: model.apiFormat?.trim().toLowerCase() || 'missing',
-    }))
-    .filter(model => model.apiFormat !== 'openai')
-    .sort((a, b) => a.modelId.localeCompare(b.modelId))
-);
-
-const normalizeServerApiType = (apiFormat?: string): 'anthropic' | 'openai' => (
-  apiFormat === 'anthropic' ? 'anthropic' : 'openai'
-);
 
 const stripExplicitContextCacheProviderSuffix = (modelId: string, provider?: string): string => {
   const normalizedProvider = provider?.trim();
@@ -1866,19 +1822,6 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
     const configPath = this.engineManager.getConfigPath();
     const coworkConfig = this.getCoworkConfig();
     const browserWebAccess = normalizeBrowserWebAccessConfig(this.getBrowserWebAccessConfig());
-    const serverModels = getAllServerModelMetadata();
-    const invalidKimiK3Transports = findInvalidKimiK3ServerTransports(serverModels);
-    if (invalidKimiK3Transports.length > 0) {
-      const invalidRefs = invalidKimiK3Transports
-        .map(model => `${model.modelId} (${model.apiFormat})`)
-        .join(', ');
-      return {
-        ok: false,
-        changed: false,
-        configPath,
-        error: `OpenClaw config sync failed: Kimi K3 package models require apiFormat "openai": ${invalidRefs}.`,
-      };
-    }
     const apiResolution = resolveRawApiConfig();
 
     if (!apiResolution.config) {

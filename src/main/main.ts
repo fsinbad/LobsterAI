@@ -8,7 +8,6 @@ import {
   Menu,
   nativeImage,
   nativeTheme,
-  net,
   powerMonitor,
   powerSaveBlocker,
   protocol,
@@ -19,7 +18,6 @@ import {
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { fileURLToPath, pathToFileURL } from 'url';
 
 import { CoworkSystemMessageKind } from '../common/coworkSystemMessages';
 import { buildGoalSettingMessageMetadata } from '../common/goalCommandDisplay';
@@ -105,7 +103,7 @@ import {
   type LocalWebService,
   LocalWebServicesIpc,
 } from '../shared/localWebServices/constants';
-import { canonicalizeMediaModelId, HAPPYHORSE_1_1_MODEL_ID, mediaModelDisplayName } from '../shared/mediaModelAliases';
+import { canonicalizeMediaModelId, mediaModelDisplayName } from '../shared/mediaModelAliases';
 import {
   normalizeNotificationSettings,
   type NotificationSettings,
@@ -117,7 +115,6 @@ import {
   OpenClawGatewayRepairErrorCode,
 } from '../shared/openclawEngine/constants';
 import { PlatformRegistry } from '../shared/platform';
-import { OpenClawProviderId, ProviderName } from '../shared/providers';
 import type { ShellOpenFailureReason as ShellOpenFailureReasonType } from '../shared/shell/constants';
 import { type ShellGetBrowserAppsInput, ShellIpc, ShellOpenFailureReason } from '../shared/shell/constants';
 import { AgentManager } from './agentManager';
@@ -125,7 +122,7 @@ import { APP_NAME, APP_USER_MODEL_ID, DB_FILENAME } from './appConstants';
 import { createLocalFileProtocolResponse } from './artifactLocalFileProtocol';
 import { type AutoLaunchStatus, getAutoLaunchStatus, isAutoLaunched, setAutoLaunchEnabled } from './autoLaunchManager';
 import { getRecentComputerUseLogEntries } from './computerUse/computerUseLogs';
-import { type CoworkForkContextMessage, type CoworkMessage, CoworkStore } from './coworkStore';
+import { type CoworkForkContextMessage, CoworkStore } from './coworkStore';
 import { setLanguage, t } from './i18n';
 import { IMGatewayConfig, IMGatewayManager } from './im';
 import {
@@ -161,7 +158,6 @@ import {
   registerScheduledTaskHandlers,
 } from './ipcHandlers/scheduledTask';
 import { registerSessionDiagnosticsHandlers } from './ipcHandlers/sessionDiagnostics';
-import { registerSiteIpcHandlers } from './ipcHandlers/site';
 import { registerSkillHandlers } from './ipcHandlers/skills';
 import {
   type CoworkAgentEngine,
@@ -174,8 +170,6 @@ import type { BrowserAnnotationAssetIdentity, SaveBrowserAnnotationAssetInput } 
 import { BrowserAnnotationAssetStore } from './libs/browserAnnotationAssetStore';
 import {
   getCurrentApiConfig,
-  getServerModelMetadata,
-  isKnownPackageKimiK3ModelId,
   resolveAllEnabledProviderConfigs,
   resolveCurrentApiConfig,
   resolveRawApiConfig,
@@ -190,6 +184,7 @@ import {
 import { saveCoworkApiConfig } from './libs/coworkConfigStore';
 import { getCoworkLogPath } from './libs/coworkLogger';
 import {
+  AuthRefreshOutcome,
   registerProxyTokenRefresher,
   startCoworkOpenAICompatProxy,
   stopCoworkOpenAICompatProxy,
@@ -217,7 +212,6 @@ import {
 import { DesktopNotificationManager } from './libs/desktopNotificationManager';
 import {
   getKitStoreUrl,
-  getPortalTasksUrl,
   getSkillStoreUrl,
   refreshEndpointsTestMode,
 } from './libs/endpoints';
@@ -235,7 +229,7 @@ import {
 } from './libs/htmlPreviewServer';
 import { getKeyfromAttribution, initializeKeyfromAttribution } from './libs/keyfromAttribution';
 import { exportLogsZip } from './libs/logExport';
-import { migrateAgentModelRefs, parsePrimaryModelRef, resolveQualifiedAgentModelRef } from './libs/openclawAgentModels';
+import { migrateAgentModelRefs, resolveQualifiedAgentModelRef } from './libs/openclawAgentModels';
 import {
   buildManagedSessionKey,
   DEFAULT_MANAGED_AGENT_ID,
@@ -282,10 +276,7 @@ import { ensurePythonRuntimeReady } from './libs/pythonRuntime';
 import { sanitizeUrlForLog, serializeForLog } from './libs/sanitizeForLog';
 import { SqliteBackupTrigger } from './libs/sqliteBackup/constants';
 import { SqliteBackupManager } from './libs/sqliteBackup/sqliteBackupManager';
-import {
-  buildServerModelCapabilityHeaders,
-  runStartupCacheWarmup,
-} from './libs/startupCacheWarmup';
+import { runStartupCacheWarmup } from './libs/startupCacheWarmup';
 import {
   applySystemProxyEnv,
   resolveSystemProxyUrlForTargets,
@@ -295,12 +286,7 @@ import {
 import { getLogFilePath, getRecentMainLogEntries, initLogger } from './logger';
 import { type AskUserResponse, McpRuntime } from './mcp/mcpRuntime';
 import { type MediaSelectionState } from './mediaGenerationPolicy';
-import {
-  applyMediaReferencesToGenerationParams,
-  type MediaAttachmentRefMain,
-  MediaGenerationRequestType,
-  summarizeMediaGenerationParamsForLog,
-} from './mediaGenerationReferences';
+import { type MediaAttachmentRefMain } from './mediaGenerationReferences';
 import { OpenClawSessionIpc } from './openclawSession/constants';
 import { OpenClawSessionPolicyIpc } from './openclawSessionPolicy/constants';
 import {
@@ -369,7 +355,6 @@ const IPC_MAX_DEPTH = 5;
 const IPC_MAX_KEYS = 80;
 const IPC_MAX_ITEMS = 40;
 const MAX_INLINE_ATTACHMENT_BYTES = 25 * 1024 * 1024;
-const MAX_ARTIFACT_SHARE_CONTENT_CHARS = 30 * 1024 * 1024;
 const ENGINE_NOT_READY_CODE = 'ENGINE_NOT_READY';
 const LOCAL_WEB_SERVICE_PROBE_TIMEOUT_MS = 700;
 const LOCAL_WEB_SERVICE_TITLE_MAX_LENGTH = 80;
@@ -573,20 +558,6 @@ const buildAvailableOpenClawProviders = (): Record<string, { models: Array<{ id:
         providerMap[selection.providerId].models.push({ id: selection.sessionModelId });
       }
     }
-  }
-
-  const serverModelIds = getAllServerModelMetadata()
-    .map(model => model.modelId.trim())
-    .filter(Boolean);
-  if (serverModelIds.length > 0) {
-    const serverProvider = providerMap[OpenClawProviderId.LobsteraiServer]
-      ?? { models: [] };
-    for (const modelId of serverModelIds) {
-      if (!serverProvider.models.some(model => model.id === modelId)) {
-        serverProvider.models.push({ id: modelId });
-      }
-    }
-    providerMap[OpenClawProviderId.LobsteraiServer] = serverProvider;
   }
 
   return providerMap;
@@ -1260,10 +1231,6 @@ const resolveSessionWorkingDirectory = (options: { cwd?: string; agentId?: strin
   const explicitWorkingDirectory = options.cwd?.trim();
   if (explicitWorkingDirectory) return explicitWorkingDirectory;
   return resolveAgentDefaultWorkingDirectory(options.agentId);
-};
-
-const isLobsteraiServerModelRef = (_modelRef: string): boolean => {
-  return false;
 };
 
 const shouldRefreshServerQuotaForSession = (_sessionId: string): boolean => {
@@ -2711,113 +2678,6 @@ const getSkinRuntimeController = (): SkinRuntimeController => {
   return skinRuntimeController;
 };
 
-const mediaModelIdForOutput = (model: unknown, fallback?: string): string => {
-  const rawModel = typeof model === 'string' && model.trim() ? model : fallback;
-  return mediaModelDisplayName(rawModel, rawModel) || 'default';
-};
-
-type HappyHorse11Selection = {
-  type: 't2v' | 'i2v' | 'r2v';
-  upstreamModel: string;
-  reason: string;
-  imageCount: number;
-};
-
-const isHappyHorse11Model = (modelId: string): boolean =>
-  canonicalizeMediaModelId(modelId) === HAPPYHORSE_1_1_MODEL_ID;
-
-const addImageInputValue = (values: Set<string>, value: unknown): void => {
-  if (value == null) return;
-  if (Array.isArray(value)) {
-    value.forEach(item => addImageInputValue(values, item));
-    return;
-  }
-  const text = String(value).trim();
-  if (text) values.add(text);
-};
-
-const nestedMediaUrl = (value: unknown): unknown => {
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    return (value as Record<string, unknown>).url;
-  }
-  return value;
-};
-
-const addImageMediaItems = (values: Set<string>, media: unknown): void => {
-  if (!Array.isArray(media)) return;
-  for (const item of media) {
-    if (typeof item === 'string') {
-      addImageInputValue(values, item);
-      continue;
-    }
-    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
-    const record = item as Record<string, unknown>;
-    const mediaType = typeof record.type === 'string' ? record.type.toLowerCase() : '';
-    if (mediaType.includes('video') || mediaType.includes('audio')) continue;
-    addImageInputValue(values, record.url ?? nestedMediaUrl(record.image_url));
-  }
-};
-
-const countVideoImageInputs = (params: Record<string, unknown>): number => {
-  const images = new Set<string>();
-  addImageInputValue(images, params.images);
-  addImageInputValue(images, params.imageUrls);
-  addImageInputValue(images, params.referenceImages);
-  addImageInputValue(images, params.firstFrame);
-  addImageInputValue(images, params.first_frame);
-  addImageInputValue(images, params.firstFrameImage);
-  addImageInputValue(images, params.first_frame_image);
-  addImageInputValue(images, params.image);
-  addImageInputValue(images, params.imageUrl);
-  addImageInputValue(images, params.image_url);
-  addImageInputValue(images, params.referenceImage);
-  addImageInputValue(images, params.lastFrame);
-  addImageInputValue(images, params.last_frame);
-  addImageInputValue(images, params.lastFrameImage);
-  addImageInputValue(images, params.last_frame_image);
-  addImageMediaItems(images, params.media);
-
-  const providerOptions = params.providerOptions;
-  if (providerOptions && typeof providerOptions === 'object' && !Array.isArray(providerOptions)) {
-    addImageMediaItems(images, (providerOptions as Record<string, unknown>).media);
-  }
-  const input = params.input;
-  if (input && typeof input === 'object' && !Array.isArray(input)) {
-    addImageMediaItems(images, (input as Record<string, unknown>).media);
-  }
-
-  return images.size;
-};
-
-const resolveHappyHorse11Selection = (
-  modelId: string,
-  params: Record<string, unknown>,
-): HappyHorse11Selection | null => {
-  if (!isHappyHorse11Model(modelId)) return null;
-  const imageCount = countVideoImageInputs(params);
-  if (imageCount === 0) {
-    return {
-      type: 't2v',
-      upstreamModel: 'happyhorse-1.1-t2v',
-      reason: '未检测到输入图片，使用文生视频子模型 happyhorse-1.1-t2v',
-      imageCount,
-    };
-  }
-  if (imageCount === 1) {
-    return {
-      type: 'i2v',
-      upstreamModel: 'happyhorse-1.1-i2v',
-      reason: '检测到 1 张输入图片，使用图生视频子模型 happyhorse-1.1-i2v',
-      imageCount,
-    };
-  }
-  return {
-    type: 'r2v',
-    upstreamModel: 'happyhorse-1.1-r2v',
-    reason: `检测到 ${imageCount} 张输入图片，使用参考生视频子模型 happyhorse-1.1-r2v`,
-    imageCount,
-  };
-};
 let lastReloadAt = 0;
 const MIN_RELOAD_INTERVAL_MS = 5000;
 type AppConfigSettings = {
@@ -3333,11 +3193,6 @@ if (!gotTheLock) {
     };
   };
 
-  const withKeyfromBody = <T extends Record<string, unknown>>(body: T) => ({
-    ...body,
-    ...buildKeyfromPayload(),
-  });
-
   const appendKeyfromQuery = (url: string): string => {
     const parsed = new URL(url);
     const payload = buildKeyfromPayload();
@@ -3348,9 +3203,6 @@ if (!gotTheLock) {
     }
     return parsed.toString();
   };
-
-  const extractSessionIdFromKey = (sessionKey: string): string | null =>
-    resolveCoworkSessionIdByOpenClawSessionKey(getStore().getDatabase(), sessionKey);
 
   /**
    * Handle media generation tool callbacks from the OpenClaw plugin.
@@ -3852,15 +3704,6 @@ if (!gotTheLock) {
           `Image attachments ${options.imageAttachments?.length ?? 0}.`,
           `Agent ${options.agentId || 'main'}.`,
         );
-        const modelRunGate = await ensureServerModelReadyForRun(
-          resolveCoworkRunModelRef({
-            modelOverride: options.modelOverride,
-            agentId: options.agentId,
-          }),
-        );
-        if (modelRunGate.allowed === false) {
-          return { success: false, error: modelRunGate.error };
-        }
         const engineStatus = await ensureOpenClawRunningForCowork();
         if (engineStatus.phase !== 'running') {
           return getEngineNotReadyResponse(engineStatus);
@@ -4071,12 +3914,6 @@ if (!gotTheLock) {
           `Prompt length ${options.prompt.length}.`,
           `Image attachments ${options.imageAttachments?.length ?? 0}.`,
         );
-        const modelRunGate = await ensureServerModelReadyForRun(
-          resolveCoworkRunModelRef({ sessionId: options.sessionId }),
-        );
-        if (modelRunGate.allowed === false) {
-          return { success: false, error: modelRunGate.error };
-        }
         const engineStatus = await ensureOpenClawRunningForCowork();
         if (engineStatus.phase !== 'running') {
           return getEngineNotReadyResponse(engineStatus);

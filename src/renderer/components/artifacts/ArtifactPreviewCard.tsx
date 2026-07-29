@@ -463,10 +463,10 @@ const ArtifactPreviewCard: React.FC<ArtifactPreviewCardProps> = ({
           <button
             type="button"
             onClick={handleDeployClick}
-            className="inline-flex h-9 min-w-[82px] flex-shrink-0 items-center justify-center gap-1.5 rounded-lg border border-border bg-transparent px-3 text-sm font-medium text-foreground transition-colors hover:bg-surface"
+            className="inline-flex h-9 min-w-[82px] flex-shrink-0 items-center justify-center gap-1.5 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover"
             aria-label={t('nodeDeploymentProgressDeploy')}
           >
-            <ServiceDeploymentIcon className="h-4 w-4 translate-y-px" />
+            <ServiceDeploymentIcon className="h-4 w-4" />
             <span>{t('nodeDeploymentProgressDeploy')}</span>
           </button>
         )}

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
-import { OpenClawApi, OpenClawProviderId } from './constants';
+import { LEGACY_SERVER_PROVIDER_ID,OpenClawApi, OpenClawProviderId } from './constants';
 import {
   applyModelRuntimeProfileMetadata,
   findKimiK3ReservedCustomParamKeys,
@@ -117,13 +117,13 @@ describe('resolveModelRuntimeProfile', () => {
   test('accepts only controlled server profiles on the package provider', () => {
     expect(resolve({
       source: ModelRuntimeProfileSource.Server,
-      providerId: OpenClawProviderId.LobsteraiServer,
+      providerId: LEGACY_SERVER_PROVIDER_ID,
       modelId: 'kimi-k3-YoudaoInner',
       serverRuntimeProfile: ModelRuntimeProfile.MoonshotKimiK3,
     })).toBe(ModelRuntimeProfile.MoonshotKimiK3);
     expect(resolve({
       source: ModelRuntimeProfileSource.Server,
-      providerId: OpenClawProviderId.LobsteraiServer,
+      providerId: LEGACY_SERVER_PROVIDER_ID,
       modelId: 'kimi-k3-YoudaoInner',
       serverRuntimeProfile: 'unknown-profile',
     })).toBeUndefined();

@@ -3,10 +3,8 @@ import { session } from 'electron';
 import http from 'http';
 
 import {
-  AuthRefreshOutcome,
-  type AuthTokenRefreshResult,
-} from '../../shared/auth/constants';
-import { ProviderName } from '../../shared/providers';
+  LEGACY_SERVER_PROVIDER_ID,
+} from '../../shared/providers';
 import {
   anthropicToOpenAI,
   buildOpenAIChatCompletionsURL,
@@ -185,6 +183,20 @@ export function isAllowedProxyHost(req: http.IncomingMessage): boolean {
  * with the new token.  Providers register their refresher via
  * {@link registerProxyTokenRefresher}.
  */
+export const AuthRefreshOutcome = {
+  NoTokens: 'no_tokens',
+  Success: 'success',
+  TerminalFailure: 'terminal_failure',
+  TransientFailure: 'transient_failure',
+} as const;
+
+export type AuthRefreshOutcome = typeof AuthRefreshOutcome[keyof typeof AuthRefreshOutcome];
+
+export type AuthTokenRefreshResult = {
+  outcome: AuthRefreshOutcome;
+  accessToken?: string;
+};
+
 type ProxyTokenRefresher = (
   rejectedToken?: string,
 ) => Promise<AuthTokenRefreshResult>;
@@ -243,14 +255,14 @@ function toOptionalObject(value: unknown): Record<string, unknown> | null {
 
 function shouldRefreshProxyToken(status: number, provider?: string): boolean {
   if (status === 401) return true;
-  return status === 403 && provider !== ProviderName.LobsteraiServer;
+  return status === 403 && provider !== LEGACY_SERVER_PROVIDER_ID;
 }
 
 function isTemporaryLobsterAIAuthRefreshFailure(
   provider: string | undefined,
   result: AuthTokenRefreshResult,
 ): boolean {
-  return provider === ProviderName.LobsteraiServer
+  return provider === LEGACY_SERVER_PROVIDER_ID
     && result.outcome === AuthRefreshOutcome.TransientFailure;
 }
 

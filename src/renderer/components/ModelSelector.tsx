@@ -1,12 +1,5 @@
-import {
-  CheckIcon,
-  ChevronDownIcon,
-  ChevronRightIcon,
-  ClockIcon,
-  LockClosedIcon,
-  XMarkIcon,
-} from '@heroicons/react/24/outline';
-import { ModelRuntimeProfile, ProviderName } from '@shared/providers';
+import { CheckIcon, ChevronDownIcon, ChevronRightIcon, LockClosedIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { ProviderName } from '@shared/providers';
 import React from 'react';
 import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
@@ -162,14 +155,6 @@ export function resolveHoverCardTop(
 ): number {
   const maxTop = Math.max(viewportMargin, viewportHeight - cardHeight - viewportMargin);
   return Math.min(Math.max(desiredTop, viewportMargin), maxTop);
-}
-
-export function isModelAgenticBlocked(
-  model: Pick<Model, 'agenticReady' | 'isServerModel' | 'runtimeProfile'> | null | undefined,
-): boolean {
-  return model?.isServerModel === true
-    && model.runtimeProfile === ModelRuntimeProfile.MoonshotKimiK3
-    && model.agenticReady !== true;
 }
 
 const MODEL_ICON_PROVIDER_HINTS: Array<{ pattern: RegExp; providerName: ProviderName | ProviderIconId }> = [
@@ -384,12 +369,6 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
 
   const handleModelSelect = (model: Model | null) => {
     if (disabled) return;
-    if (isModelAgenticBlocked(model)) {
-      setRestrictedPrompt(ModelAccessPromptKind.AgenticNotReady);
-      setHoveredModel(null);
-      setIsOpen(false);
-      return;
-    }
     if (model && model.accessible === false) {
       setRestrictedPrompt(ModelAccessPromptKind.Subscribe);
       setHoveredModel(null);
@@ -473,13 +452,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
     if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
     const itemRect = event.currentTarget.getBoundingClientRect();
     hoverTimerRef.current = setTimeout(() => {
-      if (
-        !model.description
-        && !model.costMultiplier
-        && !model.supportsImage
-        && !model.supportsThinking
-        && !isModelAgenticBlocked(model)
-      ) {
+      if (!model.description && !model.costMultiplier && !model.supportsImage && !model.supportsThinking) {
         setHoveredModel(null);
         return;
       }
@@ -512,9 +485,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
 
   const renderModelItem = (model: Model) => {
     const selected = isSelected(model);
-    const agenticBlocked = isModelAgenticBlocked(model);
     const restricted = model.accessible === false;
-    const blocked = restricted || agenticBlocked;
 
     return (
       <button
@@ -524,9 +495,9 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
         onClick={() => handleModelSelect(model)}
         onMouseEnter={(e) => handleModelHover(model, e)}
         onMouseLeave={handleModelHoverEnd}
-        aria-disabled={blocked}
+        aria-disabled={restricted}
         className={`w-full px-3 py-2 text-left dark:text-claude-darkText text-claude-text flex items-center gap-2.5 transition-colors ${
-          blocked
+          restricted
             ? 'cursor-pointer opacity-60 dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover'
             : selected
               ? 'bg-primary/10 dark:bg-primary/15'
@@ -550,16 +521,10 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
             {i18nService.t('modelSupportsImageInputBadge')}
           </span>
         )}
-        {agenticBlocked && (
-          <span className="flex shrink-0 items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium leading-none text-amber-700 dark:text-amber-300">
-            <ClockIcon className="h-3 w-3" />
-            {i18nService.t('modelSelectorAgenticVerifyingBadge')}
-          </span>
-        )}
-        {restricted && !agenticBlocked && (
+        {restricted && (
           <LockClosedIcon className="h-3.5 w-3.5 shrink-0 text-secondary" />
         )}
-        {selected && !blocked && (
+        {selected && !restricted && (
           <CheckIcon className="h-4 w-4 shrink-0 text-primary" strokeWidth={2.5} />
         )}
       </button>
@@ -573,11 +538,6 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
         <div className="text-[13px] font-semibold text-foreground leading-5">{hoveredModel.name}</div>
         {hoveredModel.description && (
           <div className="mt-1 text-[11px] text-secondary leading-4">{hoveredModel.description}</div>
-        )}
-        {isModelAgenticBlocked(hoveredModel) && (
-          <div className="mt-2 rounded-lg bg-amber-500/10 px-2 py-1.5 text-[11px] leading-4 text-amber-700 dark:text-amber-300">
-            {i18nService.t('serverModelAgenticNotReady')}
-          </div>
         )}
         {hoveredModel.costMultiplier != null && hoveredModel.costMultiplier > 0 && (
           <div className="mt-2 text-[11px] text-secondary">
@@ -715,12 +675,6 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
           </span>
         )}
         <span className={`${triggerTextClassName} min-w-0 truncate`}>{selectedModel?.name ?? defaultLabel ?? ''}</span>
-        {isModelAgenticBlocked(selectedModel) && (
-          <ClockIcon
-            className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-300"
-            aria-label={i18nService.t('serverModelAgenticNotReady')}
-          />
-        )}
         <ChevronDownIcon className={`${triggerIconClassName} shrink-0 dark:text-claude-darkTextSecondary text-claude-textSecondary`} />
       </button>
 

@@ -10,7 +10,6 @@ export type StartupCacheWarmupDeps = {
   fetchWithAuth: (url: string, options?: RequestInit) => Promise<Response>;
   appendKeyfromQuery: (url: string) => string;
   cachedSubscriptionStatus: string;
-  clientVersion: string;
   t: (key: string) => string;
 };
 

@@ -73,6 +73,15 @@ export const OpenClawProviderId = {
 } as const;
 export type OpenClawProviderId = typeof OpenClawProviderId[keyof typeof OpenClawProviderId];
 
+/**
+ * Pre-removal server-backed provider id (former ProviderName.LobsteraiServer /
+ * OpenClawProviderId.LobsteraiServer). The provider is not part of this build,
+ * but stored session/config data may still reference it, so runtime code keeps
+ * recognizing the id. Kept out of the enums above so it never appears in
+ * provider pickers.
+ */
+export const LEGACY_SERVER_PROVIDER_ID = 'lobsterai-server';
+
 // ─── OpenClaw API Protocol ──────────────────────────────────────────────
 export const OpenClawApi = {
   AnthropicMessages: 'anthropic-messages',

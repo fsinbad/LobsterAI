@@ -1,11 +1,5 @@
 import { type ApiFormat,type ProviderConfig, ProviderName, ProviderRegistry, resolveCodingPlanBaseUrl } from '../../shared/providers';
-import {
-  applyModelRuntimeProfileMetadata,
-  ModelRuntimeProfile,
-  type ModelRuntimeProfile as ModelRuntimeProfileType,
-  normalizeModelIdForComparison,
-  parseModelRuntimeProfile,
-} from '../../shared/providers/modelRuntimeProfiles';
+import type { ModelRuntimeProfile as ModelRuntimeProfileType } from '../../shared/providers/modelRuntimeProfiles';
 import type { SqliteStore } from '../sqliteStore';
 import type { CoworkApiConfig } from './coworkConfigStore';
 import { type AnthropicApiFormat,normalizeProviderApiFormat } from './coworkFormatTransform';
@@ -57,65 +51,6 @@ type ProviderModelInputConfig = {
   contextWindow?: number;
   maxTokens?: number;
   customParams?: Record<string, unknown>;
-};
-
-export type ServerModelMetadata = {
-  modelId: string;
-  modelName?: string;
-  provider?: string;
-  apiFormat?: string;
-  runtimeProfile?: ModelRuntimeProfileType;
-  supportsImage?: boolean;
-  supportsVideo?: boolean;
-  supportsThinking?: boolean;
-  supportsToolCalling?: boolean;
-  agenticReady?: boolean;
-  contextWindow?: number;
-  maxTokens?: number;
-  explicitContextCache?: boolean;
-};
-
-type CachedServerModelMetadata = Omit<ServerModelMetadata, 'modelId'> & {
-  invalidRuntimeProfile?: boolean;
-};
-
-export type ServerModelMetadataInput =
-  Omit<ServerModelMetadata, 'runtimeProfile'>
-  & { runtimeProfile?: unknown };
-
-export const ServerModelRunGateReason = {
-  MetadataMissing: 'metadata_missing',
-  RuntimeProfileMissing: 'runtime_profile_missing',
-  RuntimeProfileUnsupported: 'runtime_profile_unsupported',
-  TransportUnsupported: 'transport_unsupported',
-  ToolCallingUnavailable: 'tool_calling_unavailable',
-  AgenticNotReady: 'agentic_not_ready',
-} as const;
-
-export type ServerModelRunGateReason =
-  typeof ServerModelRunGateReason[keyof typeof ServerModelRunGateReason];
-
-export type ServerModelRunGateResult =
-  | { allowed: true; metadata: ServerModelMetadata }
-  | { allowed: false; reason: ServerModelRunGateReason };
-
-const KIMI_K3_SERVER_MODEL_IDS = new Set([
-  'kimik3',
-  'kimik3youdaoinner',
-]);
-
-export const isKnownPackageKimiK3ModelId = (modelId: string): boolean =>
-  modelId.trim().toLowerCase() === 'kimi-k3-youdaoinner';
-
-const isServerKimiK3Candidate = (
-  metadata: Pick<ServerModelMetadataInput, 'modelId' | 'modelName' | 'provider'>,
-): boolean => {
-  const normalizedProvider = metadata.provider?.trim().toLowerCase();
-  const normalizedName = metadata.modelName
-    ? normalizeModelIdForComparison(metadata.modelName)
-    : '';
-  return KIMI_K3_SERVER_MODEL_IDS.has(normalizeModelIdForComparison(metadata.modelId))
-    || (normalizedProvider === 'moonshot' && normalizedName === 'kimik3');
 };
 
 export type ApiConfigResolution = {

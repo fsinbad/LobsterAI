@@ -1,4 +1,4 @@
-import { OpenClawApi, OpenClawProviderId } from './constants';
+import { LEGACY_SERVER_PROVIDER_ID,OpenClawApi } from './constants';
 
 export const ModelRuntimeProfile = {
   MoonshotKimiK3: 'moonshot-kimi-k3',
@@ -126,7 +126,7 @@ export const resolveModelRuntimeProfile = ({
   }
 
   if (source === ModelRuntimeProfileSource.Server) {
-    if (providerId !== OpenClawProviderId.LobsteraiServer) {
+    if (providerId !== LEGACY_SERVER_PROVIDER_ID) {
       return undefined;
     }
     return parseModelRuntimeProfile(serverRuntimeProfile);

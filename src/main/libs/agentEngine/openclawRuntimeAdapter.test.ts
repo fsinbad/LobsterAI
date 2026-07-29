@@ -606,20 +606,6 @@ test('length final does not overwrite an explicit stop while history is pending'
   ))).toBe(false);
 });
 
-test('resolveOpenClawRuntimeErrorMessage restores recent quota error hidden by OpenClaw generic error', () => {
-  consumeRecentOpenClawTokenProxyQuotaError();
-  __openClawTokenProxyTestUtils.rememberQuotaError({
-    message: '本月积分已用完',
-    code: 40202,
-  });
-
-  expect(resolveOpenClawRuntimeErrorMessage('LLM request failed.')).toContain(
-    '积分额度已用完',
-  );
-  expect(consumeRecentOpenClawTokenProxyQuotaError()).toBeNull();
-});
-
-test('resolveOpenClawRuntimeErrorMessage classifies raw LobsterAI quota errors', () => {
 test('resolveOpenClawRuntimeErrorMessage classifies raw NukemAI quota errors', () => {
   expect(resolveOpenClawRuntimeErrorMessage('本月积分已用完')).toContain('积分额度已用完');
 });

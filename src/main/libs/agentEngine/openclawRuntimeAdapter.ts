@@ -66,7 +66,7 @@ import type {
 } from '../../../shared/kit/constants';
 import { OpenClawGatewayFailureKind } from '../../../shared/openclawEngine/constants';
 import { OpenClawTranscriptSafetyStatus } from '../../../shared/openclawTranscript/constants';
-import { ProviderName } from '../../../shared/providers';
+import { LEGACY_SERVER_PROVIDER_ID } from '../../../shared/providers';
 import type { Agent, CoworkExecutionMode, CoworkMessage, CoworkMessageMetadata, CoworkSession, CoworkSessionStatus, CoworkStore } from '../../coworkStore';
 import { t } from '../../i18n';
 import type { SubagentMessageStore } from '../../subagentMessageStore';
@@ -1555,7 +1555,7 @@ function classifyOpenClawSafeRuntimeErrorMetadata(
   if (!metadata) return null;
 
   if (
-    metadata.provider?.trim() === ProviderName.LobsteraiServer
+    metadata.provider?.trim() === LEGACY_SERVER_PROVIDER_ID
     && metadata.httpCode?.trim() === '403'
   ) {
     return CoworkErrorI18nKey.ModelAccessDenied;
@@ -1588,7 +1588,7 @@ function classifyOpenClawSafeRuntimeErrorMetadata(
 function isLobsterAILoginExpiredMetadata(
   metadata: OpenClawSafeRuntimeErrorMetadata | undefined,
 ): boolean {
-  if (metadata?.provider?.trim() !== ProviderName.LobsteraiServer) return false;
+  if (metadata?.provider?.trim() !== LEGACY_SERVER_PROVIDER_ID) return false;
   if (metadata.httpCode?.trim() === '403') return false;
   if (metadata.providerRuntimeFailureKind?.trim() === 'auth_scope') return false;
   return metadata.httpCode?.trim() === '401'

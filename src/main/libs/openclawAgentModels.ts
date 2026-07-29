@@ -1,7 +1,7 @@
 import path from 'node:path';
 
 import { isDesignedAgentAvatarIcon } from '../../shared/agent/avatar';
-import { OpenClawProviderId } from '../../shared/providers/constants';
+import { LEGACY_SERVER_PROVIDER_ID,OpenClawProviderId } from '../../shared/providers/constants';
 import type { Agent } from '../coworkStore';
 
 type BuildManagedAgentEntriesInput = {
@@ -293,7 +293,7 @@ export function resolveServerModelRefForRun(options: {
 
   const explicitTarget = parsePrimaryModelRef(modelRef);
   if (explicitTarget) {
-    if (explicitTarget.providerId === OpenClawProviderId.LobsteraiServer) {
+    if (explicitTarget.providerId === LEGACY_SERVER_PROVIDER_ID) {
       return {
         status: ServerModelRefResolutionStatus.Server,
         modelId: explicitTarget.modelId,
@@ -310,13 +310,13 @@ export function resolveServerModelRefForRun(options: {
   const matchingProviders = Object.entries(options.availableProviders)
     .filter(([, config]) => config.models.some(model => model.id === modelRef))
     .map(([providerId]) => providerId);
-  const serverMatched = matchingProviders.includes(OpenClawProviderId.LobsteraiServer);
+  const serverMatched = matchingProviders.includes(LEGACY_SERVER_PROVIDER_ID);
 
   if (serverMatched && matchingProviders.length === 1) {
     return {
       status: ServerModelRefResolutionStatus.Server,
       modelId: modelRef,
-      primaryModel: `${OpenClawProviderId.LobsteraiServer}/${modelRef}`,
+      primaryModel: `${LEGACY_SERVER_PROVIDER_ID}/${modelRef}`,
     };
   }
   if (serverMatched) {

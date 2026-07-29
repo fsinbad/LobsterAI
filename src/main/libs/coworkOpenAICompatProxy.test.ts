@@ -1,30 +1,33 @@
 import type http from 'http';
 import { describe, expect, test, vi } from 'vitest';
 
-import { AuthRefreshOutcome } from '../../shared/auth/constants';
-import { ProviderName } from '../../shared/providers';
+import { LEGACY_SERVER_PROVIDER_ID, ProviderName } from '../../shared/providers';
 
 vi.mock('electron', () => ({
   session: { defaultSession: { webRequest: { onBeforeSendHeaders: vi.fn() } } },
 }));
 
-import { __openAICompatProxyTestUtils, isAllowedProxyHost } from './coworkOpenAICompatProxy';
+import {
+  __openAICompatProxyTestUtils,
+  AuthRefreshOutcome,
+  isAllowedProxyHost,
+} from './coworkOpenAICompatProxy';
 
 const testUtils = __openAICompatProxyTestUtils;
 
 test('refreshes LobsterAI credentials only for HTTP 401', () => {
-  expect(testUtils.shouldRefreshProxyToken(401, ProviderName.LobsteraiServer)).toBe(true);
-  expect(testUtils.shouldRefreshProxyToken(403, ProviderName.LobsteraiServer)).toBe(false);
+  expect(testUtils.shouldRefreshProxyToken(401, LEGACY_SERVER_PROVIDER_ID)).toBe(true);
+  expect(testUtils.shouldRefreshProxyToken(403, LEGACY_SERVER_PROVIDER_ID)).toBe(false);
   expect(testUtils.shouldRefreshProxyToken(403, ProviderName.Copilot)).toBe(true);
 });
 
 test('maps only transient LobsterAI refresh failures to temporary service errors', () => {
   expect(testUtils.isTemporaryLobsterAIAuthRefreshFailure(
-    ProviderName.LobsteraiServer,
+    LEGACY_SERVER_PROVIDER_ID,
     { outcome: AuthRefreshOutcome.TransientFailure },
   )).toBe(true);
   expect(testUtils.isTemporaryLobsterAIAuthRefreshFailure(
-    ProviderName.LobsteraiServer,
+    LEGACY_SERVER_PROVIDER_ID,
     { outcome: AuthRefreshOutcome.TerminalFailure },
   )).toBe(false);
   expect(testUtils.isTemporaryLobsterAIAuthRefreshFailure(

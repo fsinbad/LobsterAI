@@ -44,16 +44,6 @@ import { OpenClawEngineIpc } from '../shared/openclawEngine/constants';
 import { PermissionIpcChannel } from '../shared/permissions/constants';
 import type { Platform } from '../shared/platform';
 import { type ShellGetBrowserAppsInput, ShellIpc } from '../shared/shell/constants';
-import {
-  type SiteAnalyticsOptions,
-  type SiteDeploymentQuotaOptions,
-  SiteIpc,
-  type SiteListOptions,
-  type SiteQuotaReservationInput,
-  type SiteUpdateAccessModeInput,
-  type SiteUpdateAccessStatusInput,
-  type SiteUpdateTitleInput,
-} from '../shared/site/constants';
 import { SkinIpc } from '../shared/skin/constants';
 import type {
   SkinApplyResponse,
