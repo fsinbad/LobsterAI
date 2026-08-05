@@ -26,7 +26,7 @@ import {
   resolveCodingPlanBaseUrl,
   resolveModelRuntimeProfile,
 } from '../../shared/providers';
-import { type AppConfig, defaultConfig, FontPreferences, getProviderDisplayName, getVisibleProviders, isCustomProvider, normalizeFontPreference, ShortcutAction, type ShortcutConfig } from '../config';
+import { type AppConfig, defaultConfig, FontPreferences, getProviderDisplayName, getVisibleProviders, isCustomProvider, normalizeFontPreference, resolveArtifactAutoPreviewEnabled, ShortcutAction, type ShortcutConfig } from '../config';
 import { APP_ID, EXPORT_FORMAT_TYPE, EXPORT_PASSWORD } from '../constants/app';
 import { useSkin } from '../providers/SkinProvider';
 import { apiService } from '../services/api';
@@ -1346,6 +1346,7 @@ const Settings: React.FC<SettingsProps> = ({
   const [uiFontSize, setUiFontSize] = useState<number>(FontPreferences.UiFontSizeDefault);
   const [codeFontSize, setCodeFontSize] = useState<number>(FontPreferences.CodeFontSizeDefault);
   const [language, setLanguage] = useState<LanguageType>('zh');
+  const [artifactAutoPreviewEnabled, setArtifactAutoPreviewEnabled] = useState(true);
   const [autoLaunch, setAutoLaunchState] = useState(false);
   const [useSystemProxy, setUseSystemProxy] = useState(false);
   const [sqliteAutoBackupEnabled, setSqliteAutoBackupEnabled] = useState(false);
@@ -1729,6 +1730,9 @@ const Settings: React.FC<SettingsProps> = ({
       setUiFontSize(resolvedUiFontSize);
       setCodeFontSize(resolvedCodeFontSize);
       setLanguage(config.language);
+      setArtifactAutoPreviewEnabled(
+        resolveArtifactAutoPreviewEnabled(config.artifactAutoPreviewEnabled),
+      );
       setUseSystemProxy(config.useSystemProxy ?? false);
       setSqliteAutoBackupEnabled(config.sqliteAutoBackupEnabled === true);
       setUsageAnalyticsEnabled(config.usageAnalyticsEnabled !== false);
@@ -3168,6 +3172,9 @@ const Settings: React.FC<SettingsProps> = ({
       const previousNotificationSettings = normalizeNotificationSettings(
         previousConfig.notificationSettings,
       );
+      const previousArtifactAutoPreviewEnabled = resolveArtifactAutoPreviewEnabled(
+        previousConfig.artifactAutoPreviewEnabled,
+      );
       const previousThemeId = initialThemeIdRef.current;
       const previousUiFontSize = normalizeFontPreference(
         previousConfig.uiFontSize,
@@ -3193,6 +3200,7 @@ const Settings: React.FC<SettingsProps> = ({
         uiFontSize,
         codeFontSize,
         language,
+        artifactAutoPreviewEnabled,
         useSystemProxy,
         sqliteAutoBackupEnabled,
         usageAnalyticsEnabled,
@@ -3207,6 +3215,12 @@ const Settings: React.FC<SettingsProps> = ({
           ...previousConfig.app,
         },
       });
+
+      if (previousArtifactAutoPreviewEnabled !== artifactAutoPreviewEnabled) {
+        console.log(
+          `[Settings] artifact auto-preview preference updated: enabled=${artifactAutoPreviewEnabled}`,
+        );
+      }
 
       applyTypographyPreferences({ uiFontSize, codeFontSize });
 
@@ -3293,6 +3307,13 @@ const Settings: React.FC<SettingsProps> = ({
       if (usageAnalyticsEnabled) {
         if (previousConfig.language !== language) {
           reportGeneralSettingChanged('language', language, previousConfig.language);
+        }
+        if (previousArtifactAutoPreviewEnabled !== artifactAutoPreviewEnabled) {
+          reportGeneralSettingChanged(
+            'artifactAutoPreviewEnabled',
+            artifactAutoPreviewEnabled,
+            previousArtifactAutoPreviewEnabled,
+          );
         }
         if ((previousConfig.useSystemProxy ?? false) !== useSystemProxy) {
           reportGeneralSettingChanged('useSystemProxy', useSystemProxy, previousConfig.useSystemProxy ?? false);
@@ -3407,7 +3428,8 @@ const Settings: React.FC<SettingsProps> = ({
       didSaveRef.current = true;
       onClose();
     } catch (error) {
-      setError(error instanceof Error ? error.message : 'Failed to save settings');
+      console.error('[Settings] failed to save settings:', error);
+      setError(error instanceof Error ? error.message : i18nService.t('failedToSaveSettings'));
     } finally {
       setIsSaving(false);
     }
@@ -4520,6 +4542,17 @@ const Settings: React.FC<SettingsProps> = ({
                     />
                   </div>
                 </div>
+              </SettingsRow>
+
+              <SettingsRow>
+                <SettingsToggleRow
+                  title={i18nService.t('artifactAutoPreviewEnabled')}
+                  description={i18nService.t('artifactAutoPreviewEnabledDescription')}
+                  checked={artifactAutoPreviewEnabled}
+                  onToggle={() => {
+                    setArtifactAutoPreviewEnabled((previous) => !previous);
+                  }}
+                />
               </SettingsRow>
 
               <SettingsRow>

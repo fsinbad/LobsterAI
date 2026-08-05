@@ -1495,7 +1495,7 @@ const COWORK_ERROR_KEY_BY_OPENCLAW_FAILOVER_REASON: Record<string, string> = {
   auth: CoworkErrorI18nKey.AuthInvalid,
   billing: CoworkErrorI18nKey.InsufficientBalance,
   rate_limit: CoworkErrorI18nKey.RateLimit,
-  overloaded: CoworkErrorI18nKey.RateLimit,
+  overloaded: CoworkErrorI18nKey.ModelOverloaded,
   timeout: CoworkErrorI18nKey.ModelResponseTimeout,
   server_error: CoworkErrorI18nKey.ServerError,
 };
@@ -1510,6 +1510,7 @@ const COWORK_ERROR_KEY_BY_OPENCLAW_RUNTIME_FAILURE_KIND: Record<string, string> 
   auth_html: CoworkErrorI18nKey.OAuthInvalid,
   auth_invalid_token: CoworkErrorI18nKey.OAuthInvalid,
   rate_limit: CoworkErrorI18nKey.RateLimit,
+  overloaded: CoworkErrorI18nKey.ModelOverloaded,
   dns: CoworkErrorI18nKey.NetworkError,
   timeout: CoworkErrorI18nKey.ModelResponseTimeout,
   upstream_html: CoworkErrorI18nKey.ServerError,
@@ -1561,6 +1562,18 @@ function classifyOpenClawSafeRuntimeErrorMetadata(
     return CoworkErrorI18nKey.ModelAccessDenied;
   }
 
+  // Some providers return an HTTP 200 SSE response whose terminal error text
+  // contains an inner 503 capacity failure. OpenClaw can classify that text as
+  // rate_limit because it also says "too many requests" or "throttled". Let
+  // the high-confidence capacity signal in the preserved raw preview win after
+  // retaining LobsterAI's explicit HTTP 403 access-denial rule above.
+  const rawErrorClassifiedKey = metadata.rawErrorPreview
+    ? classifyErrorKey(metadata.rawErrorPreview)
+    : null;
+  if (rawErrorClassifiedKey === CoworkErrorI18nKey.ModelOverloaded) {
+    return rawErrorClassifiedKey;
+  }
+
   const failureKind = metadata.providerRuntimeFailureKind?.trim();
   if (failureKind && COWORK_ERROR_KEY_BY_OPENCLAW_RUNTIME_FAILURE_KIND[failureKind]) {
     return COWORK_ERROR_KEY_BY_OPENCLAW_RUNTIME_FAILURE_KIND[failureKind];
@@ -1602,6 +1615,15 @@ export function resolveOpenClawRuntimeErrorMessage(
   metadata?: OpenClawSafeRuntimeErrorMetadata,
 ): string {
   const normalized = normalizeOpenClawRuntimeErrorMessage(errorMessage);
+  const metadataClassifiedKey = classifyOpenClawSafeRuntimeErrorMetadata(metadata);
+
+  // OpenClaw's friendly wrapper may already say "rate limit" even when its
+  // preserved raw metadata identifies a provider-capacity failure.
+  if (metadataClassifiedKey === CoworkErrorI18nKey.ModelOverloaded) {
+    consumeRecentOpenClawTokenProxyQuotaError();
+    return t(metadataClassifiedKey);
+  }
+
   const classifiedKey = classifyErrorKey(normalized);
 
   if (classifiedKey) {
@@ -1625,7 +1647,6 @@ export function resolveOpenClawRuntimeErrorMessage(
       consumeRecentOpenClawTokenProxyQuotaError();
       return t(CoworkErrorI18nKey.LobsterAILoginExpired);
     }
-    const metadataClassifiedKey = classifyOpenClawSafeRuntimeErrorMetadata(metadata);
     if (metadataClassifiedKey) {
       consumeRecentOpenClawTokenProxyQuotaError();
       return t(metadataClassifiedKey);
