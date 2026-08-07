@@ -1,6 +1,5 @@
+import { LogReporterStoreKey } from '../../shared/analytics/constants';
 import { localStore } from './store';
-
-const INSTALLATION_UUID_KEY = 'installation_uuid';
 
 let cachedId: string | null = null;
 
@@ -16,7 +15,7 @@ export const getInstallationId = async (): Promise<string | null> => {
       return cachedId;
     }
 
-    const existing = await localStore.getItem<string>(INSTALLATION_UUID_KEY);
+    const existing = await localStore.getItem<string>(LogReporterStoreKey.InstallationUuid);
     if (existing) {
       cachedId = existing;
       console.log(`[InstallationId] loaded from store: ${cachedId}`);
@@ -26,7 +25,7 @@ export const getInstallationId = async (): Promise<string | null> => {
     const newId = crypto.randomUUID();
 
     try {
-      await localStore.setItem(INSTALLATION_UUID_KEY, newId);
+      await localStore.setItem(LogReporterStoreKey.InstallationUuid, newId);
       console.log(`[InstallationId] generated and persisted new id: ${newId}`);
     } catch (writeError) {
       // Persist failed (SQLite corruption, overlay install, etc.)

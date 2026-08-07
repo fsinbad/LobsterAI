@@ -1,81 +1,34 @@
+import {
+  type LogEventAction,
+  LogReporterAction,
+  LogReporterActionPrefix,
+  LogReporterCategory,
+  LogReporterEndpoint,
+  LogReporterEntry,
+  LogReporterProduct,
+} from '../../shared/analytics/constants';
 import { configService } from './config';
+import { getInstallationId } from './installationId';
 
-export const LogReporterEndpoint = {
-  YoudaoAnalyzer: '',
-} as const;
-
-export const LogReporterProduct = {
-  NukemAI: 'wisdom',
-} as const;
-
-export const LogReporterCategory = {
-  Actions: 'actions',
-} as const;
-
-export const LogReporterActionPrefix = {
-  NukemAI: 'nukemai_',
-} as const;
-
-export const LogReporterAction = {
-  AgentCreateAction: 'nukemai_agent_create_action',
-  AgentSettingsAction: 'nukemai_agent_settings_action',
-  AgentEngineMaintenanceAction: 'nukemai_agent_engine_maintenance_action',
-  AgentEngineSettingChanged: 'nukemai_agent_engine_setting_changed',
-  AboutAction: 'nukemai_about_action',
-  AccountMenuAction: 'nukemai_account_menu_action',
-  AppStarted: 'nukemai_app_started',
-  AppearanceSettingChanged: 'nukemai_appearance_setting_changed',
-  ArtifactPreviewAction: 'nukemai_artifact_preview_action',
-  BrowserSettingChanged: 'nukemai_browser_setting_changed',
-  CustomModelConnectionTested: 'nukemai_custom_model_connection_tested',
-  CustomModelSettingsSaved: 'nukemai_custom_model_settings_saved',
-  ConversationBlockAction: 'nukemai_conversation_block_action',
-  ConversationMessageAction: 'nukemai_conversation_message_action',
-  ConversationNavigationAction: 'nukemai_conversation_navigation_action',
-  DreamingSettingChanged: 'nukemai_dreaming_setting_changed',
-  EmailSkillConnectionTested: 'nukemai_email_skill_connection_tested',
-  EmailSkillSettingsSaved: 'nukemai_email_skill_settings_saved',
-  ExpertKitAction: 'nukemai_expert_kit_action',
-  ExpertKitSelected: 'nukemai_expert_kit_selected',
-  GeneralSettingChanged: 'nukemai_general_setting_changed',
-  ImConnectionTested: 'nukemai_im_connection_tested',
-  ImGatewayToggled: 'nukemai_im_gateway_toggled',
-  ImInstanceChanged: 'nukemai_im_instance_changed',
-  ImSettingsSaved: 'nukemai_im_settings_saved',
-  MemoryEntryChanged: 'nukemai_memory_entry_changed',
-  MemorySettingChanged: 'nukemai_memory_setting_changed',
-  McpEnabled: 'nukemai_mcp_enabled',
-  McpAction: 'nukemai_mcp_action',
-  ModelSelected: 'nukemai_model_selected',
-  PlanModeEnabled: 'nukemai_plan_mode_enabled',
-  PluginAction: 'nukemai_plugin_action',
-  PluginSettingsSaved: 'nukemai_plugin_settings_saved',
-  PromptControlAction: 'nukemai_prompt_control_action',
-  PromptSubmit: 'nukemai_prompt_submit',
-  PromptTemplateAction: 'nukemai_prompt_template_action',
-  ShortcutSettingChanged: 'nukemai_shortcut_setting_changed',
-  SidebarAction: 'nukemai_sidebar_action',
-  SkillAction: 'nukemai_skill_action',
-  SkillEnabled: 'nukemai_skill_enabled',
-  ScheduledTaskAction: 'nukemai_scheduled_task_action',
-  TaskSearchAction: 'nukemai_task_search_action',
-  UsageAnalyticsEnabled: 'nukemai_usage_analytics_enabled',
-} as const;
-
-export const LogReporterEntry = {
-  PromptToolsMenu: 'prompt_tools_menu',
-} as const;
+export {
+  LogReporterAction,
+  LogReporterActionPrefix,
+  LogReporterCategory,
+  LogReporterEndpoint,
+  LogReporterEntry,
+  LogReporterProduct,
+};
 
 type LogParamValue = string | number | boolean | null | undefined;
 
-export type LogEventAction = `${typeof LogReporterActionPrefix.NukemAI}${string}`;
+export type { LogEventAction };
 
 export type LogEventParams = Record<string, LogParamValue> & {
   action: LogEventAction;
 };
 
 const logCommons = {
-  _npid: LogReporterProduct.NukemAI,
+  _npid: LogReporterProduct.LobsterAI,
   _ncat: LogReporterCategory.Actions,
 } as const;
 
@@ -91,8 +44,17 @@ export interface BuildLogUrlOptions {
   timestamp?: number;
 }
 
+type LogKeyfromAttribution = {
+  firstKeyfrom: string;
+  latestKeyfrom: string;
+};
+
 let cachedAppVersion = '';
+let appVersionPromise: Promise<string> | null = null;
 let cachedInstallationId: string | null = null;
+let installationIdPromise: Promise<string | null> | null = null;
+let cachedKeyfromAttribution: LogKeyfromAttribution | null = null;
+let keyfromAttributionPromise: Promise<LogKeyfromAttribution | null> | null = null;
 
 const writeReporterLog = (level: 'debug' | 'warn', message: string, error?: unknown): void => {
   if (level === 'warn') {
@@ -105,6 +67,72 @@ const writeReporterLog = (level: 'debug' | 'warn', message: string, error?: unkn
     console.debug(`[LogReporter] ${message}`);
   }
   window.electron?.log?.fromRenderer?.(level, 'LogReporter', message);
+};
+
+const getWindowAppVersion = async (): Promise<string> => {
+  if (cachedAppVersion) {
+    return cachedAppVersion;
+  }
+  if (typeof window === 'undefined' || !window.electron?.appInfo?.getVersion) {
+    return '';
+  }
+  if (!appVersionPromise) {
+    appVersionPromise = window.electron.appInfo.getVersion()
+      .then(version => {
+        cachedAppVersion = version || '';
+        return cachedAppVersion;
+      })
+      .catch(error => {
+        appVersionPromise = null;
+        writeReporterLog('warn', 'failed to load app version for analytics', error);
+        return '';
+      });
+  }
+  return appVersionPromise;
+};
+
+const getInstallationIdForAnalytics = async (): Promise<string | null> => {
+  if (cachedInstallationId) {
+    return cachedInstallationId;
+  }
+  if (!installationIdPromise) {
+    installationIdPromise = getInstallationId()
+      .then(id => {
+        cachedInstallationId = id;
+        return cachedInstallationId;
+      })
+      .catch(error => {
+        installationIdPromise = null;
+        writeReporterLog('warn', 'failed to load installation uuid for analytics', error);
+        return null;
+      });
+  }
+  return installationIdPromise;
+};
+
+const getWindowKeyfromAttribution = async (): Promise<LogKeyfromAttribution | null> => {
+  if (cachedKeyfromAttribution) {
+    return cachedKeyfromAttribution;
+  }
+  if (typeof window === 'undefined' || !window.electron?.appInfo?.getKeyfromAttribution) {
+    return null;
+  }
+  if (!keyfromAttributionPromise) {
+    keyfromAttributionPromise = window.electron.appInfo.getKeyfromAttribution()
+      .then(attribution => {
+        cachedKeyfromAttribution = {
+          firstKeyfrom: attribution.firstKeyfrom || '',
+          latestKeyfrom: attribution.latestKeyfrom || '',
+        };
+        return cachedKeyfromAttribution;
+      })
+      .catch(error => {
+        keyfromAttributionPromise = null;
+        writeReporterLog('warn', 'failed to load keyfrom attribution for analytics', error);
+        return null;
+      });
+  }
+  return keyfromAttributionPromise;
 };
 
 const getWindowPlatform = (): string => {
@@ -126,13 +154,14 @@ export const buildLogUrl = (
   options: BuildLogUrlOptions = {},
 ): string => {
   if (!LogReporterEndpoint.YoudaoAnalyzer) {
+    // NukemAI fork: analytics reporting is disabled (no collector endpoint).
     return '';
   }
   const url = new URL(LogReporterEndpoint.YoudaoAnalyzer);
   const config = configService.getConfig();
   const userId = options.userId ?? '';
-  const firstKeyfrom = options.firstKeyfrom;
-  const latestKeyfrom = options.latestKeyfrom;
+  const firstKeyfrom = options.firstKeyfrom ?? cachedKeyfromAttribution?.firstKeyfrom;
+  const latestKeyfrom = options.latestKeyfrom ?? cachedKeyfromAttribution?.latestKeyfrom;
   const installationId = options.installationId ?? cachedInstallationId;
   const logParams: Record<string, LogParamValue> = {
     ...params,
@@ -159,6 +188,49 @@ export const buildLogUrl = (
 };
 
 export const reportYdAnalyzer = async (params: LogEventParams): Promise<boolean> => {
-  writeReporterLog('debug', `skipped event ${params.action} (analytics endpoint removed)`);
-  return false;
+  if (!LogReporterEndpoint.YoudaoAnalyzer) {
+    // NukemAI fork: analytics reporting is disabled (no collector endpoint).
+    writeReporterLog('debug', `skipped event ${params.action} because no collector endpoint is configured`);
+    return false;
+  }
+
+  if (configService.getConfig().usageAnalyticsEnabled === false) {
+    writeReporterLog('debug', `skipped event ${params.action} because usage analytics is disabled`);
+    return false;
+  }
+
+  if (!params.action.trim()) {
+    writeReporterLog('warn', 'skipped an event without an action');
+    return false;
+  }
+
+  if (!params.action.startsWith(LogReporterActionPrefix.LobsterAI)) {
+    writeReporterLog('warn', 'skipped an event without the LobsterAI action prefix');
+    return false;
+  }
+
+  try {
+    await Promise.all([
+      getWindowAppVersion(),
+      getInstallationIdForAnalytics(),
+      getWindowKeyfromAttribution(),
+    ]);
+    writeReporterLog('debug', `sending event ${params.action}`);
+    const response = await window.electron.api.fetch({
+      url: buildLogUrl(params),
+      method: 'GET',
+      headers: {},
+    });
+
+    if (!response.ok) {
+      writeReporterLog('warn', `event ${params.action} failed with status ${response.status}`);
+      return false;
+    }
+
+    writeReporterLog('debug', `sent event ${params.action} successfully`);
+    return true;
+  } catch (error) {
+    writeReporterLog('warn', `event ${params.action} failed`, error);
+    return false;
+  }
 };
