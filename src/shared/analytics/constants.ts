@@ -3,7 +3,7 @@ export const LogReporterEndpoint = {
 } as const;
 
 export const LogReporterProduct = {
-  LobsterAI: 'wisdom',
+  NukemAI: 'wisdom',
 } as const;
 
 export const LogReporterCategory = {
@@ -11,7 +11,7 @@ export const LogReporterCategory = {
 } as const;
 
 export const LogReporterActionPrefix = {
-  LobsterAI: 'nukemai_',
+  NukemAI: 'nukemai_',
 } as const;
 
 export const LogReporterAction = {
@@ -70,7 +70,7 @@ export const LogReporterAction = {
   UsageAnalyticsEnabled: 'nukemai_usage_analytics_enabled',
 } as const;
 
-export type LogEventAction = `${typeof LogReporterActionPrefix.LobsterAI}${string}`;
+export type LogEventAction = `${typeof LogReporterActionPrefix.NukemAI}${string}`;
 
 export const LogReporterEntry = {
   PromptToolsMenu: 'prompt_tools_menu',

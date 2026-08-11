@@ -1,7 +1,7 @@
 {
   "id": "lobsterai-model-compat",
-  "name": "LobsterAI Model Compatibility",
-  "description": "Applies explicit LobsterAI-managed model runtime profiles.",
+  "name": "NukemAI Model Compatibility",
+  "description": "Applies explicit NukemAI-managed model runtime profiles.",
   "providers": ["lobsterai-model-compat"],
   "configSchema": {
     "type": "object",

@@ -49,7 +49,7 @@ export interface MainLogUrlContext {
 }
 
 const logCommons = {
-  _npid: LogReporterProduct.LobsterAI,
+  _npid: LogReporterProduct.NukemAI,
   _ncat: LogReporterCategory.Actions,
 } as const;
 
@@ -123,8 +123,8 @@ export class MainLogReporter {
       return false;
     }
 
-    if (!params.action.startsWith(LogReporterActionPrefix.LobsterAI)) {
-      console.warn('[MainLogReporter] skipped an event without the LobsterAI action prefix');
+    if (!params.action.startsWith(LogReporterActionPrefix.NukemAI)) {
+      console.warn('[MainLogReporter] skipped an event without the NukemAI action prefix');
       return false;
     }
 
