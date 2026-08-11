@@ -1,5 +1,7 @@
-import { type ApiFormat,type ProviderConfig, ProviderName, ProviderRegistry, resolveCodingPlanBaseUrl } from '../../shared/providers';
+import { type ApiFormat, type ProviderConfig, ProviderName, ProviderRegistry, resolveCodingPlanBaseUrl } from '../../shared/providers';
+import type { LobsterAIRequestCapability } from '../../shared/providers/lobsterAIRequestOptions';
 import type { ModelRuntimeProfile as ModelRuntimeProfileType } from '../../shared/providers/modelRuntimeProfiles';
+import type { ModelThinkingConfig } from '../../shared/providers/modelThinking';
 import type { SqliteStore } from '../sqliteStore';
 import type { CoworkApiConfig } from './coworkConfigStore';
 import { type AnthropicApiFormat,normalizeProviderApiFormat } from './coworkFormatTransform';
@@ -64,6 +66,8 @@ export type ApiConfigResolution = {
     supportsImage?: boolean;
     supportsVideo?: boolean;
     supportsThinking?: boolean;
+    thinkingConfig?: ModelThinkingConfig;
+    requestCapabilities?: LobsterAIRequestCapability[];
     modelName?: string;
     contextWindow?: number;
     maxTokens?: number;
@@ -134,6 +138,8 @@ type MatchedProvider = {
   supportsImage?: boolean;
   supportsVideo?: boolean;
   supportsThinking?: boolean;
+  thinkingConfig?: ModelThinkingConfig;
+  requestCapabilities?: LobsterAIRequestCapability[];
   modelName?: string;
   contextWindow?: number;
   maxTokens?: number;
@@ -356,6 +362,8 @@ export function resolveCurrentApiConfig(target: OpenAICompatProxyTarget = 'local
         supportsImage: matched.supportsImage,
         supportsVideo: matched.supportsVideo,
         supportsThinking: matched.supportsThinking,
+        thinkingConfig: matched.thinkingConfig,
+        requestCapabilities: matched.requestCapabilities,
         modelName: matched.modelName,
         contextWindow: matched.contextWindow,
         maxTokens: matched.maxTokens,
@@ -400,6 +408,8 @@ export function resolveCurrentApiConfig(target: OpenAICompatProxyTarget = 'local
       supportsImage: matched.supportsImage,
       supportsVideo: matched.supportsVideo,
       supportsThinking: matched.supportsThinking,
+      thinkingConfig: matched.thinkingConfig,
+      requestCapabilities: matched.requestCapabilities,
       modelName: matched.modelName,
       contextWindow: matched.contextWindow,
       maxTokens: matched.maxTokens,
@@ -484,6 +494,8 @@ export function resolveRawApiConfig(): ApiConfigResolution {
       supportsImage: matched.supportsImage,
       supportsVideo: matched.supportsVideo,
       supportsThinking: matched.supportsThinking,
+      thinkingConfig: matched.thinkingConfig,
+      requestCapabilities: matched.requestCapabilities,
       modelName: matched.modelName,
       contextWindow: matched.contextWindow,
       maxTokens: matched.maxTokens,

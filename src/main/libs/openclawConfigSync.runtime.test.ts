@@ -1110,6 +1110,29 @@ describe('OpenClawConfigSync runtime config output', () => {
         },
       },
     })).toBe(false);
+    expect(modelCompatConfigChangeRequiresRestart(compatConfig, {
+      ...compatConfig,
+      plugins: {
+        entries: {
+          'lobsterai-model-compat': {
+            enabled: true,
+            config: {
+              modelProfiles: compatConfig.plugins.entries['lobsterai-model-compat'].config.modelProfiles,
+              thinkingProfiles: {
+                'lobsterai-server/deepseek-v4-flash': {
+                  options: [
+                    { level: 'off', openclawLevel: 'off' },
+                    { level: 'high', openclawLevel: 'high' },
+                    { level: 'max', openclawLevel: 'xhigh' },
+                  ],
+                  defaultLevel: 'high',
+                },
+              },
+            },
+          },
+        },
+      },
+    })).toBe(true);
   });
 
   test('assigns mixed-provider compatibility ownership independently of model order', async () => {
@@ -2394,14 +2417,14 @@ describe('OpenClawConfigSync runtime config output', () => {
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     expect(config.tools.loopDetection).toEqual({
       enabled: true,
-      historySize: 40,
+      historySize: 48,
       warningThreshold: 6,
       unknownToolThreshold: 6,
       criticalThreshold: 10,
-      globalCircuitBreakerThreshold: 16,
+      globalCircuitBreakerThreshold: 30,
       detectors: {
         genericRepeat: true,
-        knownPollNoProgress: true,
+        knownPollNoProgress: false,
         pingPong: true,
       },
     });

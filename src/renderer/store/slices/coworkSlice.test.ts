@@ -40,6 +40,7 @@ const makeSession = (overrides: Partial<Parameters<typeof addSession>[0]> = {}) 
   id: 'session-1',
   title: 'Test Session',
   claudeSessionId: null,
+  scheduledTaskId: null,
   status: CoworkSessionStatusValue.Completed,
   pinned: false,
   cwd: '/tmp',
@@ -193,6 +194,7 @@ test('updateSessionStatus only refreshes the session updated time on a real tran
   const initialState = coworkReducer(undefined, setSessions([{
     id: 'session-1',
     title: 'Running task',
+    scheduledTaskId: null,
     status: CoworkSessionStatusValue.Running,
     pinned: false,
     agentId: 'main',
@@ -645,6 +647,7 @@ test('updateSessionStatus marks completed inactive sessions unread', () => {
   const state = coworkReducer(undefined, setSessions([{
     id: 'session-1',
     title: 'Completed task',
+    scheduledTaskId: null,
     status: CoworkSessionStatusValue.Running,
     pinned: false,
     agentId: 'main',
@@ -668,6 +671,7 @@ test('updateSessionStatus does not mark the active completed session unread', ()
     coworkReducer(undefined, setSessions([{
       id: 'session-1',
       title: 'Active task',
+      scheduledTaskId: null,
       status: CoworkSessionStatusValue.Running,
       pinned: false,
       agentId: 'main',

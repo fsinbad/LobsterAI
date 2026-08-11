@@ -1,5 +1,6 @@
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 import type { ModelRuntimeProfile } from '@shared/providers/modelRuntimeProfiles';
+import type { ModelThinkingConfig } from '@shared/providers/modelThinking';
 
 import { defaultConfig, getProviderDisplayName } from '../../config';
 import { resolveOpenClawModelRef } from '../../utils/openclawModelRef';
@@ -14,6 +15,7 @@ export interface Model {
   supportsImage?: boolean;
   supportsVideo?: boolean;
   supportsThinking?: boolean;
+  thinkingConfig?: ModelThinkingConfig;
   supportsToolCalling?: boolean;
   agenticReady?: boolean;
   contextWindow?: number;

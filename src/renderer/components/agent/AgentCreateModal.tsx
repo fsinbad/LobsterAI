@@ -373,6 +373,7 @@ const AgentCreateModal: React.FC<AgentCreateModalProps> = ({
         systemPrompt: systemPrompt.trim(),
         identity: identity.trim(),
         model: model ? toOpenClawModelRef(model) : '',
+        thinkingLevel: model?.thinkingConfig?.defaultLevel ?? '',
         workingDirectory: workingDirectory.trim(),
         icon: icon.trim() || undefined,
         skillIds,

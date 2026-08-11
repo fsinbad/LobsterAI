@@ -1,6 +1,11 @@
 import { expect, test } from 'vitest';
 
-import { resolveDropdownListMaxHeight, resolveHoverCardTop } from './ModelSelector';
+import {
+  canConfigureModelThinking,
+  isModelAgenticBlocked,
+  resolveDropdownListMaxHeight,
+  resolveHoverCardTop,
+} from './ModelSelector';
 
 test('keeps model hover card above the viewport bottom', () => {
   expect(resolveHoverCardTop(790, 260, 900)).toBe(632);
@@ -33,4 +38,62 @@ test('keeps at least three model rows visible when space is extremely tight', ()
 
 test('uses the full available space when tabs and footer are hidden', () => {
   expect(resolveDropdownListMaxHeight(200, false, false)).toBe(198);
+});
+
+test('blocks only explicitly unready server models from agent selection', () => {
+  expect(isModelAgenticBlocked({
+    isServerModel: true,
+    runtimeProfile: 'moonshot-kimi-k3',
+    agenticReady: false,
+  })).toBe(true);
+  expect(isModelAgenticBlocked({
+    isServerModel: true,
+    runtimeProfile: 'moonshot-kimi-k3',
+  })).toBe(true);
+  expect(isModelAgenticBlocked({
+    isServerModel: true,
+    runtimeProfile: 'moonshot-kimi-k3',
+    agenticReady: true,
+  })).toBe(false);
+  expect(isModelAgenticBlocked({
+    isServerModel: true,
+    agenticReady: false,
+  })).toBe(false);
+  expect(isModelAgenticBlocked({
+    isServerModel: false,
+    runtimeProfile: 'moonshot-kimi-k3',
+    agenticReady: false,
+  })).toBe(false);
+});
+
+test('allows thinking changes only for accessible and ready models', () => {
+  const thinkingConfig = {
+    options: [
+      { level: 'off' as const, openclawLevel: 'off' as const },
+      { level: 'high' as const, openclawLevel: 'high' as const },
+      { level: 'max' as const, openclawLevel: 'xhigh' as const },
+    ],
+    defaultLevel: 'high' as const,
+  };
+  expect(canConfigureModelThinking({
+    accessible: true,
+    isServerModel: true,
+    thinkingConfig: { options: thinkingConfig.options.map(option => ({ ...option })), defaultLevel: thinkingConfig.defaultLevel },
+  })).toBe(true);
+  expect(canConfigureModelThinking({
+    accessible: false,
+    isServerModel: true,
+    thinkingConfig: { options: thinkingConfig.options.map(option => ({ ...option })), defaultLevel: thinkingConfig.defaultLevel },
+  })).toBe(false);
+  expect(canConfigureModelThinking({
+    accessible: true,
+    isServerModel: true,
+    runtimeProfile: 'moonshot-kimi-k3',
+    agenticReady: false,
+    thinkingConfig: { options: thinkingConfig.options.map(option => ({ ...option })), defaultLevel: thinkingConfig.defaultLevel },
+  })).toBe(false);
+  expect(canConfigureModelThinking({
+    accessible: true,
+    isServerModel: true,
+  })).toBe(false);
 });
