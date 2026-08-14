@@ -52,7 +52,6 @@ export interface CoworkPendingSteer {
   kitIds?: string[];
   kitReferences?: KitReference[];
   resolvedKitCapabilities?: ResolvedKitCapabilities;
-  mediaSelection?: CoworkQueuedMediaSelection;
   status: CoworkSteerStatus;
   createdAt: number;
   updatedAt: number;
@@ -66,12 +65,4 @@ export interface CoworkSteerAttachment {
   isImage?: boolean;
   isDirectory?: boolean;
   dataUrl?: string;
-}
-
-export interface CoworkQueuedMediaSelection {
-  mode: 'auto' | 'image' | 'video' | 'none';
-  modelId?: string;
-  modelName?: string;
-  imageModelId?: string;
-  videoModelId?: string;
 }

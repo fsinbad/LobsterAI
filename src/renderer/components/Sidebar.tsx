@@ -149,6 +149,11 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [isResizing, setIsResizing] = useState(false);
   const [agentScrollEdges, setAgentScrollEdges] = useState({ top: false, bottom: false });
   const [showKitsNewBadge, setShowKitsNewBadge] = useState(false);
+  // Task-activity filter is a local session filter (no server/auth state). The
+  // toggle entry is currently hidden behind SIDEBAR_TASK_FILTER_ENABLED, so the
+  // active flag stays false; the summary setter feeds MyAgentSidebarTree.
+  const [isTaskFilterActive] = useState(false);
+  const [, setHasUnreadCompletedTasks] = useState(false);
   const isResizingRef = useRef(false);
   const resizeStartXRef = useRef(0);
   const resizeStartWidthRef = useRef(DEFAULT_SIDEBAR_WIDTH);
@@ -622,7 +627,9 @@ const Sidebar: React.FC<SidebarProps> = ({
             batchAgentId={batchAgentId}
             deletedSessionIds={deletedSessionIds}
             selectedKeys={selectedKeys}
+            isTaskFilterActive={isTaskFilterActive}
             onShowCowork={onShowCowork}
+            onTaskFilterSummaryChange={setHasUnreadCompletedTasks}
             onTaskSelected={(params) => {
               console.debug('[Sidebar] reporting agent sidebar task selection analytics');
               void reportYdAnalyzer({

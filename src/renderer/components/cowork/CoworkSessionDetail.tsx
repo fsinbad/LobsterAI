@@ -24,6 +24,10 @@ import {
   COWORK_RAIL_TOOLTIP_PREVIEW_MAX_LENGTH,
   type CoworkMessageRailIndexItem,
 } from '../../../shared/cowork/rail';
+import type {
+  CoworkSearchMessageCursor,
+  CoworkSearchMessagePage,
+} from '../../../shared/cowork/search';
 import {
   type CoworkSelectedTextSnippet,
   CoworkSelectedTextSource,
@@ -74,6 +78,7 @@ import {
 import {
   addDraftSelectedTextSnippet,
   clearBtwComposerIfUnchanged,
+  clearBtwEntries,
   closeBtwThread,
   openBtwThread,
   PlanConfirmationState,
@@ -3453,6 +3458,49 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     return mergeCoworkTextExportMessages(storedMessages, loadedMessages);
   }, [currentSession]);
 
+  const loadConversationSearchMessagePage = useCallback(async (
+    options: {
+      offset: number;
+      limit: number;
+      cursor?: CoworkSearchMessageCursor;
+      knownTotal?: number;
+    },
+  ): Promise<CoworkSearchMessagePage> => {
+    const messages = await loadTextExportMessages();
+    const total = messages.length;
+    const endOffset = Math.min(options.offset + options.limit, total);
+    const pageMessages = messages.flatMap((message, index) => (
+      index >= options.offset
+      && index < endOffset
+      && (message.type === 'user' || message.type === 'assistant')
+      && message.metadata?.isThinking !== true
+      && /\S/.test(message.content)
+        ? [{
+            id: message.id,
+            type: message.type,
+            content: message.content,
+            timestamp: message.timestamp,
+            absoluteMessageIndex: index,
+          }]
+        : []
+    ));
+    return {
+      messages: pageMessages,
+      offset: options.offset,
+      nextOffset: endOffset,
+      nextCursor: endOffset > options.offset
+        ? {
+            sortValue: endOffset,
+            createdAt: pageMessages.length > 0
+              ? pageMessages[pageMessages.length - 1].timestamp
+              : 0,
+            rowId: endOffset,
+          }
+        : undefined,
+      total,
+    };
+  }, [loadTextExportMessages]);
+
   const handleExportText = useCallback(async (format: CoworkTextExportFormatValue) => {
     if (!currentSession || isExportingText) return;
     setIsExportingText(true);
@@ -4403,7 +4451,8 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   } = useCoworkConversationSearch({
     sessionId,
     currentMessages: currentSession?.messages ?? [],
-    loadFullMessages: loadTextExportMessages,
+    currentTotalMessages: currentSession?.totalMessages,
+    loadMessagePage: loadConversationSearchMessagePage,
   });
   conversationSearchViewportLockedRef.current = isConversationSearchOpen;
   const activeConversationSearchMatchKey = activeConversationSearchMatch?.key ?? null;
@@ -6078,6 +6127,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
               promptAnchorRef={promptContentAnchorRef}
               resolveLocalFilePath={resolveLocalFilePath}
               onClose={() => dispatch(closeBtwThread(btwThread.sessionId))}
+              onClearEntries={() => dispatch(clearBtwEntries(btwThread.sessionId))}
               onDraftChange={draft => dispatch(setBtwDraft({
                 sessionId: btwThread.sessionId,
                 draft,

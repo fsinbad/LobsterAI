@@ -215,7 +215,7 @@ describe('CoworkQueuedFollowUpCoordinator', () => {
     ]);
   });
 
-  test('uses the capability and media snapshot captured with the queued item', async () => {
+  test('uses the capability snapshot captured with the queued item', async () => {
     const harness = createHarness();
     harness.enqueue({
       ...makeSteer('steer-1'),
@@ -223,7 +223,6 @@ describe('CoworkQueuedFollowUpCoordinator', () => {
       activeSkillIds: ['skill-a'],
       runtimeSkillIds: ['skill-a', 'skill-from-kit'],
       kitIds: ['kit-a'],
-      mediaSelection: { mode: 'image', modelId: 'image-model' },
     });
 
     harness.coordinator.handleSessionCompleted('session-a');
@@ -235,7 +234,6 @@ describe('CoworkQueuedFollowUpCoordinator', () => {
       activeSkillIds: ['skill-a'],
       runtimeSkillIds: ['skill-a', 'skill-from-kit'],
       kitIds: ['kit-a'],
-      mediaSelection: { mode: 'image', modelId: 'image-model' },
     }));
   });
 

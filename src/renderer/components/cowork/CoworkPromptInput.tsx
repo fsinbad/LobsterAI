@@ -1373,7 +1373,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         resolvedKitCapabilities: activeKitIds.length > 0
           ? queuedCapabilities.resolvedKitCapabilities
           : undefined,
-        mediaSelection: undefined,
         status: CoworkSteerStatus.Pending,
         createdAt: now,
         updatedAt: now,

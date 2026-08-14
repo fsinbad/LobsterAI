@@ -1585,6 +1585,7 @@ artifactPreviewCardLobsterBrowser: 'NukemAI 浏览器',
     coworkConversationSearchClose: '关闭搜索',
     coworkConversationSearchLoading: '正在搜索…',
     coworkConversationSearchFailed: '无法搜索当前对话',
+    coworkConversationSearchTooLarge: '对话过大，无法完整搜索',
     coworkConversationSearchTargetUnavailable: '无法定位到该搜索结果',
     coworkConversationSearchResults: '{current} / {total} 个结果',
     coworkRemoteManagedPlaceholder: '该会话由 IM 通道创建，请在对应的 IM 平台操作',
@@ -4943,6 +4944,7 @@ artifactPreviewCardLobsterBrowser: 'NukemAI Browser',
     coworkConversationSearchClose: 'Close search',
     coworkConversationSearchLoading: 'Searching…',
     coworkConversationSearchFailed: 'Unable to search this conversation',
+    coworkConversationSearchTooLarge: 'This conversation is too large to search completely',
     coworkConversationSearchTargetUnavailable: 'Unable to navigate to this search result',
     coworkConversationSearchResults: '{current} / {total} results',
     coworkRemoteManagedPlaceholder:
@@ -6753,6 +6755,7 @@ const readLanguageHint = (): LanguageType => {
 
 class I18nService {
   private currentLanguage: LanguageType = 'zh';
+  private initializeGeneration = 0;
   private listeners = new Set<() => void>();
 
   constructor() {
@@ -6761,6 +6764,10 @@ class I18nService {
 
   // 初始化语言设置
   async initialize(): Promise<void> {
+    const initializeGeneration = ++this.initializeGeneration;
+    let nextLanguage: LanguageType = 'en';
+    let configUpdate: { language?: LanguageType; language_initialized?: boolean } | undefined;
+
     try {
       const config = configService.getConfig();
 
@@ -6775,10 +6782,10 @@ class I18nService {
         if (hasCustomLanguage) {
           // 旧用户已手动设置过语言(非默认值),保留他们的设置
           console.log(`[i18n] Legacy user detected with custom language: ${config.language}`);
-          this.currentLanguage = config.language;
-          configService.updateConfig({
+          nextLanguage = config.language;
+          configUpdate = {
             language_initialized: true,
-          });
+          };
         } else {
           // 新用户或使用默认中文的旧用户:检测系统语言
           try {
@@ -6789,41 +6796,64 @@ class I18nService {
               `[i18n] First run detected. System locale: ${systemLocale}, default language: ${defaultLanguage}`,
             );
 
-            this.currentLanguage = defaultLanguage;
+            nextLanguage = defaultLanguage;
 
             // 保存语言配置和初始化标记
-            configService.updateConfig({
+            configUpdate = {
               language: defaultLanguage,
               language_initialized: true,
-            });
+            };
           } catch (error) {
-            console.error('Failed to get system locale:', error);
+            console.error('[i18n] Failed to get system locale:', error);
             // 如果获取系统语言失败,默认使用英文
-            this.currentLanguage = 'en';
-            configService.updateConfig({
+            nextLanguage = 'en';
+            configUpdate = {
               language: 'en',
               language_initialized: true,
-            });
+            };
           }
         }
       } else {
         // 非首次启动:使用已保存的语言配置
         if (config.language && (config.language === 'zh' || config.language === 'en')) {
-          this.currentLanguage = config.language;
+          nextLanguage = config.language;
         } else {
           // 如果配置无效,fallback 到英文
-          this.currentLanguage = 'en';
-          configService.updateConfig({
+          nextLanguage = 'en';
+          configUpdate = {
             language: 'en',
-          });
+          };
         }
       }
     } catch (error) {
-      console.error('Failed to initialize language:', error);
+      console.error('[i18n] Failed to initialize language:', error);
       // 默认使用英文
-      this.currentLanguage = 'en';
+      nextLanguage = 'en';
     }
-    this.persistLanguageHint(this.currentLanguage);
+
+    // App may start a fresh attempt after timing out an IPC call. Only the
+    // newest invocation may change language, persistence, or the splash hint.
+    if (initializeGeneration !== this.initializeGeneration) {
+      return;
+    }
+
+    this.applyLanguage(nextLanguage);
+    this.persistLanguageHint(nextLanguage);
+    if (configUpdate) {
+      try {
+        await configService.updateConfig(configUpdate);
+      } catch (error) {
+        console.error('[i18n] Failed to persist initialized language:', error);
+      }
+    }
+  }
+
+  private applyLanguage(language: LanguageType): void {
+    const hasChanged = this.currentLanguage !== language;
+    this.currentLanguage = language;
+    if (hasChanged) {
+      this.listeners.forEach(listener => listener());
+    }
   }
 
   // 持久化语言提示，供 index.html 的启动屏在下次启动时读取
@@ -6846,30 +6876,24 @@ class I18nService {
 
   // 设置语言
   setLanguage(language: LanguageType, options: { persist?: boolean } = {}): void {
+    // Explicit repair/user choices supersede any locale lookup that is still
+    // in flight from degraded startup.
+    this.initializeGeneration += 1;
     const { persist = true } = options;
-    const hasChanged = this.currentLanguage !== language;
-    this.currentLanguage = language;
+    this.applyLanguage(language);
 
-    if (hasChanged) {
-      this.listeners.forEach(listener => listener());
-    }
+    // The lightweight splash hint is safe to refresh even when callers are
+    // applying already-persisted config and must avoid another config write.
+    this.persistLanguageHint(language);
 
     if (!persist) {
       return;
     }
 
-    this.persistLanguageHint(language);
-
-    // 更新配置
-    try {
-      const config = configService.getConfig();
-      configService.updateConfig({
-        ...config,
-        language,
-      });
-    } catch (error) {
-      console.error('Failed to save language setting:', error);
-    }
+    // 更新配置；只提交语言字段，避免用旧快照覆盖并发设置修改。
+    void configService.updateConfig({ language }).catch((error) => {
+      console.error('[i18n] Failed to save language setting:', error);
+    });
   }
 
   // 获取当前语言

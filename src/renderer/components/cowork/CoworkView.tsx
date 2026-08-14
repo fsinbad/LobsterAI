@@ -137,10 +137,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   const homeDraftCollaborationMode = useSelector((state: RootState) => (
     state.cowork.draftCollaborationModes.__home__ || CoworkCollaborationMode.Default
   ));
-  const mediaSelection = useSelector((state: RootState) => {
-    const key = currentSession?.id || '__home__';
-    return state.cowork.mediaSelection[key];
-  });
 
   const buildCapabilitySelection = useCallback((skillIds: string[], kitIds: string[]) => {
     return buildCoworkCapabilitySelection(
@@ -420,7 +416,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({
         modelOverride: sessionModelOverride,
         thinkingLevel: currentAgentThinkingLevel,
         imageAttachments,
-        mediaSelection: mediaSelection && mediaSelection.mode !== 'none' ? mediaSelection : undefined,
         selectedTextSnippets,
         browserAnnotations,
       });
@@ -544,7 +539,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({
         kitReferences: displayKitIds.length > 0 ? kitReferences : undefined,
         resolvedKitCapabilities: displayKitIds.length > 0 ? resolvedKitCapabilities : undefined,
         imageAttachments,
-        mediaSelection: mediaSelection && mediaSelection.mode !== 'none' ? mediaSelection : undefined,
         selectedTextSnippets,
         browserAnnotations,
       });
