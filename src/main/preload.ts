@@ -22,6 +22,7 @@ import {
 } from '../shared/cowork/constants';
 import { DataMigrationIpc } from '../shared/dataMigration/constants';
 import { DialogIpc } from '../shared/dialog/constants';
+import { DshIpcChannel } from '../shared/dshEngine/constants';
 import {
   type HtmlShareAccessMode,
   type HtmlShareConfigurableStatus,
@@ -249,6 +250,13 @@ contextBridge.exposeInMainWorld('electron', {
   generateSessionTitle: (userInput: string | null) =>
     ipcRenderer.invoke('generate-session-title', userInput),
   getRecentCwds: (limit?: number) => ipcRenderer.invoke('get-recent-cwds', limit),
+  dsh: {
+    getState: () => ipcRenderer.invoke(DshIpcChannel.GetState),
+    getConfig: () => ipcRenderer.invoke(DshIpcChannel.GetConfig),
+    setEnabled: (enabled: boolean) => ipcRenderer.invoke(DshIpcChannel.SetEnabled, enabled),
+    openWorkbench: () => ipcRenderer.invoke(DshIpcChannel.OpenWorkbench),
+    stop: () => ipcRenderer.invoke(DshIpcChannel.Stop),
+  },
   openclaw: {
     engine: {
       getStatus: () => ipcRenderer.invoke(OpenClawEngineIpc.GetStatus),
