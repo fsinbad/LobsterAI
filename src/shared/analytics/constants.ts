@@ -40,10 +40,12 @@ export const LogReporterAction = {
   ConversationMessageAction: 'nukemai_conversation_message_action',
   ConversationNavigationAction: 'nukemai_conversation_navigation_action',
   DreamingSettingChanged: 'nukemai_dreaming_setting_changed',
+  DshAction: 'nukemai_dsh_action',
   EmailSkillConnectionTested: 'nukemai_email_skill_connection_tested',
   EmailSkillSettingsSaved: 'nukemai_email_skill_settings_saved',
   ExpertKitAction: 'nukemai_expert_kit_action',
   ExpertKitSelected: 'nukemai_expert_kit_selected',
+  ExperimentalSettingChanged: 'nukemai_experimental_setting_changed',
   GeneralSettingChanged: 'nukemai_general_setting_changed',
   ImConnectionTested: 'nukemai_im_connection_tested',
   ImGatewayToggled: 'nukemai_im_gateway_toggled',
@@ -78,6 +80,7 @@ export const LogReporterEntry = {
 
 export const LogReporterSource = {
   OpenClawChannel: 'openclaw_channel',
+  SettingsExperimental: 'settings_experimental',
 } as const;
 
 export const PromptAnalyticsSurface = {
