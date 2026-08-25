@@ -20,6 +20,8 @@ import {
   createSessionBatchKey,
 } from './agentSidebar/batchSelection';
 import MyAgentSidebarTree from './agentSidebar/MyAgentSidebarTree';
+import SidebarTaskFilterButton, { SIDEBAR_TASK_FILTER_ENABLED } from './agentSidebar/SidebarTaskFilterButton';
+import SidebarTaskSearchButton from './agentSidebar/SidebarTaskSearchButton';
 import Modal from './common/Modal';
 import { CoworkUiEvent } from './cowork/constants';
 import CoworkSearchModal from './cowork/CoworkSearchModal';
@@ -27,23 +29,28 @@ import Cog6ToothIcon from './icons/Cog6ToothIcon';
 import ComposeIcon from './icons/ComposeIcon';
 import SidebarAutomationIcon from './icons/SidebarAutomationIcon';
 import SidebarKitsIcon from './icons/SidebarKitsIcon';
+import SidebarLibraryIcon from './icons/SidebarLibraryIcon';
 import SidebarMcpIcon from './icons/SidebarMcpIcon';
-import SidebarSearchIcon from './icons/SidebarSearchIcon';
 import SidebarToggleIcon from './icons/SidebarToggleIcon';
 import SkillIcon from './icons/SkillIcon';
 import TrashIcon from './icons/TrashIcon';
 
 interface SidebarProps {
   onShowSettings: () => void;
-  activeView: 'cowork' | 'skills' | 'scheduledTasks' | 'kits' | 'mcp';
+  activeView: 'cowork' | 'skills' | 'scheduledTasks' | 'kits' | 'mcp' | 'library';
   onShowSkills: () => void;
   onShowCowork: () => void;
   onShowScheduledTasks: () => void;
   onShowKits: () => void;
   onShowMcp: () => void;
+  onShowLibrary: () => void;
   onNewChat: () => void;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
+  isTaskFilterActive: boolean;
+  hasUnreadCompletedTasks: boolean;
+  onToggleTaskFilter: () => void;
+  onTaskFilterSummaryChange: (hasUnreadCompletedTasks: boolean) => void;
   onWidthChange?: (width: number) => void;
   updateNotice?: React.ReactNode;
 }
@@ -128,9 +135,14 @@ const Sidebar: React.FC<SidebarProps> = ({
   onShowScheduledTasks,
   onShowKits,
   onShowMcp,
+  onShowLibrary,
   onNewChat,
   isCollapsed,
   onToggleCollapse,
+  isTaskFilterActive,
+  hasUnreadCompletedTasks,
+  onToggleTaskFilter,
+  onTaskFilterSummaryChange,
   onWidthChange,
   updateNotice,
 }) => {
@@ -149,11 +161,6 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [isResizing, setIsResizing] = useState(false);
   const [agentScrollEdges, setAgentScrollEdges] = useState({ top: false, bottom: false });
   const [showKitsNewBadge, setShowKitsNewBadge] = useState(false);
-  // Task-activity filter is a local session filter (no server/auth state). The
-  // toggle entry is currently hidden behind SIDEBAR_TASK_FILTER_ENABLED, so the
-  // active flag stays false; the summary setter feeds MyAgentSidebarTree.
-  const [isTaskFilterActive] = useState(false);
-  const [, setHasUnreadCompletedTasks] = useState(false);
   const isResizingRef = useRef(false);
   const resizeStartXRef = useRef(0);
   const resizeStartWidthRef = useRef(DEFAULT_SIDEBAR_WIDTH);
@@ -521,14 +528,38 @@ const Sidebar: React.FC<SidebarProps> = ({
         {showHeaderRow && (
           <div className="draggable sidebar-header-drag h-8 flex items-center justify-end px-3">
             {!isWindows && (
-              <button
-                type="button"
-                onClick={onToggleCollapse}
-                className="non-draggable h-8 w-8 inline-flex items-center justify-center rounded-lg text-secondary hover:bg-surface-raised transition-colors"
-                aria-label={isCollapsed ? i18nService.t('expand') : i18nService.t('collapse')}
-              >
-                <SidebarToggleIcon className="h-4 w-4" isCollapsed={isCollapsed} />
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={onToggleCollapse}
+                  className="non-draggable h-8 w-8 inline-flex items-center justify-center rounded-lg text-secondary hover:bg-surface-raised transition-colors"
+                  aria-label={isCollapsed ? i18nService.t('expand') : i18nService.t('collapse')}
+                >
+                  <SidebarToggleIcon className="h-4 w-4" isCollapsed={isCollapsed} />
+                </button>
+                {!isCollapsed && (
+                  <>
+                    <SidebarTaskSearchButton
+                      onClick={() => {
+                        reportSidebarAction('open_search', { activeView, isCollapsed });
+                        onShowCowork();
+                        setIsSearchOpen(true);
+                      }}
+                      className="non-draggable"
+                      label={i18nService.t('search')}
+                    />
+                    {SIDEBAR_TASK_FILTER_ENABLED && activeView === 'cowork' && (
+                      <SidebarTaskFilterButton
+                        isActive={isTaskFilterActive}
+                        hasUnreadCompletedTasks={hasUnreadCompletedTasks}
+                        label={i18nService.t('sidebarFilter')}
+                        onClick={onToggleTaskFilter}
+                        className="non-draggable"
+                      />
+                    )}
+                  </>
+                )}
+              </>
             )}
           </div>
         )}
@@ -543,18 +574,6 @@ const Sidebar: React.FC<SidebarProps> = ({
           >
             <ComposeIcon className={sidebarCreateIconClassName} />
             {i18nService.t('newChat')}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              reportSidebarAction('open_search', { activeView, isCollapsed });
-              onShowCowork();
-              setIsSearchOpen(true);
-            }}
-            className={sidebarNavItemClassName}
-          >
-            <SidebarSearchIcon className="h-4 w-4 shrink-0" />
-            {i18nService.t('search')}
           </button>
           <button
             type="button"
@@ -604,6 +623,19 @@ const Sidebar: React.FC<SidebarProps> = ({
           <button
             type="button"
             onClick={() => {
+              reportSidebarAction('open_library', { activeView, isCollapsed });
+              setIsSearchOpen(false);
+              onShowLibrary();
+            }}
+            className={activeView === 'library' ? activeSidebarNavItemClassName : sidebarNavItemClassName}
+            aria-current={activeView === 'library' ? 'page' : undefined}
+          >
+            <SidebarLibraryIcon className="h-4 w-4 shrink-0" />
+            {i18nService.t('librarySidebarTitle')}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
               reportSidebarAction('open_mcp', { activeView, isCollapsed });
               setIsSearchOpen(false);
               onShowMcp();
@@ -629,7 +661,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             selectedKeys={selectedKeys}
             isTaskFilterActive={isTaskFilterActive}
             onShowCowork={onShowCowork}
-            onTaskFilterSummaryChange={setHasUnreadCompletedTasks}
+            onTaskFilterSummaryChange={onTaskFilterSummaryChange}
             onTaskSelected={(params) => {
               console.debug('[Sidebar] reporting agent sidebar task selection analytics');
               void reportYdAnalyzer({

@@ -10,9 +10,16 @@ import {
   AppUpdateStatus,
   isManualDownloadUrl,
 } from '../shared/appUpdate/constants';
+import type { LibrarySessionRef } from '../shared/library/types';
 import { ProviderAuthType, ProviderName, ProviderRegistry } from '../shared/providers';
+import { SIDEBAR_TASK_FILTER_ENABLED } from './components/agentSidebar/SidebarTaskFilterButton';
 import { CoworkView } from './components/cowork';
-import { CoworkShortcutDirection, CoworkUiEvent } from './components/cowork/constants';
+import {
+  CoworkShortcutDirection,
+  type CoworkTaskSearchRequestEventDetail,
+  CoworkTaskSearchRequestSource,
+  CoworkUiEvent,
+} from './components/cowork/constants';
 import {
   ConversationSearchShortcutTarget,
   resolveConversationSearchShortcutTarget,
@@ -22,6 +29,7 @@ import CoworkQuestionWizard from './components/cowork/CoworkQuestionWizard';
 import EngineFailureOverlay from './components/cowork/EngineFailureOverlay';
 import EngineStartupOverlay from './components/cowork/EngineStartupOverlay';
 import KitsView from './components/kits/KitsView';
+import LibraryView from './components/library/LibraryView';
 import { ScheduledTasksView } from './components/scheduledTasks';
 import Settings, { type SettingsOpenOptions } from './components/Settings';
 import Sidebar from './components/Sidebar';
@@ -58,6 +66,7 @@ import {
   selectFirstCurrentSessionPendingPermission,
   selectPendingPermissions,
 } from './store/selectors/coworkSelectors';
+import { openArtifactPreviewTab } from './store/slices/artifactSlice';
 import {
   clearDraftAttachments,
   clearDraftSelectedTextSnippets,
@@ -138,7 +147,9 @@ const logAppUpdateRendererLifecycle = (
 const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsOptions, setSettingsOptions] = useState<SettingsOpenOptions & { requestId: number }>({ requestId: 0 });
-  const [mainView, setMainView] = useState<'cowork' | 'skills' | 'scheduledTasks' | 'kits' | 'mcp'>('cowork');
+  const [mainView, setMainView] = useState<'cowork' | 'skills' | 'scheduledTasks' | 'kits' | 'mcp' | 'library'>('cowork');
+  const [isTaskFilterActive, setIsTaskFilterActive] = useState(false);
+  const [hasUnreadCompletedTasks, setHasUnreadCompletedTasks] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -546,6 +557,21 @@ const App: React.FC = () => {
     setMainView('kits');
   }, []);
 
+  const handleShowLibrary = useCallback(() => {
+    setMainView('library');
+  }, []);
+
+  const handleOpenLibrarySession = useCallback((session: LibrarySessionRef) => {
+    setMainView('cowork');
+    void coworkService.loadSession(session.sessionId).then(loaded => {
+      if (!loaded || !session.sessionArtifactId) return;
+      dispatch(openArtifactPreviewTab({
+        sessionId: session.sessionId,
+        artifactId: session.sessionArtifactId,
+      }));
+    });
+  }, [dispatch]);
+
   const openHomeWithKit = useCallback((kitId: string, text?: string) => {
     dispatch(setActiveKitIds([kitId]));
     coworkService.clearSession({ restoreAgentSkills: true });
@@ -594,6 +620,40 @@ const App: React.FC = () => {
       isCollapsed: isSidebarCollapsed,
     });
     setIsSidebarCollapsed((prev) => !prev);
+  }, [isSidebarCollapsed, mainView]);
+
+  const handleToggleTaskFilter = useCallback(() => {
+    const nextActive = !isTaskFilterActive;
+    const message = `task activity toggle requested activeView=${mainView} nextActive=${nextActive} hasUnreadCompleted=${hasUnreadCompletedTasks} platform=${window.electron.platform}`;
+    console.debug(`[TaskActivity] ${message}`);
+    try {
+      window.electron?.log?.fromRenderer?.('debug', 'TaskActivity', message);
+    } catch {
+      // Diagnostics must never block the sidebar interaction.
+    }
+    void reportYdAnalyzer({
+      action: LogReporterAction.SidebarAction,
+      source: 'home_sidebar',
+      actionType: 'task_filter_toggle',
+      activeView: mainView,
+      isCollapsed: isSidebarCollapsed,
+      targetSelected: nextActive,
+    });
+    setIsTaskFilterActive(nextActive);
+  }, [hasUnreadCompletedTasks, isSidebarCollapsed, isTaskFilterActive, mainView]);
+
+  const handleOpenTaskSearch = useCallback(() => {
+    void reportYdAnalyzer({
+      action: LogReporterAction.SidebarAction,
+      source: 'home_sidebar',
+      actionType: 'open_search',
+      activeView: mainView,
+      isCollapsed: isSidebarCollapsed,
+    });
+    window.dispatchEvent(new CustomEvent<CoworkTaskSearchRequestEventDetail>(
+      CoworkUiEvent.ShortcutSearch,
+      { detail: { source: CoworkTaskSearchRequestSource.WindowsTitleBar } },
+    ));
   }, [isSidebarCollapsed, mainView]);
 
   const handleNewChat = useCallback(() => {
@@ -1368,8 +1428,17 @@ const App: React.FC = () => {
       isSidebarCollapsed={isSidebarCollapsed}
       sidebarWidth={sidebarWidth}
       onToggleSidebar={canUseWindowsTopBarActions ? handleToggleSidebar : undefined}
+      onSearch={canUseWindowsTopBarActions && !isSidebarCollapsed
+        ? handleOpenTaskSearch
+        : undefined}
       onNewChat={canUseWindowsCollapsedTopBarActions ? handleNewChat : undefined}
       sidebarToggleLabel={isSidebarCollapsed ? i18nService.t('expand') : i18nService.t('collapse')}
+      searchLabel={i18nService.t('search')}
+      showFilterIcon={SIDEBAR_TASK_FILTER_ENABLED && canUseWindowsTopBarActions && !isSidebarCollapsed && mainView === 'cowork'}
+      filterLabel={i18nService.t('sidebarFilter')}
+      isFilterActive={isTaskFilterActive}
+      hasFilterNotice={hasUnreadCompletedTasks}
+      onToggleFilter={handleToggleTaskFilter}
       newChatLabel={i18nService.t('newChat')}
       updateBadge={canUseWindowsCollapsedTopBarActions ? updateBadge : null}
     />
@@ -1462,9 +1531,14 @@ const App: React.FC = () => {
           onShowScheduledTasks={handleShowScheduledTasks}
           onShowKits={handleShowKits}
           onShowMcp={handleShowMcp}
+          onShowLibrary={handleShowLibrary}
           onNewChat={handleNewChat}
           isCollapsed={isSidebarCollapsed}
           onToggleCollapse={handleToggleSidebar}
+          isTaskFilterActive={isTaskFilterActive}
+          hasUnreadCompletedTasks={hasUnreadCompletedTasks}
+          onToggleTaskFilter={handleToggleTaskFilter}
+          onTaskFilterSummaryChange={setHasUnreadCompletedTasks}
           onWidthChange={setSidebarWidth}
           updateNotice={!isSidebarCollapsed && !isUpdateInteractionBlocked ? updateCard : null}
         />
@@ -1494,6 +1568,13 @@ const App: React.FC = () => {
                 isSidebarCollapsed={isSidebarCollapsed}
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}
+                updateBadge={collapsedHeaderUpdateBadge}
+              />
+            ) : mainView === 'library' ? (
+              <LibraryView
+                isSidebarCollapsed={isSidebarCollapsed}
+                onToggleSidebar={handleToggleSidebar}
+                onOpenSession={handleOpenLibrarySession}
                 updateBadge={collapsedHeaderUpdateBadge}
               />
             ) : mainView === 'kits' ? (
