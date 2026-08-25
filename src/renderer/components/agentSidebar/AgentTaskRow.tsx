@@ -4,6 +4,12 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import { i18nService } from '../../services/i18n';
 import Modal from '../common/Modal';
+import {
+  getIMSessionDisplayTitle,
+  getIMSessionPlatformIconClassName,
+  getIMSessionPlatformLabel,
+  getIMSessionPlatformLogo,
+} from '../cowork/imSessionDisplay';
 import ClockIcon from '../icons/ClockIcon';
 import EditIcon from '../icons/EditIcon';
 import EllipsisHorizontalIcon from '../icons/EllipsisHorizontalIcon';
@@ -77,12 +83,19 @@ const AgentTaskRow: React.FC<AgentTaskRowProps> = ({
   onSidebarAction,
   analyticsParams,
 }) => {
-  const displayTitle = task.isScheduledTask
+  const baseDisplayTitle = task.isScheduledTask
     ? getScheduledTaskDisplayTitle(task.title)
     : task.title;
+  const imDisplayTitle = getIMSessionDisplayTitle(baseDisplayTitle, task.imPlatform).title;
+  const displayTitle = task.isScheduledTask ? baseDisplayTitle : imDisplayTitle;
+  const imPlatformLogo = task.isScheduledTask ? null : getIMSessionPlatformLogo(task.imPlatform);
+  const imPlatformLabel = task.isScheduledTask ? null : getIMSessionPlatformLabel(task.imPlatform);
+  const imPlatformIconClassName = task.isScheduledTask ? null : getIMSessionPlatformIconClassName(task.imPlatform);
   // Keep a legacy prefix visible while editing so users can deliberately retain
   // or remove the heuristic marker. Persisted markers do not depend on the title.
-  const editableTitle = hasLegacyScheduledTaskTitle(task.title) ? task.title : displayTitle;
+  const editableTitle = task.isScheduledTask && hasLegacyScheduledTaskTitle(task.title)
+    ? task.title
+    : displayTitle;
   const [menuPosition, setMenuPosition] = useState<{ right: number; top: number } | null>(null);
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
@@ -226,7 +239,7 @@ const AgentTaskRow: React.FC<AgentTaskRowProps> = ({
   const handleRenameSave = async () => {
     const nextTitle = renameValue.trim();
     setIsRenaming(false);
-    if (nextTitle && nextTitle !== task.title) {
+    if (nextTitle && nextTitle !== editableTitle) {
       await onRename(nextTitle);
     }
   };
@@ -340,6 +353,21 @@ const AgentTaskRow: React.FC<AgentTaskRowProps> = ({
               aria-label={scheduledTaskLabel}
             >
               <ClockIcon className="h-3.5 w-3.5" aria-hidden="true" />
+            </span>
+          )}
+          {imPlatformLogo && imPlatformLabel && (
+            <span
+              className="inline-flex h-4 w-4 shrink-0 items-center justify-center"
+              role="img"
+              title={imPlatformLabel}
+              aria-label={imPlatformLabel}
+            >
+              <img
+                src={imPlatformLogo}
+                alt=""
+                className={imPlatformIconClassName ?? undefined}
+                draggable={false}
+              />
             </span>
           )}
           <span className={`min-w-0 flex-1 ${isActivityRow ? 'flex flex-col gap-0.5' : 'truncate'}`}>

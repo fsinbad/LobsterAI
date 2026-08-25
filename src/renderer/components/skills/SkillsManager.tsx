@@ -35,13 +35,7 @@ import {
 } from './analytics';
 import SkillIconTile from './SkillIconTile';
 import SkillSecurityReport from './SkillSecurityReport';
-import {
-  persistSkillTab,
-  readInitialSkillTab,
-  SKILL_TAB_LABEL_KEYS,
-  SKILL_TAB_ORDER,
-  SkillTab,
-} from './skillTabPreference';
+import { SKILL_TAB_LABEL_KEYS, SKILL_TAB_ORDER, SkillTab } from './skillTabs';
 
 type ImportSourceType = 'github' | 'clawhub';
 type DirectImportSource = 'zip' | 'folder' | 'remote';
@@ -93,7 +87,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly, onCreateByChat,
   const [isAddSkillMenuOpen, setIsAddSkillMenuOpen] = useState(false);
   const [isRemoteImportOpen, setIsRemoteImportOpen] = useState(false);
   const [importTab, setImportTab] = useState<ImportSourceType>('github');
-  const [activeTab, setActiveTab] = useState<SkillTab>(readInitialSkillTab);
+  const [activeTab, setActiveTab] = useState<SkillTab>(SKILL_TAB_ORDER[0]);
   const [marketplaceSkills, setMarketplaceSkills] = useState<MarketplaceSkill[]>([]);
   const [marketTags, setMarketTags] = useState<MarketTag[]>([]);
   const [activeMarketTag, setActiveMarketTag] = useState('all');
@@ -245,11 +239,6 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly, onCreateByChat,
 
   const isSkillSearchActive = skillSearchQuery.trim().length > 0;
   const isInstalledTab = activeTab === SkillTab.Mine || activeTab === SkillTab.BuiltIn;
-
-  // Remember the tab so returning to Skills lands where the user left off.
-  useEffect(() => {
-    persistSkillTab(activeTab);
-  }, [activeTab]);
 
   const filteredSkills = useMemo(() => {
     const query = skillSearchQuery.trim().replace(/\s+/g, ' ').toLowerCase();

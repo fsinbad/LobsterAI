@@ -20,6 +20,7 @@ import type {
   OpenClawEnginePhase as SharedOpenClawEnginePhase,
   OpenClawGatewayRepairErrorCode,
 } from '../../shared/openclawEngine/constants';
+import type { Platform } from '../../shared/platform';
 import type { ModelThinkingLevel } from '../../shared/providers/modelThinking';
 
 // Cowork image attachment for vision-capable models
@@ -323,6 +324,7 @@ export interface CoworkSessionSummary {
   pinned: boolean;
   pinOrder?: number | null;
   agentId?: string;
+  imPlatform?: Platform | null;
   parentSessionId?: string | null;
   forkedAt?: number | null;
   forkMode?: CoworkForkMode;

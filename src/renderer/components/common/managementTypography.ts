@@ -9,8 +9,8 @@
  * `Math.round()`, which would bounce a half-pixel step up to the next whole
  * pixel and undo the offsets below.
  *
- * At the default 14px setting: title 13.5, body 13, meta 11. Anything that
- * wants 12 uses `text-xs`, which already scales.
+ * At the default 15px setting: page title 15.5, title 14.5, body 14, meta 12.
+ * Compact controls use `text-xs`, which resolves to 13px and already scales.
  */
 
 /** Page header titles in the top bar (Kits / Scheduled Tasks / Skills tabs). */

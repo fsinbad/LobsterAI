@@ -43,6 +43,10 @@ import type {
   ResolvedKitCapabilities,
 } from '../shared/kit/constants';
 import {
+  type Platform,
+  PlatformRegistry,
+} from '../shared/platform';
+import {
   type ModelThinkingLevel,
   parseModelThinkingLevel,
 } from '../shared/providers/modelThinking';
@@ -556,6 +560,7 @@ export interface CoworkSessionSummary {
   pinned: boolean;
   pinOrder?: number | null;
   agentId: string;
+  imPlatform?: Platform | null;
   parentSessionId?: string | null;
   forkedAt?: number | null;
   forkMode?: CoworkForkModeType;
@@ -751,6 +756,7 @@ interface CoworkSessionSummaryRow {
   pinned: number | null;
   pin_order: number | null;
   agent_id: string | null;
+  im_platform?: string | null;
   parent_session_id?: string | null;
   forked_at?: number | null;
   fork_mode?: string | null;
@@ -773,6 +779,7 @@ export interface CreateCoworkSessionOptions {
 
 export class CoworkStore {
   private db: Database.Database;
+  private readonly knownIMPlatforms = new Set<string>(PlatformRegistry.platforms);
 
   constructor(db: Database.Database) {
     this.db = db;
@@ -828,6 +835,39 @@ export class CoworkStore {
     return value.replace(/[\\%_]/g, (match) => `\\${match}`);
   }
 
+  private hasIMSessionMappingsTable(): boolean {
+    const row = this.db
+      .prepare("SELECT 1 AS exists_flag FROM sqlite_master WHERE type = 'table' AND name = 'im_session_mappings'")
+      .get() as { exists_flag?: number } | undefined;
+    return !!row;
+  }
+
+  private getSessionSummaryColumns(sessionAlias = 's'): string {
+    const imPlatformColumn = this.hasIMSessionMappingsTable()
+      ? `(
+          SELECT m.platform
+          FROM im_session_mappings m
+          WHERE m.cowork_session_id = ${sessionAlias}.id
+          ORDER BY m.last_active_at DESC
+          LIMIT 1
+        ) AS im_platform`
+      : 'NULL AS im_platform';
+
+    return `${sessionAlias}.id, ${sessionAlias}.title, ${sessionAlias}.scheduled_task_id,
+      ${sessionAlias}.status, ${sessionAlias}.pinned, ${sessionAlias}.pin_order,
+      ${sessionAlias}.agent_id, ${imPlatformColumn},
+      ${sessionAlias}.parent_session_id, ${sessionAlias}.forked_at, ${sessionAlias}.fork_mode,
+      ${sessionAlias}.goal_json,
+      ${sessionAlias}.created_at, ${sessionAlias}.updated_at`;
+  }
+
+  private normalizeIMPlatform(value: string | null | undefined): Platform | null {
+    const platform = value?.trim();
+    if (!platform) return null;
+    if (this.knownIMPlatforms.has(platform)) return platform as Platform;
+    return PlatformRegistry.platformOfChannel(platform) ?? null;
+  }
+
   private parseGoalJson(value: string | null | undefined): CoworkGoal | null {
     if (!value) return null;
     try {
@@ -851,6 +891,7 @@ export class CoworkStore {
       pinned: Boolean(row.pinned),
       pinOrder: row.pin_order ?? null,
       agentId: row.agent_id || 'main',
+      imPlatform: this.normalizeIMPlatform(row.im_platform),
       parentSessionId: row.parent_session_id ?? null,
       forkedAt: row.forked_at ?? null,
       forkMode: (row.fork_mode as CoworkForkModeType | undefined) ?? CoworkForkMode.None,
@@ -1487,12 +1528,20 @@ export class CoworkStore {
     return rows.map(row => row.id);
   }
 
-  private deleteSessionRows(ids: string[]): void {
-    if (ids.length === 0) return;
+  private deleteSessionRows(ids: string[]): string[] {
+    if (ids.length === 0) return [];
     const placeholders = ids.map(() => '?').join(',');
+    const affectedArtifactRows = this.getAll<{ artifact_id: string }>(
+      `SELECT DISTINCT artifact_id
+       FROM library_artifact_sessions
+       WHERE session_id IN (${placeholders})`,
+      ids,
+    );
+    this.db.prepare(`DELETE FROM library_artifact_sessions WHERE session_id IN (${placeholders})`).run(...ids);
     this.db.prepare(`DELETE FROM cowork_session_capsules WHERE session_id IN (${placeholders})`).run(...ids);
     this.db.prepare(`DELETE FROM cowork_messages WHERE session_id IN (${placeholders})`).run(...ids);
     this.db.prepare(`DELETE FROM cowork_sessions WHERE id IN (${placeholders})`).run(...ids);
+    return affectedArtifactRows.map(row => row.artifact_id);
   }
 
   private deleteSessionsForAgent(agentId: string): string[] {
@@ -1504,27 +1553,29 @@ export class CoworkStore {
     return sessionIds;
   }
 
-  deleteSession(id: string): void {
+  deleteSession(id: string): string[] {
     const deleteSession = this.db.transaction((sessionId: string) => {
       this.markMemorySourcesInactiveBySession(sessionId);
-      this.deleteSessionRows([sessionId]);
+      return this.deleteSessionRows([sessionId]);
     });
-    deleteSession(id);
+    const affectedArtifactIds = deleteSession(id);
     this.markOrphanImplicitMemoriesStale();
+    return affectedArtifactIds;
   }
 
-  deleteSessions(ids: string[]): void {
+  deleteSessions(ids: string[]): string[] {
     const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
-    if (uniqueIds.length === 0) return;
+    if (uniqueIds.length === 0) return [];
 
     const deleteSessions = this.db.transaction((sessionIds: string[]) => {
       for (const id of sessionIds) {
         this.markMemorySourcesInactiveBySession(id);
       }
-      this.deleteSessionRows(sessionIds);
+      return this.deleteSessionRows(sessionIds);
     });
-    deleteSessions(uniqueIds);
+    const affectedArtifactIds = deleteSessions(uniqueIds);
     this.markOrphanImplicitMemoriesStale();
+    return affectedArtifactIds;
   }
 
   setSessionPinned(id: string, pinned: boolean): number | null {
@@ -1572,19 +1623,17 @@ export class CoworkStore {
 
   listSessions(limit = COWORK_SESSION_PAGE_SIZE, offset = 0, agentId?: string): CoworkSessionSummary[] {
     let rows: CoworkSessionSummaryRow[];
+    const summaryColumns = this.getSessionSummaryColumns();
     if (agentId) {
       rows = this.getAll<CoworkSessionSummaryRow>(
         `
-        SELECT id, title, scheduled_task_id, status, pinned, pin_order, agent_id,
-               parent_session_id, forked_at, fork_mode,
-               goal_json,
-               created_at, updated_at
-        FROM cowork_sessions
-        WHERE COALESCE(NULLIF(TRIM(agent_id), ''), 'main') = ?
-        ORDER BY pinned DESC,
-          CASE WHEN pinned = 1 THEN COALESCE(pin_order, updated_at, created_at) END ASC,
-          CASE WHEN pinned = 0 THEN updated_at END DESC,
-          updated_at DESC
+        SELECT ${summaryColumns}
+        FROM cowork_sessions s
+        WHERE COALESCE(NULLIF(TRIM(s.agent_id), ''), 'main') = ?
+        ORDER BY s.pinned DESC,
+          CASE WHEN s.pinned = 1 THEN COALESCE(s.pin_order, s.updated_at, s.created_at) END ASC,
+          CASE WHEN s.pinned = 0 THEN s.updated_at END DESC,
+          s.updated_at DESC
         LIMIT ? OFFSET ?
       `,
         [agentId, limit, offset],
@@ -1592,15 +1641,12 @@ export class CoworkStore {
     } else {
       rows = this.getAll<CoworkSessionSummaryRow>(
         `
-        SELECT id, title, scheduled_task_id, status, pinned, pin_order, agent_id,
-               parent_session_id, forked_at, fork_mode,
-               goal_json,
-               created_at, updated_at
-        FROM cowork_sessions
-        ORDER BY pinned DESC,
-          CASE WHEN pinned = 1 THEN COALESCE(pin_order, updated_at, created_at) END ASC,
-          CASE WHEN pinned = 0 THEN updated_at END DESC,
-          updated_at DESC
+        SELECT ${summaryColumns}
+        FROM cowork_sessions s
+        ORDER BY s.pinned DESC,
+          CASE WHEN s.pinned = 1 THEN COALESCE(s.pin_order, s.updated_at, s.created_at) END ASC,
+          CASE WHEN s.pinned = 0 THEN s.updated_at END DESC,
+          s.updated_at DESC
         LIMIT ? OFFSET ?
       `,
         [limit, offset],
@@ -1649,20 +1695,18 @@ export class CoworkStore {
 
     const pattern = `%${this.escapeLikePattern(query)}%`;
     let rows: CoworkSessionSummaryRow[];
+    const summaryColumns = this.getSessionSummaryColumns();
     if (options.agentId) {
       rows = this.getAll<CoworkSessionSummaryRow>(
         `
-        SELECT id, title, scheduled_task_id, status, pinned, pin_order, agent_id,
-               parent_session_id, forked_at, fork_mode,
-               goal_json,
-               created_at, updated_at
-        FROM cowork_sessions
-        WHERE title LIKE ? ESCAPE '\\'
-          AND COALESCE(NULLIF(TRIM(agent_id), ''), 'main') = ?
-        ORDER BY pinned DESC,
-          CASE WHEN pinned = 1 THEN COALESCE(pin_order, updated_at, created_at) END ASC,
-          CASE WHEN pinned = 0 THEN updated_at END DESC,
-          updated_at DESC
+        SELECT ${summaryColumns}
+        FROM cowork_sessions s
+        WHERE s.title LIKE ? ESCAPE '\\'
+          AND COALESCE(NULLIF(TRIM(s.agent_id), ''), 'main') = ?
+        ORDER BY s.pinned DESC,
+          CASE WHEN s.pinned = 1 THEN COALESCE(s.pin_order, s.updated_at, s.created_at) END ASC,
+          CASE WHEN s.pinned = 0 THEN s.updated_at END DESC,
+          s.updated_at DESC
         LIMIT ? OFFSET ?
       `,
         [pattern, options.agentId, limit, offset],
@@ -1670,16 +1714,13 @@ export class CoworkStore {
     } else {
       rows = this.getAll<CoworkSessionSummaryRow>(
         `
-        SELECT id, title, scheduled_task_id, status, pinned, pin_order, agent_id,
-               parent_session_id, forked_at, fork_mode,
-               goal_json,
-               created_at, updated_at
-        FROM cowork_sessions
-        WHERE title LIKE ? ESCAPE '\\'
-        ORDER BY pinned DESC,
-          CASE WHEN pinned = 1 THEN COALESCE(pin_order, updated_at, created_at) END ASC,
-          CASE WHEN pinned = 0 THEN updated_at END DESC,
-          updated_at DESC
+        SELECT ${summaryColumns}
+        FROM cowork_sessions s
+        WHERE s.title LIKE ? ESCAPE '\\'
+        ORDER BY s.pinned DESC,
+          CASE WHEN s.pinned = 1 THEN COALESCE(s.pin_order, s.updated_at, s.created_at) END ASC,
+          CASE WHEN s.pinned = 0 THEN s.updated_at END DESC,
+          s.updated_at DESC
         LIMIT ? OFFSET ?
       `,
         [pattern, limit, offset],

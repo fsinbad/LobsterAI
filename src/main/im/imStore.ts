@@ -174,6 +174,11 @@ export class IMStore {
         'CREATE INDEX IF NOT EXISTS idx_im_session_mappings_openclaw_session_key ON im_session_mappings(openclaw_session_key) WHERE openclaw_session_key IS NOT NULL',
       )
       .run();
+    this.db
+      .prepare(
+        'CREATE INDEX IF NOT EXISTS idx_im_session_mappings_cowork_session_id ON im_session_mappings(cowork_session_id)',
+      )
+      .run();
   }
 
   private ensureAgentScopedSessionMappingPrimaryKey(

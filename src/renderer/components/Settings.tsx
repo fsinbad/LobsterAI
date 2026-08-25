@@ -4377,7 +4377,7 @@ const Settings: React.FC<SettingsProps> = ({
           {i18nService.t('appearance')}
         </h4>
 
-        <div className="grid grid-cols-3 gap-3 mb-4">
+        <div className="grid max-w-xl grid-cols-3 gap-3 mb-4">
           {(['light', 'dark', 'system'] as const).map((mode) => {
             const isSelected = !activeSkin && theme === mode;
             return (
@@ -4486,8 +4486,6 @@ const Settings: React.FC<SettingsProps> = ({
         </h4>
         {(() => {
           const allThemes = themeService.getAllThemes();
-          const classicThemes = allThemes.filter(t => t.meta.id === 'classic-light' || t.meta.id === 'classic-dark');
-          const otherThemes = allThemes.filter(t => t.meta.id !== 'classic-light' && t.meta.id !== 'classic-dark');
           const renderTile = (t: import('../theme').ThemeDefinition) => {
             const isSelected = !activeSkin && themeId === t.meta.id;
             const [bg, c1, c2, c3] = t.meta.preview;
@@ -4517,14 +4515,9 @@ const Settings: React.FC<SettingsProps> = ({
             );
           };
           return (
-            <>
-              <div className="grid grid-cols-2 gap-3 mb-3">
-                {classicThemes.map(renderTile)}
-              </div>
-              <div className="grid grid-cols-4 gap-3">
-                {otherThemes.map(renderTile)}
-              </div>
-            </>
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(120px,1fr))] gap-3">
+              {allThemes.map(renderTile)}
+            </div>
           );
         })()}
 
@@ -5536,12 +5529,12 @@ const Settings: React.FC<SettingsProps> = ({
       onClose={guardedClose}
       onEscape={handleEscape}
       overlayClassName="fixed inset-0 z-50 modal-backdrop flex items-center justify-center p-3 sm:p-4"
-      className="w-[calc(100vw-1.5rem)] max-w-[900px] min-w-0 sm:w-[calc(100vw-2rem)]"
+      className="w-[calc(100vw-1.5rem)] min-w-0 sm:w-[90vw] max-w-[1440px]"
     >
       <SkinPresentationScope
         enabled
         data-skin-settings="true"
-        className="relative flex h-[80vh] max-h-[calc(100vh-2rem)] w-full min-w-0 rounded-2xl border-border border shadow-modal overflow-hidden modal-content"
+        className="relative flex h-[min(90vh,calc(100vh-6rem))] w-full min-w-0 rounded-2xl border-border border shadow-modal overflow-hidden modal-content"
         onClick={handleSettingsClick}
       >
         {/* Left sidebar */}

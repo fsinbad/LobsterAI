@@ -8,10 +8,12 @@ import { describe, expect, test } from 'vitest';
 import {
   ArtifactFileSharePermission,
   ArtifactFileSharePermissionChangeAction,
+  ArtifactFileSharePermissionConfirmationKind,
   type ArtifactFileSharePermissionRecord,
   buildArtifactFileSharePermissionPlan,
   deriveArtifactFileSharePermission,
   isArtifactFileShareResumeLocked,
+  resolveArtifactFileSharePermissionConfirmation,
 } from './artifactFileSharePermission';
 
 function makeShare(
@@ -74,6 +76,53 @@ describe('isArtifactFileShareResumeLocked', () => {
     'does not lock a share disabled by %s',
     disabledSource => {
       expect(isArtifactFileShareResumeLocked(disabledSource)).toBe(false);
+    },
+  );
+});
+
+describe('resolveArtifactFileSharePermissionConfirmation', () => {
+  test.each([
+    [
+      ArtifactFileSharePermission.Code,
+      ArtifactFileSharePermission.Public,
+      ArtifactFileSharePermissionConfirmationKind.MakePublic,
+    ],
+    [
+      ArtifactFileSharePermission.Public,
+      ArtifactFileSharePermission.Code,
+      ArtifactFileSharePermissionConfirmationKind.RequireCode,
+    ],
+    [
+      ArtifactFileSharePermission.Public,
+      ArtifactFileSharePermission.Stopped,
+      ArtifactFileSharePermissionConfirmationKind.Stop,
+    ],
+    [
+      ArtifactFileSharePermission.Code,
+      ArtifactFileSharePermission.Stopped,
+      ArtifactFileSharePermissionConfirmationKind.Stop,
+    ],
+    [
+      ArtifactFileSharePermission.Stopped,
+      ArtifactFileSharePermission.Public,
+      ArtifactFileSharePermissionConfirmationKind.Resume,
+    ],
+    [
+      ArtifactFileSharePermission.Stopped,
+      ArtifactFileSharePermission.Code,
+      ArtifactFileSharePermissionConfirmationKind.Resume,
+    ],
+  ])(
+    'resolves the %s to %s transition as %s',
+    (current, target, expected) => {
+      expect(resolveArtifactFileSharePermissionConfirmation(current, target)).toBe(expected);
+    },
+  );
+
+  test.each(Object.values(ArtifactFileSharePermission))(
+    'does not confirm when %s remains unchanged',
+    permission => {
+      expect(resolveArtifactFileSharePermissionConfirmation(permission, permission)).toBeUndefined();
     },
   );
 });

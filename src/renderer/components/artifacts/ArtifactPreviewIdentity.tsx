@@ -6,7 +6,7 @@ import FileTypeIcon from '../icons/fileTypes/FileTypeIcon';
 import {
   getPreviewCardDescriptor,
   type PreviewCardDescriptor,
-  PreviewCardDisplayKind,
+  PreviewCardIconKind,
 } from './previewCardPolicy';
 
 export const ArtifactPreviewGlobeIcon: React.FC<{ className?: string }> = ({ className }) => (
@@ -56,7 +56,7 @@ const ArtifactPreviewIdentity: React.FC<ArtifactPreviewIdentityProps> = ({
   contentButtonProps,
 }) => {
   const descriptor = descriptorProp ?? getPreviewCardDescriptor(artifact);
-  const isWebsite = descriptor.displayKind === PreviewCardDisplayKind.Website;
+  const usesGlobeIcon = descriptor.iconKind === PreviewCardIconKind.Globe;
   const resolvedIconContainerClassName =
     iconContainerClassName ??
     'flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl bg-surface dark:bg-white/[0.04]';
@@ -67,7 +67,7 @@ const ArtifactPreviewIdentity: React.FC<ArtifactPreviewIdentityProps> = ({
 
   const icon = (
     <div className={resolvedIconContainerClassName}>
-      {isWebsite ? (
+      {usesGlobeIcon ? (
         <ArtifactPreviewGlobeIcon className={`${resolvedIconClassName} text-primary`} />
       ) : (
         <FileTypeIcon fileName={descriptor.iconFileName} className={resolvedIconClassName} />

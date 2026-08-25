@@ -7,6 +7,8 @@ export const ArtifactPreviewActionSource = {
   ConversationArtifactCard: 'conversation_artifact_card',
   ArtifactPanel: 'artifact_panel',
   ArtifactBrowser: 'artifact_browser',
+  LibraryList: 'library_list',
+  LibraryPreview: 'library_preview',
 } as const;
 
 export type ArtifactPreviewActionSource =
@@ -16,6 +18,9 @@ export const ArtifactPublishEntryPoint = {
   PreviewCard: 'preview_card',
   ArtifactToolbar: 'artifact_toolbar',
   BrowserToolbar: 'browser_toolbar',
+  LibraryMenu: 'library_menu',
+  LibrarySettings: 'library_settings',
+  LibraryToolbar: 'library_toolbar',
 } as const;
 
 export type ArtifactPublishEntryPoint =

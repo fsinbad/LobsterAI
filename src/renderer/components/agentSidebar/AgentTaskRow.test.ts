@@ -7,7 +7,10 @@ import AgentTaskRow from './AgentTaskRow';
 import { AgentSidebarIndicator } from './constants';
 import type { AgentSidebarTaskNode } from './types';
 
-const makeTask = (isScheduledTask: boolean): AgentSidebarTaskNode => ({
+const makeTask = (
+  isScheduledTask: boolean,
+  overrides: Partial<AgentSidebarTaskNode> = {},
+): AgentSidebarTaskNode => ({
   id: isScheduledTask ? 'scheduled-session' : 'regular-session',
   agentId: 'main',
   title: isScheduledTask ? '[定时] Daily summary' : 'Regular task',
@@ -19,11 +22,15 @@ const makeTask = (isScheduledTask: boolean): AgentSidebarTaskNode => ({
   createdAt: 100,
   indicator: AgentSidebarIndicator.None,
   isSelected: false,
+  ...overrides,
 });
 
-const renderTask = (isScheduledTask: boolean) => renderToStaticMarkup(
+const renderTask = (
+  isScheduledTask: boolean,
+  overrides: Partial<AgentSidebarTaskNode> = {},
+) => renderToStaticMarkup(
   React.createElement(AgentTaskRow, {
-    task: makeTask(isScheduledTask),
+    task: makeTask(isScheduledTask, overrides),
     isBatchMode: false,
     isSelected: false,
     onSelect: vi.fn(),
@@ -63,4 +70,21 @@ test('task rows and hidden action controls remain keyboard reachable', () => {
   expect(html).toContain('role="treeitem"');
   expect(html).toContain('tabindex="0"');
   expect(html).toContain('focus-visible:opacity-[0.46]');
+});
+
+test('IM task rows show platform icons and hide matching title prefixes', () => {
+  const originalLanguage = i18nService.getLanguage();
+  try {
+    i18nService.setLanguage('zh', { persist: false });
+    const html = renderTask(false, {
+      title: '[微信] group:o9cq',
+      imPlatform: 'weixin',
+    });
+    expect(html).toContain('src="weixin.png"');
+    expect(html).toContain('aria-label="微信"');
+    expect(html).toContain('group:o9cq');
+    expect(html).not.toContain('[微信]');
+  } finally {
+    i18nService.setLanguage(originalLanguage, { persist: false });
+  }
 });

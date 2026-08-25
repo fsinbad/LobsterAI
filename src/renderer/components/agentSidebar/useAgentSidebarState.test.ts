@@ -208,6 +208,20 @@ test('toAgentSidebarTaskNode marks sessions linked to scheduled tasks', () => {
     .toBe(false);
 });
 
+test('toAgentSidebarTaskNode carries IM platform for display', () => {
+  const task = toAgentSidebarTaskNode(
+    {
+      ...makeSession('im-session', 100),
+      imPlatform: 'weixin',
+    },
+    null,
+    new Set(),
+    new Set(),
+  );
+
+  expect(task.imPlatform).toBe('weixin');
+});
+
 test('collapseAgentSidebarTaskList resets one agent history list to preview mode', () => {
   expect(collapseAgentSidebarTaskList(['agent-1', 'agent-2'], 'agent-1')).toEqual(['agent-2']);
 });

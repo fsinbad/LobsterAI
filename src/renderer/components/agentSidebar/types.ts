@@ -1,3 +1,4 @@
+import type { Platform } from '../../../shared/platform';
 import type { CoworkSessionStatus } from '../../types/cowork';
 import type { AgentSidebarIndicator } from './constants';
 
@@ -19,6 +20,7 @@ export interface AgentSidebarTaskNode {
   status: CoworkSessionStatus;
   pinned: boolean;
   pinOrder?: number | null;
+  imPlatform?: Platform | null;
   updatedAt: number;
   createdAt: number;
   indicator: AgentSidebarIndicator;

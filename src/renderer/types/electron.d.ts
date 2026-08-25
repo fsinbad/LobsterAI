@@ -46,6 +46,20 @@ import type {
   ResolvedKitCapabilities,
 } from '../../shared/kit/constants';
 import type {
+  LibraryAddLocalFilesData,
+  LibraryArtifactCandidate,
+  LibraryBackfillState,
+  LibraryChangedPayload,
+  LibraryFavoriteInput,
+  LibraryGetLocalItemsData,
+  LibraryGetLocalItemsInput,
+  LibraryLocalDetailData,
+  LibraryLocalListData,
+  LibraryLocalListOptions,
+  LibraryRecordCandidatesData,
+  LibraryResult,
+} from '../../shared/library/types';
+import type {
   ListLocalWebServicesOptions,
   LocalWebService,
 } from '../../shared/localWebServices/constants';
@@ -1284,6 +1298,25 @@ interface IElectronAPI {
   };
   asr: {
     createRealtimeSession: (options: AsrRealtimeSessionRequest) => Promise<AsrRealtimeSessionResult>;
+  };
+  library: {
+    listLocal: (options?: LibraryLocalListOptions) => Promise<LibraryResult<LibraryLocalListData>>;
+    getLocalItems: (
+      input: LibraryGetLocalItemsInput,
+    ) => Promise<LibraryResult<LibraryGetLocalItemsData>>;
+    getLocalDetail: (itemId: string) => Promise<LibraryResult<LibraryLocalDetailData>>;
+    recordCandidates: (
+      candidates: LibraryArtifactCandidate[],
+    ) => Promise<LibraryResult<LibraryRecordCandidatesData>>;
+    addLocalFiles: (filePaths: string[]) => Promise<LibraryResult<LibraryAddLocalFilesData>>;
+    setFavorite: (input: LibraryFavoriteInput) => Promise<LibraryResult<{ favorite: boolean }>>;
+    openLocal: (itemId: string) => Promise<LibraryResult<null>>;
+    revealLocal: (itemId: string) => Promise<LibraryResult<null>>;
+    repairIndex: () => Promise<LibraryResult<unknown>>;
+    getIndexStatus: () => Promise<LibraryResult<unknown>>;
+    getBackfillState: () => Promise<LibraryResult<LibraryBackfillState>>;
+    setBackfillState: (state: LibraryBackfillState) => Promise<LibraryResult<LibraryBackfillState>>;
+    onChanged: (callback: (payload: LibraryChangedPayload) => void) => () => void;
   };
   artifact: {
     watchFile: (filePath: string) => Promise<void>;

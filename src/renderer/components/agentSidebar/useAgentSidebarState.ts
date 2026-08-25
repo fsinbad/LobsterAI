@@ -68,6 +68,7 @@ const hasSessionChanged = (
     || previous.status !== next.status
     || previous.pinned !== next.pinned
     || previous.pinOrder !== next.pinOrder
+    || previous.imPlatform !== next.imPlatform
     || previous.parentSessionId !== next.parentSessionId
     || previous.updatedAt !== next.updatedAt
     || previous.createdAt !== next.createdAt
@@ -148,6 +149,7 @@ export const toAgentSidebarTaskNode = (
     status: session.status,
     pinned: session.pinned,
     pinOrder: session.pinOrder ?? null,
+    imPlatform: session.imPlatform ?? null,
     updatedAt: session.updatedAt,
     createdAt: session.createdAt,
     indicator: deriveAgentSidebarIndicator(

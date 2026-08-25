@@ -11,6 +11,7 @@ import {
   parseOpenClawCronSessionKey,
 } from '../shared/cowork/openclawCronSessionKey';
 import { DB_FILENAME } from './appConstants';
+import { initializeLibraryTables } from './library/libraryMigrations';
 import {
   openSqliteDatabaseWithRecovery,
   SqliteBackupManager,
@@ -160,6 +161,8 @@ export class SqliteStore {
         updated_at INTEGER NOT NULL
       );
     `);
+
+    initializeLibraryTables(this.db);
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS user_memories (

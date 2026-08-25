@@ -17,6 +17,18 @@ export const ArtifactFileSharePermission = {
 export type ArtifactFileSharePermission =
   (typeof ArtifactFileSharePermission)[keyof typeof ArtifactFileSharePermission];
 
+export const ArtifactFileSharePermissionConfirmationKind = {
+  MakePublic: 'make_public',
+  RequireCode: 'require_code',
+  Stop: 'stop',
+  Resume: 'resume',
+} as const;
+
+export type ArtifactFileSharePermissionConfirmationKind =
+  typeof ArtifactFileSharePermissionConfirmationKind[
+    keyof typeof ArtifactFileSharePermissionConfirmationKind
+  ];
+
 export interface ArtifactFileSharePermissionRecord {
   accessMode: HtmlShareAccessModeValue;
   status: HtmlShareStatusValue;
@@ -64,6 +76,22 @@ export function deriveArtifactFileSharePermission(
   return share.accessMode === HtmlShareAccessMode.Public
     ? ArtifactFileSharePermission.Public
     : ArtifactFileSharePermission.Code;
+}
+
+export function resolveArtifactFileSharePermissionConfirmation(
+  current: ArtifactFileSharePermission,
+  target: ArtifactFileSharePermission,
+): ArtifactFileSharePermissionConfirmationKind | undefined {
+  if (current === target) return undefined;
+  if (target === ArtifactFileSharePermission.Stopped) {
+    return ArtifactFileSharePermissionConfirmationKind.Stop;
+  }
+  if (current === ArtifactFileSharePermission.Stopped) {
+    return ArtifactFileSharePermissionConfirmationKind.Resume;
+  }
+  return target === ArtifactFileSharePermission.Public
+    ? ArtifactFileSharePermissionConfirmationKind.MakePublic
+    : ArtifactFileSharePermissionConfirmationKind.RequireCode;
 }
 
 export function isArtifactFileShareResumeLocked(

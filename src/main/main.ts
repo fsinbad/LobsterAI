@@ -102,6 +102,8 @@ import type {
   ResolvedKitCapabilities,
 } from '../shared/kit/constants';
 import { KitStoreKey } from '../shared/kit/constants';
+import { LibraryChangeReason, LibraryIpc } from '../shared/library/constants';
+import type { LibraryChangedPayload } from '../shared/library/types';
 import {
   type ListLocalWebServicesOptions,
   type LocalWebService,
@@ -164,6 +166,9 @@ import {
 } from './ipcHandlers/scheduledTask';
 import { registerSessionDiagnosticsHandlers } from './ipcHandlers/sessionDiagnostics';
 import { registerSkillHandlers } from './ipcHandlers/skills';
+import { LibraryIndexService } from './library/libraryIndexService';
+import { registerLibraryIpcHandlers } from './library/libraryIpc';
+import { LibraryLocalStore } from './library/libraryLocalStore';
 import {
   type CoworkAgentEngine,
   CoworkEngineRouter,
@@ -985,6 +990,7 @@ let skinRuntimeController: SkinRuntimeController | null = null;
 let imGatewayManager: IMGatewayManager | null = null;
 let storeInitPromise: Promise<SqliteStore> | null = null;
 let sqliteBackupManager: SqliteBackupManager | null = null;
+let libraryIndexService: LibraryIndexService | null = null;
 let openClawEngineManager: OpenClawEngineManager | null = null;
 let openClawConfigSync: OpenClawConfigSync | null = null;
 let openClawBootstrapPromise: Promise<OpenClawEngineStatus> | null = null;
@@ -4504,7 +4510,13 @@ if (!gotTheLock) {
     try {
       getCoworkEngineRouter().stopSession(sessionId);
       const coworkStoreInstance = getCoworkStore();
-      coworkStoreInstance.deleteSession(sessionId);
+      const affectedArtifactIds = coworkStoreInstance.deleteSession(sessionId);
+      if (affectedArtifactIds.length > 0) {
+        libraryIndexService?.notifyChange({
+          reason: LibraryChangeReason.SessionDeleted,
+          itemIds: affectedArtifactIds,
+        });
+      }
       mediaSelectionBySession.delete(sessionId);
       skinRuntimeController?.handleSessionDeleted(sessionId);
       mediaReferencesBySession.delete(sessionId);
@@ -4539,7 +4551,13 @@ if (!gotTheLock) {
         runtime.stopSession(sessionId);
       });
       const coworkStoreInstance = getCoworkStore();
-      coworkStoreInstance.deleteSessions(sessionIds);
+      const affectedArtifactIds = coworkStoreInstance.deleteSessions(sessionIds);
+      if (affectedArtifactIds.length > 0) {
+        libraryIndexService?.notifyChange({
+          reason: LibraryChangeReason.SessionDeleted,
+          itemIds: affectedArtifactIds,
+        });
+      }
       const router = getCoworkEngineRouter();
       for (const sessionId of sessionIds) {
         skinRuntimeController?.handleSessionDeleted(sessionId);
@@ -8506,6 +8524,7 @@ if (!gotTheLock) {
     }
 
     sqliteBackupManager?.stopPeriodicBackupLoop();
+    libraryIndexService?.stop();
 
     // Close the SQLite database to flush the WAL and release the file lock.
     try {
@@ -8603,6 +8622,24 @@ if (!gotTheLock) {
     store = await initStore();
     profiler.measure('initStore');
     console.log('[Main] initApp: store initialized');
+    const libraryLocalStore = new LibraryLocalStore(store.getDatabase());
+    const emitLibraryChanged = (payload: LibraryChangedPayload): void => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) window.webContents.send(LibraryIpc.Changed, payload);
+      }
+    };
+    libraryIndexService = new LibraryIndexService({
+      store: libraryLocalStore,
+      userDataPath: app.getPath('userData'),
+      onChanged: emitLibraryChanged,
+      getMetadata: key => store?.get(key),
+      setMetadata: (key, value) => store?.set(key, value),
+    });
+    registerLibraryIpcHandlers({
+      localStore: libraryLocalStore,
+      indexService: libraryIndexService,
+    });
+    libraryIndexService.start();
     initializeKeyfromAttribution(store);
     refreshEndpointsTestMode(store);
     sqliteBackupManager = new SqliteBackupManager(app.getPath('userData'));

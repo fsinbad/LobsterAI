@@ -35,6 +35,15 @@ import type {
   KitSkillMetadata,
   ResolvedKitCapabilities,
 } from '../shared/kit/constants';
+import { LibraryIpc } from '../shared/library/constants';
+import type {
+  LibraryArtifactCandidate,
+  LibraryBackfillState,
+  LibraryChangedPayload,
+  LibraryFavoriteInput,
+  LibraryGetLocalItemsInput,
+  LibraryLocalListOptions,
+} from '../shared/library/types';
 import {
   type ListLocalWebServicesOptions,
   type LocalWebService,
@@ -763,6 +772,34 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(HtmlShareIpc.UpdateAccessMode, options),
     disable: (shareId: string) => ipcRenderer.invoke(HtmlShareIpc.Disable, shareId),
     get: (shareId: string) => ipcRenderer.invoke(HtmlShareIpc.Get, shareId),
+  },
+  library: {
+    listLocal: (options: LibraryLocalListOptions = {}) =>
+      ipcRenderer.invoke(LibraryIpc.ListLocal, options),
+    getLocalItems: (input: LibraryGetLocalItemsInput) =>
+      ipcRenderer.invoke(LibraryIpc.GetLocalItems, input),
+    getLocalDetail: (itemId: string) =>
+      ipcRenderer.invoke(LibraryIpc.GetLocalDetail, itemId),
+    recordCandidates: (candidates: LibraryArtifactCandidate[]) =>
+      ipcRenderer.invoke(LibraryIpc.RecordCandidates, candidates),
+    addLocalFiles: (filePaths: string[]) =>
+      ipcRenderer.invoke(LibraryIpc.AddLocalFiles, filePaths),
+    setFavorite: (input: LibraryFavoriteInput) =>
+      ipcRenderer.invoke(LibraryIpc.SetFavorite, input),
+    openLocal: (itemId: string) => ipcRenderer.invoke(LibraryIpc.OpenLocal, itemId),
+    revealLocal: (itemId: string) => ipcRenderer.invoke(LibraryIpc.RevealLocal, itemId),
+    repairIndex: () => ipcRenderer.invoke(LibraryIpc.RepairIndex),
+    getIndexStatus: () => ipcRenderer.invoke(LibraryIpc.GetIndexStatus),
+    getBackfillState: () => ipcRenderer.invoke(LibraryIpc.GetBackfillState),
+    setBackfillState: (state: LibraryBackfillState) =>
+      ipcRenderer.invoke(LibraryIpc.SetBackfillState, state),
+    onChanged: (callback: (payload: LibraryChangedPayload) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: LibraryChangedPayload) => {
+        callback(payload);
+      };
+      ipcRenderer.on(LibraryIpc.Changed, handler);
+      return () => ipcRenderer.removeListener(LibraryIpc.Changed, handler);
+    },
   },
   artifact: {
     watchFile: (filePath: string) => ipcRenderer.invoke('artifact:watchFile', filePath),

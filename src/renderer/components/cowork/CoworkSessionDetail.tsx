@@ -274,6 +274,7 @@ const SUBAGENT_PANEL_POLL_INTERVAL_MS = 5_000;
 const INVALID_FILE_NAME_PATTERN = /[<>:"/\\|?*\u0000-\u001F]/g;
 const SELECTED_TEXT_ACTION_HALF_WIDTH = 150;
 const SELECTED_TEXT_ACTION_SUPPRESS_MS = 250;
+const SECONDARY_POINTER_BUTTON = 2;
 const EXPANDED_CONVERSATION_PREVIEW_COLLAPSED_MAX_LENGTH = 140;
 const EXPANDED_CONVERSATION_PREVIEW_ITEM_MAX_LENGTH = 520;
 const EXPANDED_CONVERSATION_PREVIEW_ITEM_LIMIT = 8;
@@ -750,6 +751,11 @@ const logRailNavigationDiagnostic = (message: string): void => {
 };
 
 const logAutoScrollDiagnostic = (message: string): void => {
+  console.debug(`[CoworkSessionDetail] ${message}`);
+  window.electron?.log?.fromRenderer?.('debug', 'CoworkSessionDetail', message);
+};
+
+const logSelectedTextDiagnostic = (message: string): void => {
   console.debug(`[CoworkSessionDetail] ${message}`);
   window.electron?.log?.fromRenderer?.('debug', 'CoworkSessionDetail', message);
 };
@@ -1454,6 +1460,14 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   useEffect(() => {
     if (!selectedTextAction) return undefined;
     const handlePointerDown = (event: PointerEvent) => {
+      const isSecondaryPointer = event.button === SECONDARY_POINTER_BUTTON;
+      const isMacContextClick = isMac && event.button === 0 && event.ctrlKey;
+      if (isSecondaryPointer || isMacContextClick) {
+        logSelectedTextDiagnostic(
+          `Preserved assistant selected text for context menu; sourceMessageId=${selectedTextAction.sourceMessageId}; selectedLength=${selectedTextAction.text.length}.`,
+        );
+        return;
+      }
       const target = event.target;
       if (target instanceof Element && target.closest('[data-cowork-selected-text-action]')) {
         return;
@@ -1471,7 +1485,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       document.removeEventListener('pointerdown', handlePointerDown);
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [closeSelectedTextAction, selectedTextAction]);
+  }, [closeSelectedTextAction, isMac, selectedTextAction]);
 
   useEffect(() => {
     if (!showCompactConfirm) return undefined;

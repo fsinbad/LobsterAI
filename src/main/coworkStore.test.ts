@@ -85,9 +85,30 @@ function setupDb(): void {
   `);
 
   db.exec(`
+    CREATE TABLE IF NOT EXISTS library_artifact_sessions (
+      artifact_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      PRIMARY KEY (artifact_id, session_id)
+    );
+  `);
+
+  db.exec(`
     CREATE TABLE IF NOT EXISTS cowork_config (
       key TEXT PRIMARY KEY,
       value TEXT
+    );
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS im_session_mappings (
+      im_conversation_id TEXT NOT NULL,
+      platform TEXT NOT NULL,
+      cowork_session_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL DEFAULT 'main',
+      openclaw_session_key TEXT,
+      created_at INTEGER NOT NULL,
+      last_active_at INTEGER NOT NULL,
+      PRIMARY KEY (im_conversation_id, platform, agent_id)
     );
   `);
 
@@ -459,6 +480,37 @@ test('scheduled task sessions preserve their task id in session details and list
 
   expect(store.getSessionIdByScheduledTaskId('job-daily-summary', 'main')).toBe(session.id);
   expect(store.getSessionIdByScheduledTaskId('job-daily-summary', 'other-agent')).toBeNull();
+});
+
+test('list and search session summaries include IM platform from mappings', () => {
+  insertSession('weixin-session', 'main', '[微信] group:o9cq', 2_000);
+  insertSession('regular-session', 'main', '[微信] user-written title', 1_000);
+  db.prepare(
+    `INSERT INTO im_session_mappings (
+      im_conversation_id,
+      platform,
+      cowork_session_id,
+      agent_id,
+      openclaw_session_key,
+      created_at,
+      last_active_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    'group:o9cq',
+    'weixin',
+    'weixin-session',
+    'main',
+    'agent:main:openclaw-weixin:group:o9cq',
+    1_000,
+    2_000,
+  );
+
+  const listed = store.listSessions(10, 0);
+  expect(listed.find((session) => session.id === 'weixin-session')?.imPlatform).toBe('weixin');
+  expect(listed.find((session) => session.id === 'regular-session')?.imPlatform).toBeNull();
+
+  const searched = store.searchSessions({ query: 'group:o9cq', limit: 10, offset: 0 });
+  expect(searched[0]?.imPlatform).toBe('weixin');
 });
 
 test('scheduled task session lookup uses a stable newest-created top-level session', () => {
@@ -914,14 +966,22 @@ test('deleteSession removes messages without relying on foreign key cascade', ()
   const sid = 'sess-delete-hard';
   insertSession(sid);
   insertMessage('msg-delete-hard', sid, 'user', 'remove me', '{}', 1);
+  db.prepare(`
+    INSERT INTO library_artifact_sessions (artifact_id, session_id) VALUES (?, ?)
+  `).run('artifact-delete-hard', sid);
 
-  store.deleteSession(sid);
+  const affectedArtifactIds = store.deleteSession(sid);
 
   expect(store.getSession(sid)).toBeNull();
   const messageCount = db
     .prepare('SELECT COUNT(*) AS count FROM cowork_messages WHERE session_id = ?')
     .get(sid) as { count: number };
   expect(messageCount.count).toBe(0);
+  const relationCount = db
+    .prepare('SELECT COUNT(*) AS count FROM library_artifact_sessions WHERE session_id = ?')
+    .get(sid) as { count: number };
+  expect(relationCount.count).toBe(0);
+  expect(affectedArtifactIds).toEqual(['artifact-delete-hard']);
 });
 
 test('forkSession copies stable history and records fork metadata', () => {

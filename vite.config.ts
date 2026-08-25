@@ -148,6 +148,12 @@ export default defineConfig({
     emptyOutDir: true,
     sourcemap: true,
     minify: false,
+    rollupOptions: {
+      input: {
+        main: path.resolve(__dirname, 'index.html'),
+        libraryThumbnail: path.resolve(__dirname, 'library-thumbnail.html'),
+      },
+    },
   },
   server: {
     port: devPort,
