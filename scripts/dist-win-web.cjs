@@ -21,11 +21,11 @@ const PREPACKAGED_APP_DIR = path.join(RELEASE_DIR, 'win-unpacked');
 const PLACEHOLDER_BASE_URL = 'https://placeholder.invalid/web-package';
 
 function webPackageFileName(version) {
-  return `lobsterai-${version}-x64.nsis.7z`;
+  return `nukemai-${version}-x64.nsis.7z`;
 }
 
 function webSetupFileName(version, keyfrom, silentOnDoubleClick) {
-  return `LobsterAI-WebSetup-x64-${version}-${keyfrom}${silentOnDoubleClick ? '-silent' : ''}.exe`;
+  return `NukemAI-WebSetup-x64-${version}-${keyfrom}${silentOnDoubleClick ? '-silent' : ''}.exe`;
 }
 
 function sha256File(filePath) {
@@ -51,7 +51,7 @@ const USAGE = `Usage:
 
 Modes:
   --silent        make direct launches enter NSIS silent mode without requiring /S
-  --pkg-base-url  one-pass build; the installer downloads <dir>/<keyfrom>/lobsterai-<version>-x64.nsis.7z
+  --pkg-base-url  one-pass build; the installer downloads <dir>/<keyfrom>/nukemai-<version>-x64.nsis.7z
   --pkg-url       stub-only rebuild with the exact package URL (upload-first flow, e.g. NOS)
   (no URL flag)   full build with a placeholder URL, to produce the .nsis.7z for upload;
                   the unusable WebSetup exe from this pass is deleted afterwards

@@ -121,7 +121,7 @@ describe('web installer build flags', () => {
       'npm run dist:win:web -- --keyfrom dictbind --silent --pkg-url <uploaded-url>',
     );
     expect(silent.stdout).toMatch(
-      /next: upload release[\\/]nsis-web[\\/]lobsterai-[^\s]+-x64\.nsis\.7z/,
+      /next: upload release[\\/]nsis-web[\\/]nukemai-[^\s]+-x64\.nsis\.7z/,
     );
   });
 
