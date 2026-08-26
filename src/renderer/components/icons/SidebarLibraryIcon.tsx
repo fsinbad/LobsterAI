@@ -2,18 +2,41 @@ import React from 'react';
 
 const SidebarLibraryIcon: React.FC<{ className?: string }> = ({ className }) => (
   <svg
-    viewBox="0 0 24 24"
+    viewBox="0 0 34 34"
     fill="none"
-    stroke="currentColor"
-    strokeWidth="1.8"
-    strokeLinecap="round"
-    strokeLinejoin="round"
     className={className}
     aria-hidden="true"
   >
-    <path d="M4.5 5.5h4v13h-4z" />
-    <path d="M10 5.5h4v13h-4z" />
-    <path d="m16 6.2 3.5-1.1 3.2 12.4-3.5 1.1z" />
+    <rect
+      x="5.29999"
+      y="4"
+      width="12"
+      height="26"
+      rx="2"
+      stroke="currentColor"
+      strokeWidth="2.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <rect
+      x="17.8"
+      y="5.07056"
+      width="6"
+      height="26"
+      rx="2"
+      transform="rotate(-15 17.8 5.07056)"
+      stroke="currentColor"
+      strokeWidth="2.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <path
+      d="M11.3 4.13391V29.5"
+      stroke="currentColor"
+      strokeWidth="2.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
   </svg>
 );
 
