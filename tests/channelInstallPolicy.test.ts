@@ -169,11 +169,11 @@ describe('web installer build flags', () => {
 
     expect(plain.status).toBe(0);
     expect(plain.stdout).toContain(
-      'artifact=LobsterAI-WebSetup-${arch}-${version}-dictbind.${ext}',
+      'artifact=NukemAI-WebSetup-${arch}-${version}-dictbind.${ext}',
     );
     expect(silent.status).toBe(0);
     expect(silent.stdout).toContain(
-      'artifact=LobsterAI-WebSetup-${arch}-${version}-dictbind-silent.${ext}',
+      'artifact=NukemAI-WebSetup-${arch}-${version}-dictbind-silent.${ext}',
     );
   });
 
@@ -182,7 +182,7 @@ describe('web installer build flags', () => {
 
     expect(probe.status).toBe(0);
     expect(probe.stdout).toMatch(
-      /packageUrl=https:\/\/cdn\.example\.test\/releases\/dictbind\/lobsterai-[^/\s]+-x64\.nsis\.7z/,
+      /packageUrl=https:\/\/cdn\.example\.test\/releases\/dictbind\/nukemai-[^/\s]+-x64\.nsis\.7z/,
     );
   });
 });
