@@ -10,6 +10,7 @@ import type {
 export const LibraryLoadPhase = {
   Initial: 'initial',
   Settled: 'settled',
+  Revalidating: 'revalidating',
   Refreshing: 'refreshing',
   Appending: 'appending',
 } as const;
@@ -17,10 +18,25 @@ export type LibraryLoadPhase = typeof LibraryLoadPhase[keyof typeof LibraryLoadP
 
 export const LibraryLoadIntent = {
   Initial: 'initial',
+  Revalidate: 'revalidate',
   Refresh: 'refresh',
   Append: 'append',
 } as const;
 export type LibraryLoadIntent = typeof LibraryLoadIntent[keyof typeof LibraryLoadIntent];
+
+export const getLibraryQueryLoadIntent = (
+  hasResolvedSnapshot: boolean,
+): LibraryLoadIntent => (
+  hasResolvedSnapshot ? LibraryLoadIntent.Revalidate : LibraryLoadIntent.Initial
+);
+
+export const isLibraryRefreshPhase = (phase: LibraryLoadPhase): boolean => (
+  phase === LibraryLoadPhase.Revalidating || phase === LibraryLoadPhase.Refreshing
+);
+
+export const isLibraryBusyPhase = (phase: LibraryLoadPhase): boolean => (
+  phase !== LibraryLoadPhase.Settled
+);
 
 export interface LibraryLocalQuery {
   category: LibraryCategory;

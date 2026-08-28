@@ -1,16 +1,21 @@
 !include "FileFunc.nsh"
 
-; The Youdao Dictionary bound package owns the install progress UI. Suppress
-; LobsterAI's plugin-owned silent banner only for the explicitly
-; double-click-silent dictbind artifact. Other channels, ordinary /S installs,
-; interactive installers, update flows, and UAC behavior stay unchanged.
-!if "$%KEYFROM%" == "dictbind"
-  !if "$%LOBSTERAI_CHANNEL_BUILD%" == "1"
-    !if "$%LOBSTERAI_SILENT_ON_DOUBLE_CLICK%" == "1"
-      !define LOBSTERAI_HIDE_SILENT_BANNER
-    !endif
-  !endif
+; Build-time payload size metadata, generated into build-tar/ by
+; scripts/electron-builder-hooks.cjs (afterPack) on every Windows packaging
+; run. PROJECT_DIR is defined by electron-builder for each makensis
+; invocation, so a missing fragment fails the packaging build loudly instead
+; of shipping an installer without payload validation. Ad-hoc syntax checks
+; without PROJECT_DIR compile with size validation degraded to
+; existence-only checks and the staging-drive preflight disabled.
+!ifdef PROJECT_DIR
+  !include "${PROJECT_DIR}\build-tar\win-installer-payload-size.nsh"
 !endif
+
+; Free-space headroom on top of the measured payload sizes: NTFS cluster
+; slack across tens of thousands of staged files, log/registry churn, and
+; general safety. All staging space math is done in MB because NSIS
+; integers are 32-bit signed and the extracted tree alone exceeds 2 GB.
+!define LOBSTER_STAGING_MARGIN_MB 300
 
 Var lobsterCurrentProcessPid
 Var lobsterInstallerAttemptId
@@ -262,6 +267,9 @@ FunctionEnd
     ; !addplugindir output. Define the relaunch function here, after the
     ; generated shared header has registered StdUtils.
     !insertmacro DefineLobsterOldAppRelaunchFunction
+    ; The staging functions reference $appPackageStagingDir, declared at the
+    ; top of the patched installer.nsi -- also only available by now.
+    !insertmacro DefineLobsterPayloadStagingFunctions
   !endif
 
   ; Request admin privileges for script execution (tar extract, etc.)
@@ -472,6 +480,319 @@ FunctionEnd
     Pop $6
     Pop $5
     Pop $4
+    Pop $3
+    Pop $2
+    Pop $1
+    Pop $0
+  !macroend
+
+  ; Free megabytes available to the caller on the volume holding a path.
+  ; In: stack top = existing directory (or drive root) to query.
+  ; Out: stack top = free MB as a decimal integer string, or "-1" when the
+  ; query failed. 64-bit math via System::Int64Op -- byte counts here
+  ; overflow NSIS' 32-bit signed integers.
+  Function lobsterQueryFreeMegabytes
+    Exch $0
+    Push $1
+    Push $2
+    System::Call 'kernel32::GetDiskFreeSpaceExW(w r0, *l .r1, p 0, p 0) i .r2'
+    IntCmp $2 0 LobsterQueryFreeMegabytesFailed
+    System::Int64Op $1 / 1048576
+    Pop $0
+    Goto LobsterQueryFreeMegabytesDone
+    LobsterQueryFreeMegabytesFailed:
+      StrCpy $0 "-1"
+    LobsterQueryFreeMegabytesDone:
+    Pop $2
+    Pop $1
+    Exch $0
+  FunctionEnd
+
+  ; Exact on-disk byte size of a file as a decimal string (64-bit safe, so
+  ; the result can be compared verbatim against a build-time byte count).
+  ; In: stack top = file path. Out: stack top = size string, or "-1".
+  Function lobsterQueryFileSizeBytes
+    Exch $0
+    Push $1
+    Push $2
+    Push $3
+    ; FILE_READ_ATTRIBUTES (0x80), full sharing (7), OPEN_EXISTING (3).
+    System::Call 'kernel32::CreateFileW(w r0, i 0x80, i 7, p 0, i 3, i 0, p 0) i .r1'
+    IntCmp $1 -1 LobsterQueryFileSizeFailed
+    System::Call 'kernel32::GetFileSizeEx(i r1, *l .r2) i .r3'
+    System::Call 'kernel32::CloseHandle(i r1)'
+    IntCmp $3 0 LobsterQueryFileSizeFailed
+    StrCpy $0 $2
+    Goto LobsterQueryFileSizeDone
+    LobsterQueryFileSizeFailed:
+      StrCpy $0 "-1"
+    LobsterQueryFileSizeDone:
+    Pop $3
+    Pop $2
+    Pop $1
+    Exch $0
+  FunctionEnd
+
+  ; Collapse helper output into one bounded log line: keep the LAST 512
+  ; characters (tar prints its fatal reason last) and replace CR/LF/TAB with
+  ; spaces so the key=value log stays one record per line.
+  Function lobsterBuildSingleLineTail
+    Exch $0
+    Push $1
+    Push $2
+    Push $3
+    StrLen $1 $0
+    IntCmp $1 512 LobsterTailSanitize LobsterTailSanitize 0
+      IntOp $1 $1 - 512
+      StrCpy $0 $0 512 $1
+    LobsterTailSanitize:
+    StrCpy $3 ""
+    StrCpy $1 0
+    LobsterTailLoop:
+      StrCpy $2 $0 1 $1
+      StrCmp $2 "" LobsterTailDone
+      StrCmp $2 "$\r" LobsterTailBlank
+      StrCmp $2 "$\n" LobsterTailBlank
+      StrCmp $2 "$\t" LobsterTailBlank
+      StrCpy $3 "$3$2"
+      Goto LobsterTailNext
+      LobsterTailBlank:
+        StrCpy $3 "$3 "
+      LobsterTailNext:
+      IntOp $1 $1 + 1
+      Goto LobsterTailLoop
+    LobsterTailDone:
+    StrCpy $0 $3
+    Pop $3
+    Pop $2
+    Pop $1
+    Exch $0
+  FunctionEnd
+
+  ; The functions below reference $appPackageStagingDir, which the patched
+  ; installer.nsi declares at file scope. This custom include is parsed
+  ; before installer.nsi, so like the relaunch function they are emitted
+  ; from customHeader, after that declaration exists.
+  !macro DefineLobsterPayloadStagingFunctions
+  ; -- Payload staging drive preflight (field case 2026-08-25) --
+  ; TEMP on a nearly full C: let Nsis7z::Extract silently truncate the
+  ; staged tree while the user installed to a roomy E:. Before the embedded
+  ; package is materialized, verify the staging drive can hold the package
+  ; plus the fully extracted tree; when it cannot and the install drive can
+  ; also absorb the final install, stage inside $INSTDIR instead. Only when
+  ; no drive has room does the install stop -- before anything destructive
+  ; beyond the (rolled back) old-install rename has happened.
+  Function lobsterSelectPayloadStagingDir
+    !ifdef LOBSTER_PAYLOAD_UNPACKED_MB
+    Push $0
+    Push $1
+    Push $2
+    Push $3
+    Push $4
+    Push $5
+    Push $6
+    Push $8
+    Push $9
+
+    ; Staging need = materialized package (about this installer's own file
+    ; size) + extracted 7z-out tree + margin, in MB.
+    Push "$EXEPATH"
+    Call lobsterQueryFileSizeBytes
+    Pop $0
+    StrCmp $0 "-1" 0 +2
+      StrCpy $0 "0"
+    System::Int64Op $0 / 1048576
+    Pop $0
+    IntOp $1 $0 + ${LOBSTER_PAYLOAD_UNPACKED_MB}
+    IntOp $1 $1 + ${LOBSTER_STAGING_MARGIN_MB}
+
+    StrCpy $4 $PLUGINSDIR 3
+    Push "$PLUGINSDIR"
+    Call lobsterQueryFreeMegabytes
+    Pop $2
+    StrCmp $2 "-1" LobsterStagingQueryFailed
+    IntCmp $2 $1 LobsterStagingDefaultOk LobsterStagingDefaultInsufficient LobsterStagingDefaultOk
+
+    LobsterStagingDefaultInsufficient:
+    ; The temp drive cannot hold the staged payload. Relocating helps only
+    ; when the install directory lives on a different volume with room for
+    ; staging plus the final install (tree + tar extraction) at once.
+    StrCpy $3 $INSTDIR 3
+    IntOp $6 $1 + ${LOBSTER_PAYLOAD_UNPACKED_MB}
+    IntOp $6 $6 + ${LOBSTER_WIN_RESOURCES_TAR_MB}
+    StrCpy $5 $2
+    StrCmp $3 $4 LobsterStagingNoRoom
+    Push "$3"
+    Call lobsterQueryFreeMegabytes
+    Pop $5
+    StrCmp $5 "-1" LobsterStagingQueryFailed
+    IntCmp $5 $6 LobsterStagingRelocate LobsterStagingNoRoom LobsterStagingRelocate
+
+    LobsterStagingRelocate:
+    CreateDirectory "$INSTDIR"
+    CreateDirectory "$INSTDIR\.lobsterai-staging"
+    IfFileExists "$INSTDIR\.lobsterai-staging" 0 LobsterStagingRelocateCreateFailed
+    StrCpy $appPackageStagingDir "$INSTDIR\.lobsterai-staging"
+    DetailPrint "[Installer] Staging installation payload on the install drive"
+    FileOpen $9 "$APPDATA\LobsterAI\install-timing.log" a
+    FileSeek $9 0 END
+    !insertmacro GetTimestamp $8
+    FileWrite $9 "$8 phase=staging-drive-selected attempt_id=$lobsterInstallerAttemptId drive=$3 mode=install-dir free_mb=$5 needed_mb=$6 plugins_drive=$4 plugins_free_mb=$2 plugins_needed_mb=$1 staging=$appPackageStagingDir$\r$\n"
+    FileClose $9
+    Goto LobsterStagingSelected
+
+    LobsterStagingRelocateCreateFailed:
+    ; Could not create the relocated staging directory. Keep the default so
+    ; behavior matches previous installers; payload validation still stops a
+    ; truncated staging tree afterwards.
+    FileOpen $9 "$APPDATA\LobsterAI\install-timing.log" a
+    FileSeek $9 0 END
+    !insertmacro GetTimestamp $8
+    FileWrite $9 "$8 phase=staging-drive-selected attempt_id=$lobsterInstallerAttemptId drive=$4 mode=plugins-dir result=relocate-create-failed free_mb=$2 needed_mb=$1$\r$\n"
+    FileClose $9
+    Goto LobsterStagingSelected
+
+    LobsterStagingQueryFailed:
+    ; Never turn a failed probe into an install blocker. Extraction plus the
+    ; staged-payload validation remain the authority on success.
+    FileOpen $9 "$APPDATA\LobsterAI\install-timing.log" a
+    FileSeek $9 0 END
+    !insertmacro GetTimestamp $8
+    FileWrite $9 "$8 phase=staging-drive-selected attempt_id=$lobsterInstallerAttemptId drive=$4 mode=plugins-dir result=query-failed free_mb=$2 needed_mb=$1$\r$\n"
+    FileClose $9
+    Goto LobsterStagingSelected
+
+    LobsterStagingNoRoom:
+    FileOpen $9 "$APPDATA\LobsterAI\install-timing.log" a
+    FileSeek $9 0 END
+    !insertmacro GetTimestamp $8
+    FileWrite $9 "$8 phase=staging-preflight-insufficient attempt_id=$lobsterInstallerAttemptId plugins_drive=$4 plugins_free_mb=$2 staging_needed_mb=$1 install_drive=$3 install_free_mb=$5 install_needed_mb=$6 action=abort-install$\r$\n"
+    FileClose $9
+    !insertmacro customBeforeInstallerQuit "staging-space-insufficient"
+    MessageBox MB_OK|MB_ICONEXCLAMATION "${U+78C1}${U+76D8}${U+7A7A}${U+95F4}${U+4E0D}${U+8DB3}${U+FF0C}${U+65E0}${U+6CD5}${U+5B89}${U+88C5} LobsterAI${U+3002}${U+8BF7}${U+6E05}${U+7406}${U+78C1}${U+76D8}${U+7A7A}${U+95F4}${U+540E}${U+91CD}${U+8BD5}${U+3002}$\r$\n$\r$\nThere is not enough free disk space to install LobsterAI: drive $4 has $2 MB free but staging the installation needs about $1 MB, and installing to drive $3 would need about $6 MB free there. Free up disk space and run the installer again. Details: $APPDATA\LobsterAI\install-timing.log" /SD IDOK
+    SetErrorLevel 2
+    Quit
+
+    LobsterStagingDefaultOk:
+    FileOpen $9 "$APPDATA\LobsterAI\install-timing.log" a
+    FileSeek $9 0 END
+    !insertmacro GetTimestamp $8
+    FileWrite $9 "$8 phase=staging-drive-selected attempt_id=$lobsterInstallerAttemptId drive=$4 mode=plugins-dir free_mb=$2 needed_mb=$1$\r$\n"
+    FileClose $9
+
+    LobsterStagingSelected:
+    Pop $9
+    Pop $8
+    Pop $6
+    Pop $5
+    Pop $4
+    Pop $3
+    Pop $2
+    Pop $1
+    Pop $0
+    !endif
+  FunctionEnd
+
+  ; Remove a relocated staging directory ($INSTDIR\.lobsterai-staging). Runs
+  ; on the success path once the payload copy is done, and from every
+  ; controlled failure exit; a no-op while staging is the default
+  ; $PLUGINSDIR (the NSIS temp dir cleans itself up on exit).
+  Function lobsterCleanupRelocatedPayloadStaging
+    Push $8
+    Push $9
+    StrCmp $appPackageStagingDir "" LobsterStagingCleanupDone
+    StrCmp $appPackageStagingDir "$PLUGINSDIR" LobsterStagingCleanupDone
+    RMDir /r "$appPackageStagingDir"
+    FileOpen $9 "$APPDATA\LobsterAI\install-timing.log" a
+    FileSeek $9 0 END
+    !insertmacro GetTimestamp $8
+    FileWrite $9 "$8 phase=staging-relocated-cleanup attempt_id=$lobsterInstallerAttemptId staging=$appPackageStagingDir$\r$\n"
+    FileClose $9
+    StrCpy $appPackageStagingDir "$PLUGINSDIR"
+    LobsterStagingCleanupDone:
+    Pop $9
+    Pop $8
+  FunctionEnd
+  !macroend
+
+  ; Template hook (patched extractAppPackage.nsh) invoked in *_app_files
+  ; right before the app package is materialized to $appPackageStagingDir.
+  !macro customSelectAppPackageStagingDir
+    Call lobsterSelectPayloadStagingDir
+  !macroend
+
+  ; -- Staged payload validation --
+  ; Nsis7z::Extract pushes no result, so the extracted tree itself is the
+  ; only evidence of success. A full staging drive silently truncates it
+  ; (field case 2026-08-25: win-resources.tar cut at 528 MB, the install
+  ; completed, and the failure surfaced later as a misleading tar error).
+  ; Verify the tree before CopyFiles can commit it: the app executable and
+  ; resources\win-resources.tar must exist, and the tar must byte-match the
+  ; size recorded at build time.
+  !macro LobsterValidateStagedPayload MODE
+    Push $0
+    Push $1
+    Push $2
+    Push $3
+    Push $8
+    Push $9
+
+    ${If} "${MODE}" == "staging"
+      StrCpy $0 "$appPackageStagingDir\7z-out"
+    ${Else}
+      ; fallback-direct extracts straight into the restored $OUTDIR
+      StrCpy $0 "$OUTDIR"
+    ${EndIf}
+    !ifdef LOBSTER_WIN_RESOURCES_TAR_BYTES
+      StrCpy $3 "${LOBSTER_WIN_RESOURCES_TAR_BYTES}"
+    !else
+      StrCpy $3 "unknown"
+    !endif
+    StrCpy $2 "-"
+    StrCpy $1 "ok"
+
+    ${IfNot} ${FileExists} "$0\${APP_EXECUTABLE_FILENAME}"
+      StrCpy $1 "app-executable-missing"
+    ${ElseIfNot} ${FileExists} "$0\resources\win-resources.tar"
+      StrCpy $1 "resources-tar-missing"
+    ${Else}
+      Push "$0\resources\win-resources.tar"
+      Call lobsterQueryFileSizeBytes
+      Pop $2
+      ${If} $2 == "-1"
+        ; A just-extracted file that cannot be measured is logged but not
+        ; fatal on its own; the tar extraction phase still verifies content.
+        StrCpy $1 "size-query-failed"
+      !ifdef LOBSTER_WIN_RESOURCES_TAR_BYTES
+      ${ElseIf} $2 != "${LOBSTER_WIN_RESOURCES_TAR_BYTES}"
+        StrCpy $1 "resources-tar-size-mismatch"
+      !endif
+      ${EndIf}
+    ${EndIf}
+
+    ${If} $1 == "ok"
+    ${OrIf} $1 == "size-query-failed"
+      FileOpen $9 "$APPDATA\LobsterAI\install-timing.log" a
+      FileSeek $9 0 END
+      !insertmacro GetTimestamp $8
+      FileWrite $9 "$8 phase=payload-staging-validated attempt_id=$lobsterInstallerAttemptId mode=${MODE} result=$1 root=$0 tar_bytes=$2 expected_bytes=$3$\r$\n"
+      FileClose $9
+    ${Else}
+      FileOpen $9 "$APPDATA\LobsterAI\install-timing.log" a
+      FileSeek $9 0 END
+      !insertmacro GetTimestamp $8
+      FileWrite $9 "$8 phase=payload-staging-validation-failed attempt_id=$lobsterInstallerAttemptId mode=${MODE} reason=$1 root=$0 found_bytes=$2 expected_bytes=$3 action=abort-install$\r$\n"
+      FileClose $9
+      ; Never commit a partial app: restore the previous installation first,
+      ; then report. /SD keeps silent (/S) installs from blocking on the box.
+      !insertmacro customBeforeInstallerQuit "payload-staging-validation-failed"
+      MessageBox MB_OK|MB_ICONEXCLAMATION "${U+5B89}${U+88C5}${U+5305}${U+6570}${U+636E}${U+4E0D}${U+5B8C}${U+6574}${U+FF1A}${U+53EF}${U+80FD}${U+662F}${U+4E34}${U+65F6}${U+76EE}${U+5F55}${U+78C1}${U+76D8}${U+7A7A}${U+95F4}${U+4E0D}${U+8DB3}${U+6216}${U+5B89}${U+88C5}${U+5305}${U+4E0B}${U+8F7D}${U+4E0D}${U+5B8C}${U+6574}${U+3002}${U+8BF7}${U+6E05}${U+7406}${U+78C1}${U+76D8}${U+7A7A}${U+95F4}${U+540E}${U+91CD}${U+8BD5}${U+FF0C}${U+6216}${U+91CD}${U+65B0}${U+4E0B}${U+8F7D}${U+5B89}${U+88C5}${U+5305}${U+3002}$\r$\n$\r$\nThe LobsterAI installation stopped because the unpacked installer data is incomplete ($1). This usually means the drive holding the temporary directory ran out of space during extraction, or the installer download was truncated. Free up disk space on the temp drive or download the installer again. No partial application was committed. Details: $APPDATA\LobsterAI\install-timing.log" /SD IDOK
+      SetErrorLevel 2
+      Quit
+    ${EndIf}
+
+    Pop $9
+    Pop $8
     Pop $3
     Pop $2
     Pop $1
@@ -711,16 +1032,22 @@ FunctionEnd
     Pop $8
   !macroend
 
+  ; Relocated payload staging lives on the install drive, so no controlled
+  ; exit may leave it behind; the rollback that follows may also need the
+  ; space it frees. A $PLUGINSDIR staging is left to NSIS' own temp cleanup.
   !macro customBeforeInstallerQuit REASON
     !insertmacro LobsterLogInstallerQuit "${REASON}"
+    Call lobsterCleanupRelocatedPayloadStaging
     !insertmacro customRollbackOldInstall "${REASON}"
   !macroend
 
   !macro customInstallerFailed
+    Call lobsterCleanupRelocatedPayloadStaging
     !insertmacro customRollbackOldInstall "installer-failed"
   !macroend
 
   !macro customInstallerUserAbort
+    Call lobsterCleanupRelocatedPayloadStaging
     !insertmacro customRollbackOldInstall "user-abort"
   !macroend
 !endif
@@ -730,26 +1057,12 @@ FunctionEnd
 ;    before uninstallOldVersion and file extraction
 ;  - uninstaller: un.install section (assisted) or un.onInit (silent /S)
 !macro customCheckAppRunning
-  !ifndef BUILD_UNINSTALLER
-    ; Silent installs (/S -- e.g. enterprise IT deployments; in-app updates
-    ; use --updated mode with a visible progress page instead) have no
-    ; installer UI at all, so without this the machine looks idle for minutes
-    ; mid-replace. Banner is a plugin-owned window, so it shows even in
-    ; silent mode. The window dies with the installer process, so no failure
-    ; path can leave it behind.
-    ;
-    ; The text is "Updating NukemAI, please wait..." in Chinese, written as
-    ; ${U+xxxx} escapes because this file must stay pure ASCII: the darwin
-    ; makensis builds used for local syntax checks reject any non-ASCII byte
-    ; (the escapes are fine on the Windows build machine -- the webPackage
-    ; patch ships them in production already).
-    !ifndef LOBSTERAI_HIDE_SILENT_BANNER
-      ${If} ${Silent}
-        Banner::show /NOUNLOAD "${U+6B63}${U+5728}${U+66F4}${U+65B0} NukemAI${U+FF0C}${U+8BF7}${U+7A0D}${U+5019}${U+2026}"
-      ${EndIf}
-    !endif
-  !endif
-
+  ; Silent installs (/S from app stores and IT deployment, or channel builds
+  ; with the double-click-silent flag) must show no installer-owned window at
+  ; all: /S is a zero-UI contract and the invoking store/channel owns the
+  ; install progress experience. Failure dialogs stay silent-safe through
+  ; their /SD defaults. In-app updates use --updated with a visible progress
+  ; page and are unaffected.
   !ifndef BUILD_UNINSTALLER
     !insertmacro EnsureInstallerAttemptId
     StrCpy $lobsterOldInstallOriginalPath "$INSTDIR"
@@ -828,9 +1141,6 @@ FunctionEnd
       !insertmacro GetTimestamp $8
       FileWrite $9 "$8 phase=install-failed-before-mutation attempt_id=$lobsterInstallerAttemptId failure_kind=process-stop-failed raw_status=$lobsterTargetProcessesStopStatus exit=$R2 action=old-install-untouched$\r$\n"
       FileClose $9
-      ${If} ${Silent}
-        Banner::destroy
-      ${EndIf}
       MessageBox MB_OK|MB_ICONEXCLAMATION "The NukemAI update stopped before replacing the previous version because the old application processes could not be confirmed stopped. Please close NukemAI and retry. Details: $APPDATA\NukemAI\install-timing.log" /SD IDOK
       SetErrorLevel 2
       Quit
@@ -1041,9 +1351,6 @@ FunctionEnd
       FileWrite $9 "$8 phase=skill-backup-failed-abort attempt_id=$lobsterInstallerAttemptId status=$lobsterLegacySkillsStatus exit=$R2 action=old-install-preserved$\r$\n"
       FileClose $9
       Call lobsterTryRelaunchOldApp
-      ${If} ${Silent}
-        Banner::destroy
-      ${EndIf}
       MessageBox MB_OK|MB_ICONEXCLAMATION "The NukemAI update stopped because legacy user skills could not be safely inspected or backed up (status=$lobsterLegacySkillsStatus). The previous installation was not replaced. Please retry the update. Details: $APPDATA\NukemAI\install-timing.log" /SD IDOK
       SetErrorLevel 2
       Quit
@@ -1180,9 +1487,6 @@ FunctionEnd
       FileWrite $9 "$8 phase=old-install-rename-verification-abort attempt_id=$lobsterInstallerAttemptId outcome=recovery-required rollback_status=$lobsterOldInstallRollbackStatus rollback_error=$lobsterOldInstallRollbackError source=$lobsterOldInstallOriginalPath backup=$lobsterOldInstallBackupPath$\r$\n"
       FileClose $9
       MessageBox MB_OK|MB_ICONEXCLAMATION "The NukemAI update stopped because the previous installation move could not be verified and automatic recovery did not complete. No recovery copy was deleted. Restart Windows before retrying. Details: $APPDATA\NukemAI\install-timing.log" /SD IDOK
-      ${If} ${Silent}
-        Banner::destroy
-      ${EndIf}
       SetErrorLevel 3
       Quit
 
@@ -1196,9 +1500,6 @@ FunctionEnd
       FileWrite $9 "$8 phase=old-install-rename-verification-abort attempt_id=$lobsterInstallerAttemptId outcome=restored rollback_status=$lobsterOldInstallRollbackStatus relaunch_status=$lobsterOldAppRelaunchStatus source=$lobsterOldInstallOriginalPath$\r$\n"
       FileClose $9
       MessageBox MB_OK|MB_ICONEXCLAMATION "The NukemAI update stopped because the previous installation move could not be verified. The previous version was restored. Please retry the update. Details: $APPDATA\NukemAI\install-timing.log" /SD IDOK
-      ${If} ${Silent}
-        Banner::destroy
-      ${EndIf}
       SetErrorLevel 2
       Quit
 
@@ -1516,7 +1817,7 @@ FunctionEnd
     FileOpen $9 "$APPDATA\NukemAI\install-timing.log" a
     FileSeek $9 0 END
     !insertmacro GetTimestamp $8
-    FileWrite $9 "$8 phase=payload-materialize-start attempt_id=$lobsterInstallerAttemptId arch=$packageArch dest=$PLUGINSDIR\app-$packageArch.${COMPRESSION_METHOD}$\r$\n"
+    FileWrite $9 "$8 phase=payload-materialize-start attempt_id=$lobsterInstallerAttemptId arch=$packageArch dest=$appPackageStagingDir\app-$packageArch.${COMPRESSION_METHOD}$\r$\n"
     FileClose $9
     Pop $9
     Pop $8
@@ -1573,6 +1874,10 @@ FunctionEnd
     Pop $8
     Pop $1
     Pop $0
+    ; This hook runs right after Nsis7z::Extract and before the CopyFiles
+    ; commit, so a truncated staging tree is caught while the previous
+    ; installation is still restorable.
+    !insertmacro LobsterValidateStagedPayload "${MODE}"
   !macroend
 
   !macro customAppPackageCopyStart
@@ -1584,7 +1889,7 @@ FunctionEnd
     FileOpen $9 "$APPDATA\NukemAI\install-timing.log" a
     FileSeek $9 0 END
     !insertmacro GetTimestamp $8
-    FileWrite $9 "$8 phase=payload-copy-start attempt_id=$lobsterInstallerAttemptId attempt=$R1 source=$PLUGINSDIR\7z-out dest=$OUTDIR$\r$\n"
+    FileWrite $9 "$8 phase=payload-copy-start attempt_id=$lobsterInstallerAttemptId attempt=$R1 source=$appPackageStagingDir\7z-out dest=$OUTDIR$\r$\n"
     FileClose $9
     Pop $9
     Pop $8
@@ -1628,17 +1933,42 @@ FunctionEnd
   !macro customInstallerCacheCopyEnd KIND RESULT
     Push $0
     Push $1
+    Push $2
+    Push $3
     Push $8
     Push $9
+    ; Best-effort Win32 error snapshot for the copy that just failed, taken
+    ; before any other System call in this macro. NSIS built-ins running in
+    ; between can overwrite the thread error, so treat it as a strong hint,
+    ; not proof (112 = ERROR_DISK_FULL). Because the hint is not proof, a
+    ; failed copy also records the destination volume's free space -- that
+    ; pair makes disk-full unambiguous (the 2026-08-25 temp-drive-exhaustion
+    ; field case surfaced here only as result=error after a 141ms
+    ; SHFileOperation precheck). The copy stays non-fatal either way.
+    System::Call 'kernel32::GetLastError() i .r2'
     System::Call 'kernel32::GetTickCount()i .r0'
     IntOp $1 $0 - $lobsterInstallerCacheCopyStartTick
+    StrCpy $3 "-"
+    ${If} "${RESULT}" == "error"
+      ; Shell var context is still "current" here, so this is the same
+      ; $LOCALAPPDATA the failed copy targeted.
+      Push "$LOCALAPPDATA"
+      Call lobsterQueryFreeMegabytes
+      Pop $3
+    ${EndIf}
     FileOpen $9 "$APPDATA\NukemAI\install-timing.log" a
     FileSeek $9 0 END
     !insertmacro GetTimestamp $8
-    FileWrite $9 "$8 phase=installer-cache-copy-complete attempt_id=$lobsterInstallerAttemptId kind=${KIND} result=${RESULT} elapsed_ms=$1$\r$\n"
+    ${If} "${RESULT}" == "error"
+      FileWrite $9 "$8 phase=installer-cache-copy-complete attempt_id=$lobsterInstallerAttemptId kind=${KIND} result=${RESULT} win32_error=$2 dest_free_mb=$3 elapsed_ms=$1$\r$\n"
+    ${Else}
+      FileWrite $9 "$8 phase=installer-cache-copy-complete attempt_id=$lobsterInstallerAttemptId kind=${KIND} result=${RESULT} elapsed_ms=$1$\r$\n"
+    ${EndIf}
     FileClose $9
     Pop $9
     Pop $8
+    Pop $3
+    Pop $2
     Pop $1
     Pop $0
   !macroend
@@ -1696,6 +2026,11 @@ FunctionEnd
   FileClose $2
   DetailPrint "[Installer] Preparing installation steps"
 
+  ; The payload copy into $INSTDIR is committed, so a staging tree relocated
+  ; onto the install drive has served its purpose. Remove it before the tar
+  ; extraction below needs that space back.
+  Call lobsterCleanupRelocatedPayloadStaging
+
   ; -- Extract combined resource archive (win-resources.tar) --
   ; All large resource directories (cfmind/, SKILLs/, python-win/) are packed
   ; into a single tar file. NSIS 7z extracts one large file almost instantly;
@@ -1732,8 +2067,15 @@ FunctionEnd
   FileWrite $2 "$8 phase=tar-extract-start attempt_id=$lobsterInstallerAttemptId extractor=system-tar helper=$lobsterTrustedTarPath tar=$INSTDIR\resources\win-resources.tar dest=$INSTDIR\resources$\r$\n"
   FileClose $2
   System::Call 'kernel32::GetTickCount()i .r7'
-  nsExec::ExecToLog '"$lobsterTrustedTarPath" -xf "$INSTDIR\resources\win-resources.tar" -C "$INSTDIR\resources"'
+  ; ExecToStack instead of ExecToLog: bsdtar reports its fatal reason only on
+  ; stderr ("Truncated tar archive detected while reading data" in the
+  ; 2026-08-25 field case), and the details pane this installer never shows
+  ; was the only place ExecToLog delivered it. The exit code contract below
+  ; is unchanged; on success tar -xf prints nothing and the output is
+  ; discarded.
+  nsExec::ExecToStack '"$lobsterTrustedTarPath" -xf "$INSTDIR\resources\win-resources.tar" -C "$INSTDIR\resources"'
   Pop $0
+  Pop $R6
   StrCpy $R2 $0
   System::Call 'kernel32::GetTickCount()i .r6'
   IntOp $5 $6 - $7
@@ -1742,6 +2084,21 @@ FunctionEnd
   !insertmacro GetTimestamp $8
   FileWrite $2 "$8 phase=tar-extract-exit attempt_id=$lobsterInstallerAttemptId extractor=system-tar raw_kind=numeric-or-adapter-exit exit=$R2 elapsed_ms=$5$\r$\n"
   FileClose $2
+  ; On any non-success exit, preserve a bounded single-line tail of the
+  ; combined stdout+stderr before the electron fallback overwrites $R2. The
+  ; condition mirrors the dispatch below exactly.
+  StrCmp $R2 "error" TarExtractCaptureOutput
+  IntCmp $R2 0 TarExtractOutputCaptured TarExtractCaptureOutput TarExtractCaptureOutput
+  TarExtractCaptureOutput:
+    Push $R6
+    Call lobsterBuildSingleLineTail
+    Pop $R6
+    FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+    FileSeek $2 0 END
+    !insertmacro GetTimestamp $8
+    FileWrite $2 "$8 phase=tar-extract-output attempt_id=$lobsterInstallerAttemptId extractor=system-tar exit=$R2 text=$R6$\r$\n"
+    FileClose $2
+  TarExtractOutputCaptured:
   StrCmp $R2 "error" TarExtractElectron
   IntCmp $R2 0 TarExtractVerify TarExtractElectron TarExtractElectron
 
@@ -1933,9 +2290,6 @@ FunctionEnd
     FileWrite $2 "$8 phase=tar-extract-error attempt_id=$lobsterInstallerAttemptId extractor=$R3 exit=$R2 raw_marker=$R4 elapsed_ms=$5 reason=process-termination-failed action=preserve-all-no-concurrent-rollback$\r$\n"
     FileClose $2
     System::Call 'Kernel32::SetEnvironmentVariable(t "ELECTRON_RUN_AS_NODE", t "")i'
-    ${If} ${Silent}
-      Banner::destroy
-    ${EndIf}
     MessageBox MB_OK|MB_ICONEXCLAMATION "The NukemAI installation stopped because the extractor process could not be confirmed terminated. No automatic rollback or cleanup was attempted while that process may still be writing files. Restart Windows before retrying. Recovery files (if any): $lobsterOldInstallBackupPath. Details: $APPDATA\NukemAI\install-timing.log" /SD IDOK
     SetErrorLevel 3
     Quit
@@ -2005,9 +2359,6 @@ FunctionEnd
   StrCmp $lobsterOldInstallRollbackStatus "failed" 0 TarExtractAbort
     MessageBox MB_OK|MB_ICONEXCLAMATION "The installation failed and automatic rollback did not complete. No recovery copy was deleted. Previous files: $lobsterOldInstallBackupPath. Partial update: $lobsterOldInstallFailedPath. Details: $APPDATA\NukemAI\install-timing.log" /SD IDOK
   TarExtractAbort:
-  ${If} ${Silent}
-    Banner::destroy
-  ${EndIf}
   SetErrorLevel 3
   Quit
   TarExtractDone:
@@ -2153,9 +2504,6 @@ FunctionEnd
       SkillRestoreRollbackSucceeded:
         MessageBox MB_OK|MB_ICONEXCLAMATION "The NukemAI update could not restore user skills, so the previous version was restored. Please retry the update. Details: $APPDATA\NukemAI\install-timing.log" /SD IDOK
       SkillRestoreAbort:
-      ${If} ${Silent}
-        Banner::destroy
-      ${EndIf}
       SetErrorLevel 2
       Quit
 
@@ -2314,9 +2662,6 @@ FunctionEnd
     NewInstallPrevalidateAbort:
       MessageBox MB_OK|MB_ICONEXCLAMATION "The NukemAI installation stopped because the new application could not be validated ($lobsterNewInstallValidationReason). New registration and shortcuts were not written. Details: $APPDATA\NukemAI\install-timing.log" /SD IDOK
     NewInstallPrevalidateAbortAfterMessage:
-    ${If} ${Silent}
-      Banner::destroy
-    ${EndIf}
     SetErrorLevel 2
     Quit
 
@@ -2385,9 +2730,6 @@ FunctionEnd
   FileClose $2
   DetailPrint "[Installer] Installation complete"
 
-  ${If} ${Silent}
-    Banner::destroy
-  ${EndIf}
 !macroend
 
 ; customUnInit intentionally not defined: the uninstaller stops app processes

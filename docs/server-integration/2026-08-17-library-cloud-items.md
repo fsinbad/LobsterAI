@@ -2,13 +2,13 @@
 
 > 日期：2026-08-17
 >
-> 最近更新：2026-08-19
+> 最近更新：2026-08-26
 >
-> 涉及仓库：`LobsterAI`、`lobsterai-server`
+> 涉及仓库：`LobsterAI`、`lobsterai-server`、`lobsterai-admin`
 >
 > 数据库兼容：MySQL 5.7
 >
-> 合同状态：云端列表与 lineage 为现有联调合同；本文新增的分享文件 owner analytics 为待实现合同，服务端上线后客户端才开放入口
+> 合同状态：云端列表与 lineage 为现有联调合同；分享文件永久删除已完成三端代码实现，待 NOS 物理删除消费闭环验证后才能正式开放；本文的分享文件 owner analytics 状态保持原合同说明
 
 ## 范围与数据边界
 
@@ -19,16 +19,17 @@
 - 收藏全部保存在客户端 SQLite，服务端不新增收藏表或收藏接口；
 - 服务端不新增本地产物主表，也不判断本地文件是否存在。
 
-本期服务端已有云端列表只读聚合接口，并补齐现有分享更新接口对最新 `sessionId/artifactId` 的持久化；下一步新增分享文件 owner analytics 只读接口。分析复用 V52 已有访问统计表与采集链路，没有数据库 DDL 变更。
+本期服务端已有云端列表只读聚合接口，并补齐现有分享更新接口对最新 `sessionId/artifactId` 的持久化；分享文件永久删除接口、客户端交互和管理员后台 `deleted` 隔离已完成实现。删除复用现有 `html_shares` 墓碑和 NOS 删除队列表，不新增核心 DDL。分享文件 owner analytics 的状态沿用下文说明。
 
 ## 发布顺序
 
-1. 先发布包含云端列表、分享 owner analytics 接口和 lineage 修复的 `lobsterai-server`；
-2. 在测试环境使用个人账号和企业账号分别校验 owner 隔离、游标、站点状态和分享分析口径；
-3. 发布带资料库入口的 Electron 客户端；
-4. 旧客户端继续使用现有分享与站点接口，不受影响；
-5. 分享分析入口通过客户端功能开关在 owner analytics 上线后开放；接口 404/`FEATURE_UNAVAILABLE` 时只隐藏分析入口，不回退调用 Admin 接口；
-6. 新客户端连接尚未升级的服务端时，本地产物仍可使用，云端区域显示来源级错误和重试入口。
+1. 先发布包含云端列表、分享 owner analytics、永久删除接口、deleted 查询隔离和 lineage 修复的 `lobsterai-server`；旧 `DELETE /api/html-shares/{shareId}` 必须继续表示停止分享；
+2. 发布 `lobsterai-admin`，确认默认列表不显示 deleted，显式“已删除”筛选只能查看最小审计信息；
+3. 在测试环境使用个人账号和企业账号分别校验 owner 隔离、游标、站点状态、分享分析和永久删除数据库语义；
+4. 确认仓库外 NOS 消费者，或另行实现兼容 MySQL 5.7 的可靠消费者，并验证真实对象删除、重试、积压年龄和告警；该步骤未完成时不得正式开放永久删除入口；
+5. 发布带资料库入口的 Electron 客户端；旧客户端继续使用现有分享与站点接口，不受影响；
+6. 分享分析入口通过客户端功能开关在 owner analytics 上线后开放；接口 404/`FEATURE_UNAVAILABLE` 时只隐藏分析入口，不回退调用 Admin 接口；
+7. 新客户端连接尚未升级的服务端时，本地产物仍可使用，云端区域显示来源级错误和重试入口。
 
 ## 鉴权与账号归属
 
@@ -329,6 +330,76 @@ WHERE share_id = #{shareId}
 5. 分析页默认 7 天，可切换 30 天，只显示独立访客、访问次数和趋势，不显示热门页面；
 6. 分析请求失败局部重试，不清空设置详情或云端列表。
 
+## 分享文件永久删除
+
+### 接口与兼容边界
+
+```http
+DELETE /api/html-shares/{shareId}/permanent
+Authorization: Bearer <token>
+```
+
+成功和同 owner 重复删除都返回：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": null
+}
+```
+
+旧接口 `DELETE /api/html-shares/{shareId}` 继续只把分享切换为 `disabled`，不能被新客户端当作永久删除。部署站点继续使用 `DELETE /api/sites/{shareId}`，不得通过 `/permanent` 绕过 Site 状态机。
+
+服务端从当前鉴权请求解析 `PublishingAccountContext`，不接受 Renderer 传 `userId/accountMode/enterpriseId`。可删除来源固定为：
+
+```text
+html_file
+image_file
+svg_file
+document_file
+markdown_file
+mermaid_file
+```
+
+| 当前记录 | 结果 |
+| --- | --- |
+| 当前 owner、普通分享、`status = disabled` | 执行永久删除事务 |
+| 当前 owner、同一普通分享已为 `deleted` | 幂等成功 |
+| 当前 owner、普通分享仍为 `live` | `41315 HTML_SHARE_DELETE_REQUIRES_DISABLED` |
+| 事务条件不再匹配 | `41316 HTML_SHARE_ACTION_CONFLICT`，客户端保留资源并刷新 |
+| 站点来源、其他 owner、不存在 | 统一按 owner 不可见/不存在处理，不泄露资源是否存在 |
+
+客户端只在分享设置页底部显示危险区域。`live` 时不自动串联“停止 + 删除”；`disabled` 时要求输入当前显示文件名，输入去除首尾空格后仍需逐字符完全一致。确认文案必须说明：云端分享和访问数据不可恢复，本地原文件及相关任务不受影响，免费用户累计历史分享名额不会因删除释放。
+
+### 服务端事务与墓碑
+
+一个数据库事务完成以下步骤：
+
+1. 按 `shareId + userId + accountMode + enterpriseId` 查询并 `FOR UPDATE`；
+2. 校验普通来源与 `disabled/deleted` 状态；
+3. 快照当前 `html_share_files`，使用同步入口 `INSERT IGNORE` 写入 `html_share_nos_delete_files`，原因为 `shared_file_deleted`；队列写入失败时整个事务回滚；
+4. 删除 `html_share_files`、每日/IP/维度访问统计和访问复核触发记录，并清空审核明细中的路径、内容哈希、原因、密钥别名和原始响应；
+5. 条件更新 `html_shares` 为最小 `deleted` 墓碑后提交。
+
+墓碑只保留 owner、`shareId`、普通来源类型、`sourceSha256`、创建时间、原公共 URL 和删除审计。标题改为固定哨兵，入口改为 `__deleted__`；lineage、`clientSourceKey`、分享码凭证、访问截止时间、最后访问时间和内容更新时间清空。`disabledAt/disabledByUserId/disabledReason/updatedAt` 记录删除时间、执行用户和固定内部原因。原 `shareId` 永不复用。
+
+常规 owner 列表、详情、analytics、公共访问、更新、权限与状态接口均把 deleted 当作不存在；访问统计、最后访问和审核异步写带状态/内容版本条件，不能在删除事务提交后重新生成子数据。
+
+### 列表、配额与管理员后台
+
+- 资料库和 `/api/html-shares/my` 不返回 deleted，可见 `counts.sharedFile` 和 `sharedStatusCounts` 在删除后减少；
+- 免费个人账号的累计创建限制继续使用 `status <> 'failed'`，因此 deleted 仍计入历史用量。例如 10/10 删除一条后仍是 10/10，不能创建第 11 条；
+- 订阅和企业活跃额度在停止分享时已经释放，永久删除不再次调整或补位；
+- `lobsterai-admin` 未传 `status` 时默认增加 `status <> 'deleted'`；显式选择“已删除”只展示墓碑安全字段和删除时间，不能预览、审核、恢复、修改权限或下载文件；
+- `lobsterai-portal` 没有分享文件管理入口，本功能不增加重复入口。
+
+### NOS 物理删除发布 Gate
+
+当前仓库已保证 NOS 删除意图与 deleted 墓碑在同一事务提交，但仓库内仍未发现消费 `html_share_nos_delete_files.status = 'pending'` 并调用 NOS 删除的任务，也没有可据此安全实现删除的 NOS API 合同。因而当前接口完成的是：分享立即不可访问、数据库内容清理、NOS 对象删除可靠排队；不能宣称对象存储字节已经物理删除。
+
+正式开放前必须确认现有外部消费者，或另项实现带原子抢占、幂等删除、失败重试、陈旧任务回收、积压年龄指标和告警的 MySQL 5.7 兼容消费者。测试环境必须能把 `shared_file_deleted` 任务推进到成功终态，并验证对应 NOS 对象实际不存在。该闭环不允许通过猜测上传 URL 对应的删除协议来补实现。
+
 ## 错误和降级
 
 - 未登录或鉴权失效：沿用现有统一鉴权响应；客户端只禁用云端来源，本地产物继续可用；
@@ -340,6 +411,10 @@ WHERE share_id = #{shareId}
 - 分享分析没有历史数据或统计采集未启用：成功返回全 0 和真实 `meta`，不返回 5xx；
 - 分享分析资源不属于当前账号、已删除或切换账号：沿用 owner 详情不可见语义，客户端返回云端列表并清理该资源缓存；
 - 分享分析网络/5xx：只影响分析区，分享设置、本地产物和其他云端资源继续可用。
+- 永久删除返回 `41315`：保留设置页并提示先停止分享，不能自动发起停止操作；
+- 永久删除返回 `41316`：保留资源并刷新权威详情/列表，不自动重试写操作；
+- 永久删除成功：退出详情、清理该资源的本地收藏和缓存、更新可见计数并刷新云端第一页；本地文件和任务不变；
+- 新客户端遇到没有 `/permanent` 路由的旧服务端：不得乐观移除本地列表项，应保留资源并提示服务端版本不支持。
 
 ## 数据库与上线核对
 
@@ -353,6 +428,10 @@ WHERE share_id = #{shareId}
 6. 为同一分享准备多个内容版本和跨天重复 IP，校验访问总数跨版本求和、范围独立访客跨天/跨版本去重；
 7. 使用 `EXPLAIN` 观察 7/30 天分享分析查询，重点检查 `COUNT(DISTINCT ip_hash)` 的扫描行数、临时表和延迟；
 8. 校验 disabled 分享可读历史、站点来源拒绝、owner 响应不包含 IP/UA/Referer；
-9. 只有在真实数据量证明必要时另行评审索引，不能在本功能中直接增加未经验证的生产索引。
+9. 校验永久删除只接受当前 owner 的 disabled 普通分享，live 为 `41315`，同 owner 重复删除幂等，站点和其他 owner 不可见；
+10. 校验 deleted 不进入普通列表、详情、analytics 和公共访问；文件/统计子表已清理、审核敏感字段已脱敏，迟到写不能复活数据；
+11. 用免费账号验证 10/10 删除后仍为 10/10，9/10 删除后仍为 9/10；可见列表计数应减少，但累计创建配额不减少；
+12. 跟踪 `shared_file_deleted` 队列到成功终态并确认 NOS 对象不存在；消费者、重试或告警未验证时阻止正式开放；
+13. 只有在真实数据量证明必要时另行评审索引，不能在本功能中直接增加未经验证的生产索引。
 
-服务端自动化测试因部分测试依赖 Redis 和外部发布服务，本次按约定不执行完整测试套件；至少需要使用 JDK 17 完成 `compileJava`，并校验 Mapper XML 语法。
+服务端自动化测试因部分测试依赖 Redis 和外部发布服务，本次按约定不执行测试套件；已使用 JDK 17 完成 `compileJava`、`compileTestJava`，并校验全部改动 Mapper XML 的语法。客户端永久删除 API/列表状态目标测试、changed-file ESLint、Electron 编译和生产构建已通过；管理员后台类型检查、目标 ESLint 和生产构建已通过。MySQL 5.7 实库事务、配额和 NOS 消费验证仍按上述清单执行。

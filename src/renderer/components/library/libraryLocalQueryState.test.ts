@@ -10,6 +10,10 @@ import {
 import type { LibraryLocalListData, LocalArtifactItem } from '../../../shared/library/types';
 import {
   applyLibraryLocalItemChanges,
+  getLibraryQueryLoadIntent,
+  isLibraryBusyPhase,
+  isLibraryRefreshPhase,
+  LibraryLoadIntent,
   LibraryLoadPhase,
   matchesLibraryLocalQuery,
   shouldShowLibraryInitialSkeleton,
@@ -114,7 +118,24 @@ describe('library local query state', () => {
   test('never returns resolved content to the initial skeleton', () => {
     expect(shouldShowLibraryInitialSkeleton(LibraryLoadPhase.Initial, false)).toBe(true);
     expect(shouldShowLibraryInitialSkeleton(LibraryLoadPhase.Initial, true)).toBe(false);
+    expect(shouldShowLibraryInitialSkeleton(LibraryLoadPhase.Revalidating, true)).toBe(false);
     expect(shouldShowLibraryInitialSkeleton(LibraryLoadPhase.Refreshing, true)).toBe(false);
     expect(shouldShowLibraryInitialSkeleton(LibraryLoadPhase.Appending, true)).toBe(false);
+  });
+
+  test('revalidates an existing snapshot without returning to the initial loading state', () => {
+    expect(getLibraryQueryLoadIntent(false)).toBe(LibraryLoadIntent.Initial);
+    expect(getLibraryQueryLoadIntent(true)).toBe(LibraryLoadIntent.Revalidate);
+    expect(isLibraryRefreshPhase(LibraryLoadPhase.Revalidating)).toBe(true);
+    expect(isLibraryRefreshPhase(LibraryLoadPhase.Refreshing)).toBe(true);
+    expect(isLibraryRefreshPhase(LibraryLoadPhase.Initial)).toBe(false);
+  });
+
+  test('treats cold loading, revalidation, refresh, and append as busy work', () => {
+    expect(isLibraryBusyPhase(LibraryLoadPhase.Initial)).toBe(true);
+    expect(isLibraryBusyPhase(LibraryLoadPhase.Revalidating)).toBe(true);
+    expect(isLibraryBusyPhase(LibraryLoadPhase.Refreshing)).toBe(true);
+    expect(isLibraryBusyPhase(LibraryLoadPhase.Appending)).toBe(true);
+    expect(isLibraryBusyPhase(LibraryLoadPhase.Settled)).toBe(false);
   });
 });

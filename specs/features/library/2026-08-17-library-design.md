@@ -1,14 +1,14 @@
 # 资料库功能详细设计文档
 
 > 创建日期：2026-08-17
-> 最近更新：2026-08-25
-> 状态：资料库基础能力及「本地产物 / 云端」双页签 UI 已实现；云端页统一管理分享文件与部署站点，并已完成测试环境列表基础验证；零有效任务关系的本地产物隐藏、有效任务回退及关系写入竞态保护已在客户端实现；分享文件访问分析已完成详细设计，客户端与 owner 接口待实现；订阅升级后的普通用户限时资源恢复已按无新增表方案完成客户端与服务端实现；Windows 首次进入本地产物时的回填闪屏修复已完成客户端实现，待 Windows 大数据集压力验证
-> 涉及仓库：`LobsterAI`、`lobsterai-server`
+> 最近更新：2026-08-26
+> 状态：资料库基础能力及「本地产物 / 云端」双页签 UI 已实现；云端页统一管理分享文件与部署站点，并已完成测试环境列表基础验证；零有效任务关系的本地产物隐藏、有效任务回退及关系写入竞态保护已在客户端实现；分享文件访问分析已完成详细设计，客户端与 owner 接口待实现；分享文件永久删除已完成客户端、服务端与管理员后台实现，数据库内容清理和 NOS 删除意图已可靠落库，NOS 对象物理删除消费者仍是正式发布阻断项；订阅升级后的普通用户限时资源恢复已按无新增表方案完成客户端与服务端实现；Windows 首次进入本地产物时的回填闪屏修复已完成客户端实现，待 Windows 大数据集压力验证；来源页签、收藏、筛选和搜索切换时的线条加载态闪烁已完成客户端详细设计，待实现与回归
+> 涉及仓库：`LobsterAI`、`lobsterai-server`、`lobsterai-admin`；`lobsterai-portal` 经核对无需改动
 > 产品入口：LobsterAI 左侧栏「我的文件」（内部功能名仍为 Library）
 
-## 0. 实施状态（2026-08-19）
+## 0. 实施状态（2026-08-26）
 
-本方案已在两个仓库完成首期实现：
+资料库基础方案已在客户端与服务端两个仓库完成首期实现；表中单独标为“待实现”的增量不包含在该结论中：
 
 | 范围 | 实施结果 |
 | --- | --- |
@@ -18,16 +18,26 @@
 | 文件生命周期 | 支持监听、有限重试、空闲分批 `stat`、同目录可靠重命名、缺失墓碑和权限状态；真实文件删除统一交给系统文件管理器 |
 | 历史数据 | 首次进入后按会话分批复用现有 Artifact 识别逻辑回填，游标和策略版本保存在 `kv` |
 | 首开与后台刷新稳定性 | 已实现单次初始骨架、300ms/1,000ms 事件合并、按 ID 定向增量读取、任务删除定向失效、加载窗口静默校验和滚动锚点恢复；待 Windows 100/1,000/10,000 文件压力验证 |
+| 查询切换加载态稳定性 | 已确认新 `queryKey` 被按首次加载处理，且本地/云端列表骨架仅由空行分隔线构成，快速请求时形成横线闪烁；本 Spec 已冻结延迟显现、查询过渡态、内存快照和无分隔线骨架方案，客户端待实现 |
 | 收藏 | 全部写客户端 SQLite；本地产物使用设备 scope，云端收藏按发布账号 scope 隔离 |
 | UI | 新增侧栏入口、顶部「本地产物 / 云端」双页签、类型下拉/搜索/收藏、网格/列表、单列紧凑列表、分组和沉浸式中央预览弹窗，使用现有管理页宽度、主题 token 和中英文 i18n |
 | 云端管理页 | 分享文件和部署站点进入同一扁平管理列表；站点作为独立类型，统一提供类型、搜索、可访问性和刷新筛选；点击后分别进入分享设置或网站设置，分析均由设置页标题栏进入 |
 | 云端列表 | 服务端新增 `GET /api/library/cloud-items`，聚合普通分享和部署站点，使用三字段游标和 MySQL 5.7 SQL |
 | 分享文件访问分析 | 复用现有 V52 访问统计表与采集链路；owner 只读接口、客户端分析页和跨内容版本汇总待实现，不新增 DDL |
+| 分享文件永久删除 | 已完成客户端、服务端与管理员后台实现：仅允许当前 owner 永久删除已停止的普通分享，主记录保留最小 `deleted` 墓碑，同事务清理文件/统计/敏感审核内容并先记录 NOS 删除意图，免费用户历史创建名额不释放；NOS 对象物理删除消费者仍待确认或补齐 |
 | 订阅升级自动恢复 | 已实现且不新增表；复用 `html_shares.access_expires_at` 识别普通用户限时资源，订阅生效后主动恢复，无 cursor 云端第一页兜底检查；分享文件和在线网站直接转换，已停止静态网站恢复现有静态发布状态，已停止 Node 服务须由用户主动重新部署 |
 | lineage | 分享更新接口新增可选 `sessionId/artifactId`，旧客户端缺失参数时保留原值 |
 | 联调合同 | 新增 `docs/server-integration/2026-08-17-library-cloud-items.md` |
 
-已完成的自动校验包括客户端 TypeScript、changed-file ESLint、65 个目标 Vitest、Renderer/Main/Preload 生产构建，以及服务端在 JDK 17 下的 `compileJava` 和 Mapper XML 语法检查。按需求未运行依赖 Redis/外部服务的服务端测试套件。
+已完成的自动校验包括客户端 TypeScript、changed-file ESLint、目标 Vitest、Renderer/Main/Preload 生产构建，以及服务端在 JDK 17 下的 `compileJava`、`compileTestJava` 和 Mapper XML 语法检查。管理员后台已通过 `vue-tsc`、目标 ESLint 和生产构建。按需求未运行依赖 Redis/外部服务的服务端测试套件。
+
+本次永久删除实施落点：
+
+- `LobsterAI`：分享设置页增加危险区域、完整文件名确认、删除 IPC/API、错误恢复、列表计数与收藏清理；删除只影响云端分享，本地原文件和相关任务不参与；
+- `lobsterai-server`：新增 `DELETE /api/html-shares/{shareId}/permanent` 与独立事务服务；owner 条件行锁、普通来源白名单、`disabled` 前置校验、同 owner 重复删除幂等、`deleted` 查询隔离、迟到统计/审核写保护均已落地；
+- `lobsterai-admin`：默认列表排除 `deleted`，显式“已删除”筛选仅显示最小审计详情，预览、审核、恢复及其他写动作禁用；
+- `lobsterai-portal`：没有分享文件管理入口，本功能不修改；
+- 存储边界：现有仓库没有可确认的 NOS 删除 API 或队列消费者，因此当前完成定义是“数据库内容已清理、NOS 删除意图已与墓碑同事务提交”。在测试环境观察到对象实际不存在、失败可重试且有积压告警前，不得对外宣称 NOS 字节已完成物理删除。
 
 已完成 Electron 基础手动验收：侧栏入口和本地索引可用；历史回填后可展示本地产物；列表按日期/任务使用单列布局；索引支持同一文件关联多个任务并选择最新有效任务分组；真实 HTML 文件可使用现有预览链路渲染；云端接口不可用时本地产物保持可浏览、可预览，并显示弱打扰的独立错误状态。测试 MySQL 5.7 实库查询、真实分享/部署联调、深色主题回归，以及 Windows 文件打开/显示行为仍属于上线前验收项。
 
@@ -77,8 +87,12 @@ LobsterAI 已经能够在会话中识别和预览 HTML、图片、SVG、视频�
 | 文件监听 | 当前 `artifact:watchFile` 只服务已打开的预览面板 | 新增独立、持久的资料库监听服务 |
 | 本地缩略图 | Electron 原生文件缩略图能力和现有预览渲染器 | 可复用，失败时回退类型封面，不直接批量启动外部预览进程 |
 | 文件分享 | `/api/html-shares` 已有创建、更新、查询、停止/恢复 | 复用写接口，新增适合资料库的只读聚合接口 |
+| 分享旧 DELETE | `DELETE /api/html-shares/{shareId}` 当前调用 disable，不删除记录或文件 | 保持兼容；永久删除必须使用新的 `/permanent` 接口 |
 | 分享访问统计 | V52 已有每日访问、IP 去重和维度统计表；公共入口已有采集，当前查询只供后台且趋势绑定当前内容版本 | 新增 owner 只读分析接口；首期只返回访问次数、独立访客和每日趋势，按 `shareId` 汇总分享生命周期内所有内容版本 |
 | 站点管理 | `/api/sites` 已有列表、详情、设置、分析和删除 | 资料库复用站点动作和详情，不重写站点生命周期 |
+| 站点删除 | 当前是 `status = deleted` 墓碑 + 子文件/统计清理，并非物理删除主行；NOS 删除意图在事务提交后异步记录 | 分享文件沿用用户侧不可恢复语义，但队列意图改为与墓碑同事务落库 |
+| NOS 清理队列 | 仓库内已有 `html_share_nos_delete_files` 写入器，未发现消费者；测试库存在长期 pending | 确认外部消费者或补齐可靠 Worker 是永久删除发布 Gate |
+| 免费历史分享计数 | `countHistoricalFilesByUserId` 使用 `status <> 'failed'` | 保持该口径，让 deleted 继续占用免费累计创建名额 |
 | 分享列表 | `GET /api/html-shares/my` 混合普通分享和部署，按创建时间排序 | 不适合直接支撑统一资料库 |
 | 分享归属更新 | 客户端更新 FormData 已携带 `sessionId/artifactId`，服务端 PUT 和 Mapper 未持久化 | 服务端必须补齐“最新会话归属”更新 |
 | 生产数据库 | MySQL 5.7 | 新 SQL 不使用 CTE、窗口函数、`JSON_TABLE` 或函数索引 |
@@ -95,7 +109,8 @@ LobsterAI 已经能够在会话中识别和预览 HTML、图片、SVG、视频�
 8. 云端列表接口统一普通分享与站点的读取语义，现有写操作保持兼容。
 9. 所有数据库、分页和查询设计兼容 MySQL 5.7。
 10. 分享文件提供与网站分析一致的入口和视觉结构，但按文件语义展示访问次数、独立访客和趋势，不展示无意义的热门页面。
-11. 为后续增加音频、更多文档格式、显式目录和跨端能力保留扩展点，但首期不提前实现。
+11. 分享文件支持从分享设置页永久删除：公共分享、云端文件和访问分析对用户不可恢复地移除，但本地主文件与本地任务不受影响；免费用户的历史创建名额不因删除而释放。
+12. 为后续增加音频、更多文档格式、显式目录和跨端能力保留扩展点，但首期不提前实现。
 
 ### 1.5 非目标
 
@@ -109,6 +124,8 @@ LobsterAI 已经能够在会话中识别和预览 HTML、图片、SVG、视频�
 | 在线编辑 Artifact | 资料库负责发现、预览和管理，不新增编辑器 |
 | 把本地服务作为本地产物 | `local-service` 是瞬时运行态；导出文件后进入本地产物，部署后进入站点 |
 | 服务端收藏接口 | 收藏仅保存在当前客户端 |
+| 删除本地原件或任务 | 删除云端分享不得删除、移动或修改本机文件、Artifact 索引、会话及会话消息 |
+| 通过删除规避免费分享上限 | 永久删除只清理用户可见资源，不减少免费用户累计创建数，也不复用原 `shareId` |
 | 首期持久化云端列表缓存 | 断网时显示本地产物和云端错误态，不把云端元数据复制为长期本地数据源 |
 | 单独发布演示站点 | Web Demo 只用于本机原型验证，不属于正式产品部署范围 |
 
@@ -301,7 +318,31 @@ LibraryItem
 
 **When** 用户打开分享设置页。
 
-**Then** 页面显示已关闭和对应原因，状态控件不可恢复；列表菜单不提供「重新打开」或「删除分享记录」。
+**Then** 页面显示已关闭和对应原因，状态控件不可恢复；列表菜单不提供「重新打开」或「删除分享记录」，但所有者仍可从分享设置页底部的危险区域永久删除该普通分享。
+
+### 场景 14：永久删除分享文件
+
+**Given** 当前账号拥有一条来源为普通分享、状态已经是 `disabled` 的文件记录。
+
+**When** 用户在分享设置页危险区域点击「永久删除」，阅读影响说明，准确输入当前显示文件名并再次确认。
+
+**Then** 分享地址立即不可访问，记录从资料库与普通 owner 接口中消失，云端文件和访问分析进入可靠清理流程，本地原文件、任务和本地索引保持不变；重复请求得到幂等成功，原 `shareId` 永不复用。
+
+### 场景 15：免费分享名额不因删除释放
+
+**Given** 免费用户累计已创建 10 个分享，达到当前历史创建上限。
+
+**When** 用户停止并永久删除其中一个分享。
+
+**Then** 用户可见列表减少一条，但免费分享计数仍为 10/10，不能再创建第 11 个分享；若删除前是 9/10，删除后仍为 9/10。
+
+### 场景 16：切换来源、收藏、筛选和搜索时不闪线
+
+**Given** 用户已看到本地产物或云端列表/空态，列表请求通常可在一个很短的时间窗口内完成。
+
+**When** 用户切换「本地产物 / 云端」、切换「仅看收藏」、修改类型或可访问性筛选，或者搜索关键词在 300ms 防抖后生效。
+
+**Then** 工具栏和内容区域尺寸保持稳定；150ms 内完成的请求直接提交新结果，不挂载加载骨架；较慢请求使用低干扰进度或无分隔线的结构化骨架，不出现整行横线、错误空态或“旧内容—骨架—新内容”的瞬时往返。快速连续切换时只有最后一个 `queryKey` 可以提交结果。
 
 ## 4. 功能需求
 
@@ -512,7 +553,7 @@ LibraryItem
 4. 图标按钮提供 `aria-label`、Tooltip、键盘焦点和 28px 以上点击热区；
 5. 卡片、搜索、筛选和视图按钮支持键盘导航；
 6. 缩略图提供可读替代文本，装饰图标使用 `aria-hidden`；
-7. 骨架屏只用于当前 `queryKey` 没有可渲染快照时的首次查询；已有列表、已确认空态或历史回填中的后台刷新必须保留当前内容，不得重新挂载整页骨架。自动续页只在底部显示局部加载提示；
+7. 骨架屏只用于页面冷启动或切到从未解析过且超过显现阈值的来源查询；来源、类型、收藏、可访问性、关键词和账号 scope 的查询变化先进入 `transitioning`，不得立即挂载整页骨架。已有列表、已确认空态、精确 query 快照或历史回填中的后台刷新必须保留稳定内容区域；自动续页只在底部显示局部加载提示；
 8. 本地可用、云端连接、索引回填等状态使用低干扰提示，不占据卡片主信息；
 9. 所有可见文案同时提供中英文 i18n。
 
@@ -541,9 +582,9 @@ LibraryItem
 列表列定义固定为「云端资源 / 状态 / 访问权限 / 操作」。状态与类型筛选共同作用，搜索匹配文件名、分享标题、站点名称、域名、入口文件名和资源 ID；搜索采用 300ms 防抖。状态、类型、关键词、发布账号 scope 任一变化时：
 
 - 取消或忽略旧请求；
-- 清空当前列表与游标；
+- 重置目标查询的游标，但不先把当前可见内容提交为空数组；同来源可暂时保留上一快照，来源切换优先复用目标来源的精确 query 内存快照；
 - 从第一页重新请求；
-- 新结果返回前保留工具栏，不把列表误显示为最终空态；
+- 新结果返回前保留工具栏和稳定内容区域，不把未解析查询误显示为最终空态，也不立即挂载线条骨架；
 - 迟到响应必须通过 `requestId/queryKey` 丢弃。
 
 来源、状态和文件类型筛选均不展示数量。列表默认按 `sortTime DESC, itemKind DESC, itemId DESC` 排序，每行名称下方直接显示与排序一致的 `sortTime` 格式化结果；滚动续页规则沿用 FR-7，不显示「加载更多」按钮。
@@ -578,7 +619,7 @@ LibraryItem
 文案必须使用「打开链接」「复制链接」，不使用较长的「打开分享链接」「复制分享链接」。菜单明确不包含：
 
 - `重新打开`：状态恢复统一在分享设置页完成，避免列表菜单承担状态机；
-- `删除分享记录`：当前普通用户接口没有永久删除语义，现有 `DELETE /api/html-shares/{shareId}` 实际是关闭分享，不能以删除文案误导用户；
+- `删除分享记录`：永久删除只放在分享设置页底部危险区域，避免列表误触；现有 `DELETE /api/html-shares/{shareId}` 仍是旧版关闭接口，不能用于永久删除；
 - `复制路径`、`在文件夹中显示`、`用系统应用打开`：这些是本地文件动作，不适用于云端分享记录。
 
 云端页在工具栏展示「仅看收藏」图标按钮，但不在列表中增加收藏列或单行常驻星标。收藏状态写本地 SQLite 并按发布账号 scope 隔离，不改变云端资源生命周期。
@@ -590,7 +631,7 @@ LibraryItem
 1. 顶部返回入口统一显示「返回」；
 2. 紧凑资源标题栏：文件类型图标、文件名、资源类型、最后修改时间和唯一一处「可访问 / 不可访问」状态；
 3. 右侧图标动作依次为 `打开链接`、`数据分析`、`添加收藏 / 取消收藏`，以及存在本地关系时的 `相关任务`；每个图标提供 Tooltip、`aria-label` 和键盘焦点；
-4. 主体依次为「访问设置」和「基本信息」两个轻量区块，不使用左右不对称卡片布局；
+4. 主体依次为「访问设置」「基本信息」两个轻量区块，页面最底部为独立「危险区域」，不使用左右不对称卡片布局；
 5. 标题栏不显示复制按钮和空的更多菜单；复制动作只保留在访问地址区域，避免重复入口。
 
 各区域要求：
@@ -602,12 +643,23 @@ LibraryItem
 | 分享码 | 当前有效分享码 | 仅当前或保存后的模式为分享码访问时显示；服务端不能返回旧明文时展示明确不可回读状态，保存新分享码后用响应值更新，不能伪造占位码 |
 | 基本信息 | 资源名称、资源类型、分享时间、最后修改时间 | 不显示文件大小、访问量或重复状态；访问量进入独立分析页 |
 | 相关任务 | 本机有效会话 | 仅作为标题栏动作；无精确匹配时整个动作隐藏 |
+| 危险区域 | 永久删除分享 | 仅普通分享显示；必须先停止访问，并准确输入当前显示文件名后二次确认；站点继续走网站设置中的删除能力 |
 
 设置页打开时先使用列表数据绘制标题和骨架，再调用现有 `GET /api/html-shares/{shareId}` 获取最新详情。选择权限只修改页面草稿，不立即请求服务端；草稿与服务端快照不一致时才在访问设置区底部显示「取消修改 / 保存更改」，无修改时整行隐藏。点击保存后展示一次确认对话框，列出从旧权限到新权限的变化；停止访问需要额外说明“公共链接将暂时不可访问，但内容和地址保留”。确认后按「提交中禁用 → 服务端成功后原位更新详情和列表缓存 → 失败保留草稿并提示」执行，不得整页重载，也不得只更新 Renderer 的演示状态。
 
 写操作成功使用不参与文档流的 Toast 或区块内短暂状态反馈，不能在分享链接上方插入绿色提示条导致页面整体下移。账号 scope 变化、资源不再属于当前账号或返回 404 时退出设置页并刷新云端列表。标题栏和列表菜单的同名动作必须调用同一 action handler，不能复制业务逻辑。
 
 当前 Web Demo 中的「允许下载」开关只表达潜在布局，不属于首期能力。现有服务端没有 `allowDownload` 字段或下载阻断语义，正式客户端首期必须隐藏该行，不能实现为仅本地生效的假开关。后续若立项，需要另行设计数据库字段、读写接口、公共访问页和真实文件下载路径的强制校验，并完成旧记录默认值及 MySQL 5.7 迁移评审。
+
+永久删除交互遵循网站删除的危险操作模式，但文件语义必须单独表达：
+
+1. `status = live` 时按钮禁用或点击后提示「请先停止访问」，客户端不得自动串联“停止 + 删除”；服务端也必须独立校验当前状态；
+2. `status = disabled` 时，无论 `disabledSource` 是 `user/admin/moderation/active_limit/system`，owner 均可删除；状态开关是否可恢复与 owner 是否可删除是两个不同权限；
+3. 第一次点击展示影响范围：公共链接永久失效、云端分享文件与访问分析删除且不可恢复、本机原文件和相关任务不受影响；仅当前订阅状态明确为免费用户时额外提示“删除不会释放免费分享名额”，个人订阅、企业及订阅状态未知时不展示该免费额度提示；
+4. 用户必须输入当前页面显示的完整文件名，前后空格去除后仍需逐字符完全一致；不得只输入“删除”或复用分享码；
+5. 提交期间锁定关闭、返回和重复提交；成功后清理详情/分析缓存和本地收藏，返回云端第一页并刷新权威 counts；失败时保留页面和输入，仅展示归一化错误；
+6. 客户端收到 `FEATURE_UNAVAILABLE` 时显示“当前版本暂不支持永久删除”，不得从本地列表乐观移除资源；收到 404 时先刷新详情/列表，资源已消失则按其他端删除收敛，资源仍存在才按旧服务端能力不足提示；
+7. 删除入口不出现在云端行菜单、分析页或公共分享页，首期不提供批量删除和撤销入口。
 
 #### FR-11.6 分享文件访问分析
 
@@ -657,7 +709,9 @@ LibraryItem
 
 | 场景 | 页面行为 |
 | --- | --- |
-| 首次加载 | 保留筛选工具栏，列表区显示轻量骨架 |
+| 页面冷启动 | 保留筛选工具栏；先进入 150ms 静默等待，仍未完成时才显示无外框、无行分隔线的结构化骨架 |
+| 来源页签切换 | 有目标 `queryKey` 内存快照时立即展示并后台校验；无快照时保持稳定内容槽，超过 150ms 才显示结构化骨架，不显示上一来源内容或最终空态 |
+| 类型/状态/收藏/搜索切换 | 保留同来源上一快照并标记 `aria-busy`，列表动作暂时不可用，工具栏继续允许再次筛选；使用低干扰刷新指示，不用整页骨架替换内容 |
 | 筛选无结果 | 显示「没有符合条件的云端资源」，保留当前筛选便于撤销 |
 | 未登录 | 显示登录提示，不影响本地产物页 |
 | 网络/5xx | 保留工具栏和已成功数据，显示来源级错误与重试 |
@@ -666,7 +720,7 @@ LibraryItem
 | 普通用户升级为订阅用户 | 已有订阅/额度事件触发当前云端查询失效；重新请求第一页，由服务端执行幂等恢复并返回权威状态 |
 | 分享记录不再存在 | 从当前列表移除，清理本地对应收藏并返回列表 |
 
-刷新按钮只刷新当前云端查询，不刷新本地产物索引。页签重新进入可先显示同账号、同 queryKey 的内存缓存并在后台重新验证；不持久化云端列表为离线权威数据。
+刷新按钮只刷新当前云端查询，不刷新本地产物索引，并使用 `refreshing` 而不是首次骨架。页签重新进入可先显示同账号、同 queryKey 的内存缓存并在后台重新验证；不持久化云端列表为离线权威数据。云端缓存必须以发布账号 scope 隔离，登出或账号变化时同步清除，任何情况下不得把上一账号数据作为过渡内容。
 
 #### FR-11.9 订阅升级后的普通用户限时资源自动恢复
 
@@ -781,6 +835,32 @@ Node 服务的手动重新部署继续复用现有部署接口和状态机。接
 - 历史已经升级的订阅用户不需要数据回填脚本；进入云端第一页会自然发现非空到期标记。
 - 回滚代码时，已经成功清空的到期时间属于订阅资源的正确状态，不回写旧截止时间；未成功资源仍保留标记，可在恢复能力重新上线后继续处理。
 
+#### FR-11.10 分享文件永久删除
+
+永久删除只适用于以下普通分享来源：
+
+```text
+html_file
+image_file
+svg_file
+document_file
+markdown_file
+mermaid_file
+```
+
+`node_service_deployment`、`static_service_deployment` 及以后新增的任何部署来源一律不走本能力，继续由网站设置和 Site API 管理。删除前置条件是当前 owner、来源在白名单内且 `status = disabled`；服务端不能信任客户端列表快照，也不能把 live 分享自动关闭后继续删除。
+
+这里的“永久删除”是用户产品语义，不等于物理删除 `html_shares` 主行。完成后应满足：
+
+- owner 列表、详情、分析、公共访问和管理员默认列表均不可再按普通资源读取；
+- 云端文件明细、访问统计和可识别内容进入不可恢复清理；
+- `html_shares` 仅保留防止 ID 复用、配额核算和最小安全审计所需墓碑；
+- 本地原文件、本地 Artifact 索引、会话、消息和站点记录不受影响；
+- 免费用户累计创建上限继续把墓碑计入历史创建数；订阅/企业的活跃上限在停止分享时已释放，永久删除不产生第二次额度变化；
+- 同一 owner 对同一 `shareId` 重复删除幂等成功；不同 owner、站点来源和从未存在的 ID 使用同一不可见语义。
+
+具体 API、事务、字段清理、NOS 队列、后台兼容和并发规则见 10.11。
+
 ## 5. 删除与生命周期语义
 
 ### 5.1 操作矩阵
@@ -791,11 +871,36 @@ Node 服务的手动重新部署继续复用现有部署接口和状态机。接
 | 删除任务，已无有效任务关系 | 不变 | 保留 | 删除最后一条有效关系 | 立即从列表、搜索、收藏结果和计数中隐藏 | 保留 | 不通知、不修改 |
 | 系统外部删除文件 | 已不存在 | 标记 missing，默认列表移除 | 短期保留后清理 | 立即隐藏 | 删除 | 不变 |
 | 停止分享 | 不变 | 不变 | 不变 | 不变 | 保留 | 分享状态变为 disabled |
+| 永久删除分享文件 | 不变 | 不变 | 不变 | 不变 | 删除该云端收藏 | 主记录改为 deleted 墓碑；子文件和分析清理，NOS 文件进入可靠删除队列 |
 | 删除站点 | 不变 | 不变 | 不变 | 不变 | 删除站点收藏 | 复用站点软删除/清理 |
 
-分享文件没有面向普通用户的「永久删除记录」动作。用户关闭或恢复访问必须通过分享设置页复用状态接口；列表菜单不直接改变状态。服务端现有 `DELETE /api/html-shares/{shareId}` 等价于关闭分享，客户端不得把它展示成「删除分享记录」。
+停止分享与永久删除是两个独立动作。用户关闭或恢复访问继续通过分享设置页复用状态接口；现有 `DELETE /api/html-shares/{shareId}` 保持旧版关闭语义，不能改造成永久删除。永久删除使用新接口 `DELETE /api/html-shares/{shareId}/permanent`，仅从分享设置页危险区域触发。
 
-### 5.2 会话删除
+### 5.2 分享文件永久删除语义
+
+产品界面中的“永久删除”表示用户无法恢复，而不是删除 `html_shares` 主行。删除成功后分三层处理：
+
+| 层级 | 处理 | 目的 |
+| --- | --- | --- |
+| 用户可见层 | 普通 owner 列表、详情、分析和公共访问均不再返回；客户端清理对应收藏和缓存 | 用户立即看不到、分享地址立即失效 |
+| 内容与统计层 | 删除 `html_share_files`、访问统计和可识别内容明细；NOS 对象写入删除队列后异步物理删除 | 云端内容与分析不可恢复，外部存储失败可重试 |
+| 最小墓碑层 | `html_shares.status = 'deleted'`，保留 owner、`share_id`、`source_type`、`source_sha256`、`created_at` 与必要删除审计 | 防止 ID 复用、维持免费历史配额、支持最小安全审计和幂等判断 |
+
+墓碑必须清除 `session_id/artifact_id/client_source_key`，清除全部分享码哈希、盐、密文、nonce 和生成时间，将 `title/entry_file` 改为内部固定哨兵，将 `total_files/total_bytes` 置 0，将 `last_accessed_at/access_expires_at/content_updated_at` 置空，并把删除时间、执行用户和固定原因写入现有 `disabled_at/disabled_by_user_id/disabled_reason/updated_at` 字段。`public_url` 因数据库非空且包含稳定 `shareId` 可以保留，但所有读取入口必须先校验 `status <> 'deleted'`；不得把保留 URL 理解为地址可恢复或可复用。若安全审计要求保留 `moderation_status/model/checked_at`，只能保留非内容判断字段；标题、相对路径、审核原因和原始模型响应等内容性信息必须清空或按独立合规保留策略处理。
+
+免费与付费配额采用不同口径：
+
+| 用户类型/限制 | 删除前计数 | 永久删除后 | 原因 |
+| --- | --- | --- | --- |
+| 免费用户累计创建上限，例如 10 个 | 统计 owner 下所有 `status <> 'failed'` 的普通分享，包含 `deleted` | 不变 | 防止反复删除后绕过免费历史创建上限 |
+| 订阅/企业活跃分享上限 | 只统计仍占用访问能力的 live 资源 | 删除不再减少；停止分享时已经释放 | 删除不能重复释放一次额度 |
+| 资料库可见数量 | 只统计 live/disabled | 减 1 | deleted 墓碑不是可管理资源 |
+
+因此：10/10 用户删除一条后仍是 10/10，9/10 用户删除一条后仍是 9/10。创建限制 SQL 必须显式保持 `status <> 'failed'` 或等价的“包含 deleted”口径，不能为了让 deleted 从列表消失而复用 `status IN ('live','disabled')` 的可见性条件。`shareId` 永不重新分配给新分享。
+
+客户端 `SharedFileItem` 和常规 `HtmlShareStatus` 无需加入可渲染的 `deleted` 分支；服务端在 DTO 映射前排除墓碑。管理员后台可以显式查询 deleted 作为只读审计状态，但默认列表排除，且不能预览、审核、恢复或编辑。
+
+### 5.3 会话删除
 
 `CoworkStore.deleteSessionRows()` 必须在删除 `cowork_sessions` 前显式执行：
 
@@ -819,7 +924,7 @@ WHERE session_id IN (...);
 
 该规则无需新增 SQLite 字段或数据迁移。升级后的可见查询会自然隐藏历史零关系记录；回滚客户端也不会丢失文件、索引或收藏数据。
 
-### 5.3 文件缺失、重命名和清理
+### 5.4 文件缺失、重命名和清理
 
 监听收到删除/重命名事件后：
 
@@ -868,7 +973,7 @@ flowchart LR
 
 1. Renderer 根据当前来源、分类、关键词、排序生成稳定 `queryKey`；
 2. 当前来源只请求对应的本地或云端完整页面；不为隐藏的来源页签额外请求数量；有效个人订阅用户请求云端第一页时，服务端按 FR-11.9 执行一次幂等恢复检查；
-3. 当前来源结果返回后立即渲染；
+3. 当前来源结果返回后按 6.2.1 与 6.2.3 的显现时序原子提交；未展示骨架时直接渲染，已展示骨架时满足最短可见时间后渲染；
 4. 对首屏可见本地产物异步执行轻量 `stat`，若状态变化则推送增量事件；
 5. 所有资源统一归一化为 `sortTime`；分享文件与部署站点只在云端页内合并，本地与云端绝不混排；
 6. 后台索引回填或校验继续运行，但不阻塞页面；
@@ -880,24 +985,29 @@ flowchart LR
 
 当前缺陷链路已经确认：历史回填按会话/候选批次调用 `recordCandidates`，每个有变更的批次都会广播 `recorded`；Renderer 除收藏外把所有 `library:changed` 都转成 `loadData(false)`，该函数先进入全局 `loading`，渲染层再用带脉冲动画的六项骨架整体替换列表。连续事件还会用新 `requestId` 废弃前一个请求，直到最后一次请求完成才退出加载。文件越多，候选的 `realpath/stat`、SQLite upsert、watcher 注册、列表计数查询和事件批次越多；Windows 的 NTFS/Defender 与 watcher 行为进一步放大持续时间。缩略图只在网格可见项中懒加载，不是默认列表首开整页闪屏的主因。
 
-本地产物必须区分“首次查询”“同查询后台刷新”和“自动续页”，不能继续用一个 `loading` 布尔值同时控制三种行为。Renderer 使用集中定义的判别值表达以下状态：
+本次来源/筛选切换视频暴露的是另一条前端链路：`source/category/keyword/favoritesOnly/cloudAvailability/ownerScope/auth` 等共同组成 `queryKey`，这些状态变化后由被动 effect 统一调用 `loadData(initial)`。查询控件已经完成一次渲染、但 effect 尚未把 phase 改为 `initial` 的间隙，页面可能先画出旧内容或错误空态；随后新 `queryKey` 与单一 `resolvedQueryKey` 不相等，列表又被六行骨架替换，最终请求完成后才提交新结果。本地列表骨架使用 `border-y + divide-y`，云端骨架使用 `border-y + 每行 border-b`，空行背景在深色主题下对比度很低，实际最醒目的只剩多条横线。IPC/接口越快，这个中间状态越接近一个渲染帧，视觉上就越像“线条闪一下”。服务端只影响持续时间，不决定线条形态，也不是本问题的修改范围。
+
+本地与云端必须共同区分“页面冷启动”“用户查询切换”“同查询后台刷新”和“自动续页”，不能继续用一个 `loading` 布尔值同时控制骨架、刷新按钮、列表替换和续页。Renderer 使用集中定义的判别值表达以下状态：
 
 | 状态 | 进入条件 | 列表区表现 | 退出条件 |
 | --- | --- | --- | --- |
-| `initial` | 新 `queryKey` 没有已解析快照，第一页请求尚未完成 | 只挂载一次轻量骨架；不得因回填事件重新计时或重新挂载 | 第一页成功、失败或确认空结果 |
+| `initial` | 首次进入资料库，当前来源没有任何可用快照，第一页请求尚未完成 | 前 150ms 保持稳定内容槽且不显示最终空态；超时后才挂载一次结构化骨架，骨架一旦可见至少保持 200ms | 第一页成功、失败或确认空结果，且满足已显示骨架的最短可见时间 |
+| `transitioning` | 用户改变来源、类型、收藏、可访问性、已防抖关键词或账号 scope，目标 `queryKey` 尚未落定 | 精确快照可用时立即展示并后台校验；同来源无精确快照时暂时保留上一快照并设为不可交互；切换来源且无目标快照时保持稳定内容槽，超过 150ms 才显示结构化骨架；始终不显示线条骨架或未确认空态 | 当前目标请求成功、失败或被更新的 query 取代 |
 | `settled` | 当前查询已有列表或已确认空态 | 正常内容/空态 | 查询条件变化、离开页面 |
 | `refreshing` | 当前查询已有快照，收到索引变更、手动刷新或恢复检查 | 保留列表、分组、工具栏、滚动和浮层；可在工具栏显示低干扰进度，但不显示整页骨架 | 当前静默刷新完成；失败时保留旧快照并显示可重试错误 |
 | `appending` | 自动续页请求进行中 | 只在列表底部显示局部加载提示 | 续页成功、失败或来源耗尽 |
 
 状态机必须遵守以下不变量：
 
-1. 同一个 `queryKey` 从 `initial` 退出后，在其生命周期内不得再次进入 `initial`；筛选、关键词、来源或账号 scope 变化形成新 `queryKey` 时才允许新的首次状态。
-2. `items.length > 0` 时禁止用加载占位替换现有列表。后台读取失败也不得清空已有数据。
-3. 初始请求期间到达索引事件时，只记录一次待处理标记；初始请求落定后执行至多一次尾随增量读取，不能通过递增 `requestId` 连续废弃初始请求而让骨架一直存在。
-4. 同一时刻最多存在一个本地产物刷新请求；刷新期间的新事件合并为一个尾随批次。任何事件风暴的队列上限都是“一个执行中 + 一个待执行”，不得按事件数量创建并发查询。
-5. Renderer 对 `library:changed` 只建立一个稳定订阅。历史回填启动 effect 与事件订阅 effect 分离，二者不得依赖每次分页结果都会变化的 `loadData` 函数身份；最新回调通过 `ref` 或独立协调器读取。
-6. 增量合并以稳定 `itemKind:itemId` 为 key，不给列表项使用批次序号或数组下标。已存在项原位更新，新项按现有排序键插入，失去展示资格的项移除；不对整组添加过渡动画。
-7. 合并前记录首个可见条目的 `itemId` 及其相对容器偏移；合并后该条目仍存在时恢复相同视觉锚点。锚点被删除时保持最近仍存在的相邻项，不得无条件 `scrollTo(0)`。
+1. `initial` 只表示当前页面生命周期的首次冷查询；用户改变任何查询条件必须进入 `transitioning`，不能因为生成了新 `queryKey` 就重新解释成页面首次加载。
+2. 查询控件值、目标 `queryKey` 和 phase 必须通过同一个 reducer/action 原子更新；不能等待被动 effect 在下一次 paint 后才把 `settled` 改为加载态，避免出现“新控件 + 旧 phase”的错误空态帧。
+3. 同一个 `queryKey` 已解析过列表或空态后，重新进入时优先激活内存快照并保持 `transitioning`，其视觉表现等同保留内容的后台校验；不得再次进入 `initial`。缓存只用于显示稳定性，不取代权威查询。
+4. `items.length > 0` 时，后台读取和同来源查询切换禁止立即用加载占位替换现有列表。失败时也不得清空已有快照；旧快照在 `transitioning` 期间必须标记为 stale、设置 `aria-busy` 并临时禁止条目动作，不能让用户把它误认成新筛选结果。
+5. 初始请求期间到达索引事件时，只记录一次待处理标记；初始请求落定后执行至多一次尾随增量读取，不能通过递增 `requestId` 连续废弃初始请求而让骨架一直存在。
+6. 同一时刻最多存在一个本地产物刷新请求；刷新期间的新事件合并为一个尾随批次。任何事件风暴的队列上限都是“一个执行中 + 一个待执行”，不得按事件数量创建并发查询。
+7. Renderer 对 `library:changed` 只建立一个稳定订阅。历史回填启动 effect 与事件订阅 effect 分离，二者不得依赖每次分页结果都会变化的 `loadData` 函数身份；最新回调通过 `ref` 或独立协调器读取。
+8. 增量合并以稳定 `itemKind:itemId` 为 key，不给列表项使用批次序号或数组下标。已存在项原位更新，新项按现有排序键插入，失去展示资格的项移除；不对整组添加过渡动画。
+9. 合并前记录首个可见条目的 `itemId` 及其相对容器偏移；合并后该条目仍存在时恢复相同视觉锚点。锚点被删除时保持最近仍存在的相邻项，不得无条件 `scrollTo(0)`。
 
 历史回填期间初始查询可能先返回空结果。该空态可以附带低干扰的“正在整理本地产物”状态，但不能在“空态—骨架—空态”之间往返。收到第一批可见项后直接切换为列表，并持续原位增量补充。
 
@@ -935,6 +1045,79 @@ Main 只按本地资料 ID 查询，不接受 Renderer 传入路径。Renderer �
 
 任务删除前，`CoworkStore` 在同一事务中读取并去重受影响的 `artifact_id`；事务提交后只广播一个带这些 ID 的 `session_deleted` 事件。这样仍有关联任务的产物可以定向刷新最新任务分组，失去最后关系的产物可以立即移除。若批量删除影响超过 100 个资料，事件可以携带全部去重 ID，由 Renderer 在 IPC 层按 100 个分片读取，不能拆成多个整页刷新事件。
 
+#### 6.2.3 查询切换加载态与骨架视觉
+
+本节专门处理用户主动改变查询造成的短时闪烁，适用于本地产物和云端两种来源。触发项固定为：来源页签、类型、仅看收藏、云端可访问性、300ms 防抖后生效的关键词、发布账号 scope、鉴权状态和影响查询范围的企业配置。网格/列表视图切换只改变呈现方式，不产生新请求；条目收藏/取消收藏优先乐观原位更新，只有启用「仅看收藏」且条目因此退出结果时才原位移除，不进入查询骨架。
+
+##### 状态提交顺序
+
+查询条件不能继续由多个 `useState` 更新后，再等待被动 effect 把加载状态补成 `initial`。推荐在 `LibraryView` 外提取纯 reducer，由一次 `QUERY_CHANGED` action 同时提交：
+
+```ts
+interface LibraryQueryTransition {
+  targetQueryKey: string;
+  requestId: number;
+  phase: typeof LibraryLoadPhase.Transitioning;
+  displaySnapshotKey?: string;
+  indicatorVisible: boolean;
+  startedAt: number;
+}
+```
+
+执行顺序冻结为：
+
+1. 根据完整查询条件生成目标 `queryKey`；与当前 key 相同则不请求、不改变 phase。
+2. 同一次 reducer 提交目标条件、`queryKey`、新的 `requestId` 和 `transitioning`，清理目标请求错误，但不把已显示数据写成空数组。
+3. effect 只负责依据已经提交的目标 key 发请求和管理 timer，不负责在 paint 后修正 phase。
+4. 请求成功且 `requestId + queryKey` 仍为当前目标时，把响应原子写入目标快照、游标和 counts，再进入 `settled`；有意切换查询时只在这一步把滚动位置重置到顶部一次。
+5. 请求失败且仍为当前目标时，有显示快照则保留并提示「加载失败，当前显示上次结果」；无快照则显示来源级错误与重试。两种情况都不能先展示“没有符合条件”的最终空态。
+6. 用户在请求期间继续切换时，立即取消旧显现 timer并递增 `requestId`；旧 Promise 可以自然结束，但不得写缓存、错误、滚动或当前列表。
+
+##### 内存快照边界
+
+Renderer 在资料库页面生命周期内维护小型 LRU 快照，默认每个 scope、每个来源最多 8 个 `queryKey`。快照包含当前页已加载项、游标、counts、确认空态和解析时间，不包含完整文件内容、缩略图 Data URL、分享码或分析数据，也不写 SQLite、localStorage 或 Redux。
+
+- 本地 key 至少包含 `source/category/keyword/favoritesOnly`；本地快照与登录账号无关。
+- 云端 key 至少包含 `ownerScope/source/category/keyword/favoritesOnly/availability/sitesHidden`；不得省略 owner scope。
+- 切换来源时只展示目标来源的精确 key 快照；不得在「云端」标题下暂时显示本地产物，反之亦然。
+- 同来源切换筛选而没有精确快照时，可以把上一快照作为只读视觉缓冲；容器设置 `aria-busy="true"`，条目主体和更多操作设为不可交互，直到新结果落定。
+- 登出、Token 最终失效、发布账号变化或企业 scope 变化时，同步清除不再有效的全部云端快照和待处理请求；不得用另一账号的数据平滑过渡。
+- 快照命中仍发起一次后台权威校验。缓存只消除视觉抖动，不改变服务端、SQLite 和文件系统的权威地位。
+
+##### 显现时序
+
+加载提示使用集中常量，首期取值如下，后续只能基于录屏与性能数据集中调整：
+
+```ts
+const LibraryLoadingTiming = {
+  IndicatorDelayMs: 150,
+  SkeletonMinVisibleMs: 200,
+  SnapshotLimitPerScopeAndSource: 8,
+} as const;
+```
+
+规则如下：
+
+1. 请求开始后的前 150ms 不挂载骨架。若在阈值内返回，取消 timer，直接从稳定快照/内容槽提交到新结果，`skeletonMounts = 0`。
+2. 同来源已有视觉快照时，超过 150ms 只显示工具栏低干扰进度，不用骨架覆盖列表。
+3. 页面冷启动或来源切换且没有目标快照时，超过 150ms 才显示结构化骨架；骨架一旦显示，至少保持 200ms，避免 1～2 帧的二次闪烁。响应可以先缓存在内存，最短时间到达后再提交；新查询或卸载可立即取消，不受最短时间阻塞。
+4. `refreshing` 始终保留内容，只让刷新图标旋转并提供非布局占位的状态文本；`appending` 只显示底部局部加载提示。二者不使用上述骨架最短时间。
+5. 所有 timer 在 query 变化和组件卸载时清理；测试使用可注入时钟或 fake timer，不依赖真实等待。
+
+##### 骨架和进度视觉
+
+当前空白行配合全宽分隔线的实现必须移除。新的加载视觉遵循：
+
+- 本地列表骨架模拟“32～36px 文件图标块 + 一条标题块 + 可选任务组头块”，行之间使用 8～12px 空隙，不使用 `border-y`、`divide-y` 或贯穿内容区的横线。
+- 云端骨架保留四列宽度，资源列显示图标与两条短文本块，状态和权限列各显示短圆角块，操作列显示小圆块；不得只渲染六个空白 `h-16` 行。
+- 网格骨架继续使用圆角卡片和内容块，但去掉会形成整齐闪线的连续外框；骨架数量按首屏可容纳数量确定，不因请求时间重复挂载。
+- 骨架背景、占位块和进度图标全部使用现有主题 token；浅色、深色和系统主题下均不能让边框成为唯一可见元素。
+- 动画只作用于占位块透明度，不作用于容器尺寸、边框或整页位置；`prefers-reduced-motion` 下关闭脉冲动画。
+- 加载容器维持与结果区相同的起始位置和合理最小高度，工具栏、滚动条槽和页面宽度不移动。
+- 容器使用 `aria-busy`；骨架本身 `aria-hidden`。超过 150ms 时通过一个 `role="status"` 的本地化文本宣布“正在加载”，同一请求只宣布一次，快速请求不产生无意义播报。
+
+本增量仅修改 `LobsterAI` Renderer 的状态和视觉，不改变 Preload/Main IPC、`lobsterai-server` API、MySQL 5.7、客户端 SQLite 表或分页合同。接口快慢只用于验证显现策略，不需要数据库迁移或服务端联调发布顺序。
+
 ### 6.3 来源独立分页与自动续页
 
 本地和云端没有共同数据库，资料库也不提供「全部资料」聚合页。每个来源页签独立维护游标：
@@ -952,7 +1135,7 @@ interface LibrarySourceQueryState {
 2. 首次读取 24 条；
 3. 距离滚动容器底部约 320px 时自动读取当前来源下一页；
 4. 下一页按 `itemKind:itemId` 去重追加，不展示「加载更多」按钮；
-5. 关键词、来源、分类、云端可访问性、排序或账号 scope 变化时重置当前查询游标；
+5. 关键词、来源、分类、云端可访问性、排序或账号 scope 变化时重置目标查询游标；当前显示快照按 6.2.3 保留到目标结果提交，不能通过先清空列表来表达游标重置；
 6. 请求带递增 `requestId`，迟到响应不能覆盖当前查询；
 7. 收藏或可访问性需要客户端过滤时可继续拉页，直到填满、来源耗尽或达到安全上限；
 8. 请求失败后停止自动续页，由显式「重试」恢复，避免观察器形成重试循环。
@@ -1136,13 +1319,23 @@ Windows 上 `realpath/stat`、杀毒软件扫描和目录 watcher 建立可能�
 ### 7.8 缩略图与预览
 
 1. 缩略图只对可见卡片懒加载；
-2. Renderer 缓存键使用 `filePath + fileMtimeMs`，主进程在重新 `stat` 后使用规范化路径、真实 mtime、大小和 rendererVersion 复核；
+2. Renderer 缓存键使用 `clientRendererVersion + filePath + fileMtimeMs`，主进程在重新 `stat` 后使用规范化路径、真实 mtime、大小和 rendererVersion 复核；异步结果只有在请求缓存键仍等于卡片当前缓存键时才可回填；
 3. 缓存位于客户端 `userData/library/thumbnails`，不写 SQLite BLOB；
 4. 文件变化后旧缓存自然失效，后台可按 LRU 清理；
-5. macOS 使用 Electron `nativeImage.createThumbnailFromPath()`，同版本请求去重且并发不超过 3；失败时显示类型封面；
-6. HTML、SVG 和文档继续使用现有隔离/清洗预览链路；
-7. 不为生成缩略图把本地文件上传到云端；
-8. 云端站点首期可以使用类型封面，不自动抓取不可信网站截图。
+5. macOS、Windows 和 Linux 优先使用 LobsterAI 隔离的跨平台 Renderer 生成缩略图；Renderer 失败后才尝试 Electron `nativeImage.createThumbnailFromPath()`，两条链路均失败时显示类型封面；同版本请求去重且并发不超过 3；
+6. JPG、JPEG、PNG、GIF、WebP、AVIF 和 BMP 在 Renderer 内完成解码，并按 contain 规则绘制到固定尺寸 Canvas；Renderer 直接返回 Canvas PNG，主进程不得再通过共享隐藏窗口截图栅格图片；SVG 继续使用隔离渲染链路；
+7. PPTX 缩略图只解析并渲染第 1 张幻灯片，不得使用列表模式创建整份演示文稿的页面 DOM 后再隐藏；第一页为空白时保留真实空白结果，不擅自改用第 2 页；
+8. PPTX Renderer 只有在第一页字体就绪、内嵌图片完成加载和解码、布局连续两帧稳定后才可返回成功；媒体等待必须有超时并在失败时进入统一降级链路；
+9. 每次隐藏窗口渲染必须携带单调递增的 `renderGeneration`，Renderer 原样回传；主进程只接受与当前请求完全一致的代次，代次缺失或不匹配均视为失败；共享窗口只在实际尺寸变化时调整内容尺寸，不在每次请求中重复设置 zoom factor；
+10. Windows 对 HTML、SVG、文档和视频等非栅格内容订阅完整 presentation frame：第一次回调只作为前序帧屏障，随后主动 `invalidate`，直接使用第二次回调的 `NativeImage` 生成 PNG，不再额外调用 `capturePage()`；所有订阅和定时器都必须在成功、失败和超时路径释放；macOS 和 Linux 保留隔离 Renderer 的 `capturePage` 路径；
+11. 代次不匹配、画面为空、PPTX 有视觉内容但画面异常空白或渲染/画面提交超时时，必须销毁共享窗口，并在全新窗口完整重渲染一次；第二次仍失败才进入原生缩略图和类型封面降级链路，不得仅对旧 DOM 重复截图；
+12. 只有通过 Renderer 就绪契约或原生缩略图成功生成的非空图片才能写入缓存；栅格 Canvas、通用 presentation frame 和 PPTX 第一页 presentation frame 分别使用独立 rendererVersion，本次变更必须使历史白图和串图缓存全部自然失效；
+13. 缩略图日志只记录扩展名、渲染代次、策略、文件大小、页数、资源数量、耗时和失败阶段，不记录完整文件路径、文件名或内容；正常成功不写 info 日志，慢渲染、重试和降级分别使用受控 warn/error 日志；
+14. HTML、SVG 和文档继续使用现有隔离/清洗预览链路；
+15. 不为生成缩略图把本地文件上传到云端；
+16. 云端站点首期可以使用类型封面，不自动抓取不可信网站截图。
+
+缩略图至少覆盖以下验收矩阵：栅格图片与 Markdown/HTML/PDF 交替排列并快速滚动、同一卡片路径或 mtime 变化、冷缓存和热缓存，以及连续 20 次按“图片 → 文档 → 图片 → 文档”生成时不得出现白图、串图或上一项画面。PPTX 另覆盖单页纯文字、多页纯文字、多页全屏图片、多页图文混排、第一页故意为空白、损坏文件和未安装 Office/WPS。Windows 10/11 分别覆盖 100%、125% 和 150% 系统缩放，并至少验证一次硬件加速关闭场景。多页文件在 Renderer 中只能存在第一页 DOM；失败不得留下可被缓存的白图、错误文件画面或未释放的 frame subscription。
 
 ## 8. 本地 SQLite 设计
 
@@ -1491,7 +1684,9 @@ interface HtmlShareAnalytics {
 
 `availability` 是 Renderer → Main 的统一云端筛选语义。`sharedStatus` 与 `LibrarySharedStatusCounts` 仅用于兼容当前普通分享服务端合同和诊断，不在云端页渲染「已打开 / 已关闭」筛选或数量。
 
-分享分析属于 HtmlShare 领域而不是 Library 联合列表模型。`HtmlShareIpc` 增加集中定义的 `GetAnalytics`，日期粒度、数据范围和响应字段使用共享类型；不要把 `SiteAnalytics` 直接复用为分享类型，因为网站的 `pageViews/topPages` 与文件的 `accesses` 语义不同。
+`deleted` 是服务端墓碑状态，不属于常规 Library 联合类型。`SharedFileItem.status` 继续只接收 `live/disabled/failed` 的既有业务类型；聚合列表必须在 DTO 映射前排除 deleted，Renderer 不增加“已删除卡片”兜底分支。
+
+分享分析与永久删除属于 HtmlShare 领域而不是 Library 联合列表模型。`HtmlShareIpc` 增加集中定义的 `GetAnalytics` 和 `DeletePermanently`，日期粒度、数据范围和响应字段使用共享类型；不要把 `SiteAnalytics` 直接复用为分享类型，因为网站的 `pageViews/topPages` 与文件的 `accesses` 语义不同。
 
 ### 9.3 IPC
 
@@ -1510,6 +1705,7 @@ interface HtmlShareAnalytics {
 | `library:getIndexStatus` | Renderer → Main | 回填/校验进度 |
 | `library:changed` | Main → Renderer | 增量刷新通知 |
 | `htmlShare:getAnalytics` | Renderer → Main | 查询当前 owner 的分享文件访问分析 |
+| `htmlShare:deletePermanently` | Renderer → Main | 永久删除已停止的普通分享；只接收 `shareId`，文件名确认在 Renderer 完成，服务端仍独立校验 owner、来源和状态 |
 
 输入校验：
 
@@ -1526,18 +1722,23 @@ interface HtmlShareAnalytics {
 首期由 `LibraryView` 及其云端子组件维护页面级状态；本次稳定性修复把事件调度提取到独立协调器，避免继续扩大页面组件：
 
 - 当前来源、分类、云端可访问性、关键词、排序和本地产物视图；
-- 每个 `queryKey` 的来源游标、已加载项、`initial/settled/refreshing/appending` 状态和 error；
+- 每个 `queryKey` 的来源游标、已加载项、确认空态、解析时间、`initial/transitioning/settled/refreshing/appending` 状态和 error；
+- 页面生命周期内按 scope/source 隔离、每组最多 8 项的查询快照 LRU，以及 150ms 显现延迟、200ms 骨架最短可见时间和对应 timer；
 - 本地产物变更协调器的待处理 ID 集合、300ms 静默定时器、1,000ms 最大等待、执行中标记和单个尾随标记；
 - 当前预览目标、标题栏浮层和异步 request ID；
-- 当前分享设置目标、设置/分析子页、详情请求、分析 queryKey、写操作提交态和服务端回滚快照；
+- 当前分享设置目标、设置/分析子页、详情请求、分析 queryKey、写操作提交态、永久删除确认输入/提交态和服务端回滚快照；
 - 本地增量变更后的定向读取、排序合并、不可用项移除和滚动锚点恢复；
 - 账号 scope 变化时清除云端页面状态。
 
-不为首期资料库新增 Redux slice，也不把缩略图 Data URL、完整文件内容或所有历史消息放入 Redux。若后续需要跨路由缓存，再以 `queryKey + ownerScope` 为边界提取独立 store，不能把本地与云端混成一个缓存。
+不为首期资料库新增 Redux slice，也不把缩略图 Data URL、完整文件内容或所有历史消息放入 Redux。6.2.3 的查询快照只存在于资料库页面生命周期，用于稳定切换视觉；若后续需要跨路由缓存，再以 `queryKey + ownerScope` 为边界提取独立 store，不能把本地与云端或不同发布账号混成一个缓存。
 
 `LibraryView` 不直接持有事件防抖、最大等待和尾随刷新算法。新增的 `libraryRefreshCoordinator.ts` 应保持为可注入时钟和刷新回调的纯 TypeScript 模块，公开最小接口，例如 `enqueue(payload)`、`flushNow()`、`setActive(active)` 和 `dispose()`；组件卸载时必须取消 timer、忽略迟到响应并解除唯一订阅。协调器不访问 DOM，滚动锚点由组件在提交合并前后处理。
 
+查询切换同样不得继续堆叠在大型 `LibraryView.tsx` 中。新增 `libraryQueryTransitionState.ts` 维护纯 reducer、快照 LRU、phase 推导和显现时序，公开 `beginQuery`、`resolveQuery`、`rejectQuery`、`revealIndicator`、`disposeScope` 等纯 action/helper；React hook 只负责 timer 与请求接线。该模块不访问 IPC、DOM 或 i18n，视觉组件分别消费明确的 `showSkeleton/isRevalidating/ariaBusy` 派生值，不能再把一个 `loading` 布尔值同时传给列表替换和刷新按钮。
+
 分析页按 `ownerScope + shareId + from + to` 缓存在组件生命周期内；离开云端来源或账号 scope 变化时清空。详情错误与分析错误相互隔离，分析请求失败不能清空已经加载的设置数据。现有网站趋势图可提取为无业务字段的 `AccessAnalyticsChart`，由调用方传入指标标签与序列；不允许为了复用视觉而把分享响应伪装成 `SiteAnalytics`。
+
+永久删除成功后，Renderer 先按 `itemKind:itemId` 从当前列表移除该项，并把当前 query 中已加载的 `counts.sharedFile`、`sharedStatusCounts.all` 和 `sharedStatusCounts.disabled` 各减 1（下限为 0）；其他 keyword/category query cache 只标记失效，不能在不知道筛选是否命中的情况下猜测减数。随后清理当前账号 scope 下的本地收藏和分析/详情缓存，回到云端第一页做一次权威刷新。只做乐观减数而不刷新会在跨页、筛选和 cursor 场景留下错误总数；删除失败或能力不可用时不得修改任何缓存。
 
 ## 10. 服务端详细设计
 
@@ -1876,7 +2077,7 @@ artifact_id = #{artifactId},
 ```
 
 6. 部署复用同一 `shareId` 的更新路径也必须经过可持久化这两个字段的 Mapper；
-7. 只有站点永久删除等明确清理动作才把 lineage 置空；
+7. 只有站点或分享文件永久删除等明确清理动作才把 lineage 置空；
 8. 增加单元/Mapper 测试，覆盖“首次 A、更新 B、列表返回 B”。
 
 服务端只保存最新指针，不新增云端多对多关系。完整关系仍在本地，因为本地会话可以删除且不会同步到服务端。
@@ -1889,17 +2090,102 @@ artifact_id = #{artifactId},
 | 创建/更新分享 | `POST/PUT /api/html-shares` |
 | 修改分享访问方式 | `PUT /api/html-shares/{shareId}/access-mode` |
 | 停止/恢复分享 | `PATCH /api/html-shares/{shareId}/status` |
+| 永久删除分享文件 | 新增 `DELETE /api/html-shares/{shareId}/permanent`；旧 DELETE 继续表示关闭 |
 | 站点详情/分析 | `GET /api/sites/{shareId}` 及 analytics |
 | 站点重命名 | `PATCH /api/sites/{shareId}` |
 | 站点访问方式/状态 | 现有 Site API |
 | 删除站点 | `DELETE /api/sites/{shareId}` |
 | 重新部署 | 现有 share-deployment 流程 |
 
-资料库云端列表不复制用户可见的写状态机。除 FR-11.9 定义的服务端一致性恢复外，列表保持只读；恢复必须由独立服务复用现有分享/部署状态机，Controller 和客户端都不得直接拼接状态更新逻辑。
+资料库云端列表不复制用户可见的写状态机。除 FR-11.9 定义的服务端一致性恢复外，列表保持只读；状态恢复和永久删除都由独立领域服务执行，Controller 和客户端不得直接拼接状态更新或子表清理逻辑。
 
-客户端不得调用 `DELETE /api/html-shares/{shareId}` 后展示「记录已删除」；该接口当前执行的是 disable。分享文件首期也不提交 `allowDownload`，因为服务端尚无该字段和公共下载路径强制校验。
+客户端不得调用 `DELETE /api/html-shares/{shareId}` 后展示「记录已删除」；该接口继续执行 disable，以免破坏旧客户端。只有带 `/permanent` 的新接口具有本节定义的永久删除语义。分享文件首期也不提交 `allowDownload`，因为服务端尚无该字段和公共下载路径强制校验。
 
-### 10.11 分享文件访问分析接口
+### 10.11 分享文件永久删除接口与事务
+
+现有网站删除并不是物理删除 `html_shares` 主行：`SiteService` 先要求网站停止，`SiteDeletionStore` 将主行标成 `deleted`、清理文件和站点统计，Node 站点另清 deployment 持久数据，再把 NOS 文件交给删除队列。因此用户删除后看不到网站，但服务端仍保留最小墓碑。分享文件复用这一产品语义和状态隔离方式，但使用独立接口与领域服务；同时修正网站现链路“事务提交后才尝试写 NOS 队列”可能丢失清理意图的窗口，把分享文件的队列写入放进删除事务。后续可另项把网站链路收敛为相同可靠模式，不作为本功能修改站点代码的前置条件。
+
+#### 10.11.1 API 合同与授权
+
+新增 owner 接口，与网站删除一样返回统一成功响应：
+
+```http
+DELETE /api/html-shares/{shareId}/permanent
+Authorization: Bearer <token>
+
+200
+{
+  "code": 0,
+  "message": "success",
+  "data": null
+}
+```
+
+接口通过 `PublishingAccountContextResolver` 获取当前个人/企业发布账号，不接受客户端提交 `userId/accountMode/enterpriseId`。可删除来源固定为 `html_file/image_file/svg_file/document_file/markdown_file/mermaid_file`；站点来源必须走 `DELETE /api/sites/{shareId}`。服务端必须验证当前状态为 `disabled`，不能把 live 记录自动停止后继续删除。输入文件名只是客户端防误触交互，不是权限凭证；服务端安全边界始终是登录态、owner、来源和状态。
+
+删除结果遵守以下规则：
+
+| 当前数据 | 结果 |
+| --- | --- |
+| 当前 owner 的普通分享且 `status = disabled` | 执行清理并成功 |
+| 当前 owner 的同一普通分享已经 `status = deleted` | 幂等成功，不重复扣减计数或生成有害副作用 |
+| 当前 owner 的普通分享仍为 live | 返回 `HTML_SHARE_DELETE_REQUIRES_DISABLED` |
+| 当前 owner 的站点来源 | 按不存在/不可见处理，防止客户端绕过 Site 状态机 |
+| 其他 owner、切换账号、从未存在 | 沿用 owner 详情的统一不可见语义，不泄露资源存在性 |
+
+#### 10.11.2 MySQL 5.7 事务顺序
+
+新增 `HtmlSharePermanentDeletionService`，一个数据库事务按以下顺序执行：
+
+1. 使用 owner 条件执行 `SELECT ... FROM html_shares WHERE share_id = ? FOR UPDATE`，同时读取 deleted 墓碑以支持幂等判断；
+2. 校验来源白名单和状态；live 立即失败，deleted 直接成功；
+3. 读取当前 `html_share_files`，通过同步 Mapper 或专用的 `recordSharedFileDeletedWithinTransaction` 用 `INSERT IGNORE` 把每个 NOS URL 写入 `html_share_nos_delete_files`，`delete_reason = 'shared_file_deleted'`。队列意图必须先于文件元数据删除并与墓碑在同一事务提交；不能调用现有带 `@Async + REQUIRES_NEW` 的 recorder 方法；
+4. 删除 `html_share_files`，删除 `html_share_access_stats/html_share_ip_access_stats/html_share_access_dimension_stats`；按下述审计策略处理 `html_share_moderation_items`；
+5. 使用 `WHERE owner + share_id + status = 'disabled' + source_type IN (...)` 的条件 UPDATE 写墓碑，受影响行数必须为 1；为 0 时重新读取并区分 deleted 幂等结果与并发冲突；
+6. 提交后返回成功；NOS 物理删除在事务外由可靠消费者执行，任何对象存储延迟不能延长 HTTP 请求事务。
+
+不设置数据库外键级联，不在事务内调用 NOS，不使用 CTE、窗口函数、`JSON_TABLE`、`SKIP LOCKED` 或 MySQL 8 专属语法。现有子表均有 `share_id` 前导索引，核心删除链路无需新增 DDL。
+
+墓碑 UPDATE 使用现有列完成：
+
+- 保留 `id/share_id/user_id/account_mode/tob_enterprise_id/source_type/source_sha256/created_at/public_url`；
+- 写 `status = 'deleted'`，`title = 'Deleted shared file'`，`entry_file = '__deleted__'`，`total_files = 0`，`total_bytes = 0`；
+- 清空 `session_id/artifact_id/client_source_key` 及 `access_code_hash/access_code_salt/access_code_created_at/access_code_ciphertext/access_code_nonce`；
+- 清空 `last_accessed_at/access_expires_at/content_updated_at`；
+- 复用 `disabled_at/disabled_by_user_id/disabled_reason/updated_at` 记录删除时间、执行用户和固定内部原因 `deleted by user`，并清空不适用的管理员禁用字段。
+
+审核记录默认保留最小安全审计：保留 `share_id/share_source_sha256/share_content_updated_at/status/risk_level/categories/model_id/checked_at/created_at`，将 `relative_path/content_sha256/reason/raw_result_json/key_alias` 清空。若法务或安全团队要求不同保留期，应在上线前冻结独立合规策略和清理任务；不能无限期保留文件名、路径、正文摘要或原始模型返回。
+
+#### 10.11.3 并发、异步写与幂等
+
+- 行锁只串行化主分享操作，不自动阻止已经在途的统计或审核任务。公共访问计数、`last_accessed_at` 更新和审核落库必须增加 `status = 'live'` 且内容版本匹配的条件写，或在任务末尾再次验证状态；deleted 后不得重新产生统计、路径或内容审核明细。
+- 删除与恢复、更新内容、修改权限、自动订阅恢复并发时，以锁和条件 UPDATE 收敛。永久删除成功后，任何其他动作都把 deleted 当不可见；自动恢复候选继续排除 deleted。
+- NOS 队列表以 URL 哈希唯一键实现请求幂等。相同对象已因 `share_updated` 等原因入队时，`INSERT IGNORE` 不应把已完成状态改回 pending；消费者按对象删除的天然幂等语义处理“对象已不存在”。
+- 删除事务在“已入队、未提交墓碑”之前失败时整体回滚；提交后即使 NOS 暂时删除失败，用户访问和数据库内容仍保持不可见，消费者继续重试。
+- 若无法把统计/审核写改成条件写，必须增加删除后延迟复扫清理作为兜底；只有首次事务删除而没有防止迟到写，不满足完成标准。
+
+#### 10.11.4 NOS 清理上线阻断项
+
+当前服务端仓库能写入 `html_share_nos_delete_files`，但代码内未发现消费 pending 记录并调用 NOS 删除的任务。2026-08-26 对测试 MySQL 5.7 的只读核对显示队列中存在 180 条 `share_updated` pending 和 46 条 `site_deleted` pending，未发现 `deleted/failed` 终态记录。这说明不能仅凭“已入队”宣称对象已经物理删除。
+
+上线前必须完成以下二选一并留存验证证据：
+
+1. 确认仓库外已有生产消费者，补齐其 owner、部署位置、告警、重试策略和测试环境实际消费记录；或
+2. 在服务端实现 MySQL 5.7 兼容消费者：小批量原子抢占、幂等删除、指数退避、最大重试/人工重放、陈旧 processing 回收、pending/failed/age 指标与告警，并验证多实例不会重复并发处理同一行。
+
+若选择在本仓库实现消费者，现有表没有显式租约、重试次数和下次执行时间，建议通过单独的 MySQL 5.7 迁移增加 `attempt_count INT NOT NULL DEFAULT 0`、`next_attempt_at DATETIME NULL`、`lease_owner VARCHAR(64) NULL`、`lease_expires_at DATETIME NULL` 及 `(status, next_attempt_at, id)` 索引。Worker 使用带随机 lease token 的单条 `UPDATE ... ORDER BY id LIMIT N` 原子认领，再按 token 读取任务；NOS 调用必须在数据库事务外，结果通过 `id + status = 'processing' + lease_owner` 条件更新为 deleted 或下一次 pending/failed。启动和定时任务把租约过期的 processing 退回 pending。NOS 成功后还应把 `nos_url` 改为 `deleted://<nos_url_sha256>` 固定哨兵，清空 `share_file_id/relative_path/content_type/size_bytes/sha256/last_error`，只保留 URL 哈希、shareId、原因和时间审计，避免已物理删除的路径与对象地址无限期留在队列表。该迁移只在确认没有可复用外部消费者时实施，不改变 `html_shares` 核心表，也不得使用 `SKIP LOCKED`。
+
+消费者未验证前，产品和接口只能承诺“分享立即不可访问、数据库内容清理、对象存储删除已可靠排队”，不能承诺 NOS 文件已物理删除。正式 UI 若使用“永久删除云端文件”文案，必须把消费者验证作为发布 Gate，而不是发布后的优化项。
+
+#### 10.11.5 查询、配额与管理员后台
+
+所有普通 owner 查询显式排除 deleted：`GET /api/library/cloud-items`、`GET /api/html-shares/my`、`GET /api/html-shares/{shareId}`、owner analytics、更新/权限/状态接口和公共访问入口。常规 counts 与 `sharedStatusCounts` 只统计 live/disabled；deleted 不进入 `LibraryCloudItem`。
+
+免费累计创建限制不得复用可见列表条件，继续按 `status <> 'failed'` 或等价条件计入 deleted。当前 10 个历史分享的用户删除一条后仍为 10，不能创建第 11 条。订阅/企业活跃限制继续只看活动资源，关闭时已释放，删除不再修改配额计数或触发额度补位。
+
+管理员分享列表目前在未传 status 时会包含所有状态，需改为默认 `status <> 'deleted'`。如运营确需审计，可增加显式 deleted 筛选和只读墓碑详情；deleted 行禁用预览、审核、状态恢复、权限编辑和内容下载。管理员接口不得返回已清空前的 title、entry path、分享码或统计。`lobsterai-portal` 当前没有相关分享管理入口，本功能不修改。
+
+### 10.12 分享文件访问分析接口
 
 新增面向分享所有者的只读接口；现有 `AdminHtmlShareController` 访问统计接口继续服务后台审核，客户端不得调用或复用其包含 IP、User-Agent、Referer 的管理响应。
 
@@ -1990,7 +2276,7 @@ WHERE share_id = #{shareId}
 
 隐私约束：owner 接口只返回聚合计数，不返回 `ip_hash/ip_masked/last_user_agent/last_referer` 或维度明细；普通日志不记录分享 URL、分享码或访客标识。统计链路、清理任务和后台审核继续使用原表，不因新增 owner 接口改变。
 
-### 10.12 数据库变更与索引
+### 10.13 数据库变更与索引
 
 首期不新增资料库服务端主表。现有字段已经足以返回云端资料：
 
@@ -1998,7 +2284,7 @@ WHERE share_id = #{shareId}
 - `html_shares.created_at/updated_at/content_updated_at`；
 - `share_deployments` 的状态和更新时间。
 
-当前 Web Demo 冻结范围内，状态筛选、状态 facet、访问权限编辑、状态编辑、详情页以及精简菜单都不需要数据库 DDL。它们只使用现有 `html_shares.status/access_mode/disabled_source/created_at/updated_at/total_bytes`。Demo 中的「允许下载」不进入首期，因而本方案仍维持“无新增数据库字段”的结论。
+当前 Web Demo 冻结范围内，状态筛选、状态 facet、访问权限编辑、状态编辑、详情页、精简菜单和分享文件永久删除的核心事务都不需要数据库 DDL。永久删除复用 `status = 'deleted'` 墓碑、现有审计列、已有子表索引和 `html_share_nos_delete_files` 队列表。只有在确认不存在外部 NOS 消费者、需要在本仓库补消费者时，才按 10.11.4 单独评审队列表租约/重试字段迁移；这不改变 `html_shares`。Demo 中的「允许下载」不进入首期，因而本方案仍维持“核心分享模型无新增数据库字段”的结论。
 
 如果未来正式增加下载权限，必须另开数据库迁移方案，例如评审 `allow_download TINYINT(1) NOT NULL DEFAULT 1` 的兼容默认值、写接口并发更新和公共下载端强制校验；在这些条件完成前，不能只为匹配 Demo 视觉提前加列。
 
@@ -2025,20 +2311,21 @@ ALTER TABLE html_shares
 5. DDL 通过现有发布/DBA 流程执行并检查 `information_schema`，不能假设仅放入 `sql/Vxx__*.sql` 就会自动生效；
 6. 本文档不记录任何数据库账号、密码或测试环境连接串。
 
-### 10.13 兼容与灰度
+### 10.14 兼容与灰度
 
 上线顺序建议：
 
-1. 服务端先上线新云端列表、分享 owner analytics 只读接口和 lineage 修复；
-2. 用旧客户端验证原分享/站点接口不受影响；
-3. 分享分析图标受客户端功能开关控制，确认 owner analytics 已在目标环境上线后再开放；
-4. analytics 返回 404/`FEATURE_UNAVAILABLE` 时只隐藏当前账号 scope 的分析入口并保留设置页，绝不回退调用 Admin 接口；
-5. 客户端资料库功能灰度；
-6. 云端列表接口 404/能力未开放时，客户端可临时回退 `/api/html-shares/my + /api/sites`，但需标记为降级模式，禁用不可靠的全局最近更新和会话跳转；
-7. 新接口稳定后移除长期双实现，不让回退成为永久架构；
-8. 最后将独立站点入口重定向到资料库。
+1. 服务端先上线新云端列表、分享 owner analytics、永久删除接口、查询过滤和 lineage 修复，但永久删除功能开关默认关闭；
+2. 同步上线管理员后台对 deleted 的默认过滤与只读限制，用旧客户端验证原分享/站点接口以及旧 `DELETE /api/html-shares/{shareId}` 的关闭语义不受影响；
+3. 验证 NOS 删除消费者与迟到统计/审核写保护，完成 10.11.4 发布 Gate 后再打开服务端永久删除开关；
+4. 分享分析图标和永久删除入口分别受客户端能力开关控制，确认目标环境接口已上线后再开放；
+5. analytics 返回 404/`FEATURE_UNAVAILABLE` 时只隐藏当前账号 scope 的分析入口并保留设置页，绝不回退调用 Admin 接口；永久删除返回 `FEATURE_UNAVAILABLE` 时保留资源并提示版本暂不支持，返回 404 时先刷新权威详情/列表以区分远端已删与旧服务端无路由；
+6. 客户端资料库功能灰度；
+7. 云端列表接口 404/能力未开放时，客户端可临时回退 `/api/html-shares/my + /api/sites`，但需标记为降级模式，禁用不可靠的全局最近更新、会话跳转和永久删除；
+8. 新接口稳定后移除长期双实现，不让回退成为永久架构；
+9. 最后将独立站点入口重定向到资料库。
 
-### 10.14 错误语义
+### 10.15 错误语义
 
 新列表接口不需要新增资源级错误码：
 
@@ -2051,6 +2338,15 @@ ALTER TABLE html_shares
 | 服务端内部查询失败 | 复用统一内部错误，不返回 SQL |
 
 分享分析接口额外把非法日期、只传单侧日期、未来日期和超过 31 天的范围归一为 `INVALID_PARAMETER`；统计未启用或尚无数据时成功返回全 0 趋势及真实 `meta`，不把“没有数据”当成服务错误。
+
+永久删除增加：
+
+| 错误码 | 语义 | 客户端处理 |
+| --- | --- | --- |
+| `41315 HTML_SHARE_DELETE_REQUIRES_DISABLED` | owner 和来源正确，但分享仍可访问 | 保留页面，提示先停止访问并刷新详情 |
+| `41316 HTML_SHARE_ACTION_CONFLICT`（可选） | 行锁后发现状态/版本被另一动作改变且不能按 deleted 幂等收敛 | 保留页面并刷新权威详情，不自动重试写操作 |
+
+其他 owner、站点来源和不存在统一使用现有不可见/不存在错误；NOS 异步失败不回滚已经提交的用户删除响应，但必须进入服务端告警和重试队列。
 
 来源级失败由客户端展示在云端区域；不能把云端失败转成整个 Library IPC 调用的本地失败。
 
@@ -2143,6 +2439,22 @@ OpenClaw/Cowork 消息
 
 切换日期范围只重查分析数据，不重新请求云端列表或分享设置详情。迟到响应按 queryKey 丢弃；分析失败留在分析页局部处理，返回后设置草稿仍保留。分享停止不删除统计；切换个人/企业发布账号时立即清除分析缓存并回到云端列表。
 
+### 11.9 永久删除分享文件
+
+```text
+分享设置页危险区域点击「永久删除」
+  -> live 时提示先停止访问，不自动继续
+  -> disabled 时展示影响说明并要求输入完整文件名
+  -> Renderer 校验确认名并调用 htmlShare:deletePermanently
+  -> Main 只校验 shareId 形态并使用当前发布账号鉴权请求
+  -> 服务端 owner + shareId 行锁，校验普通分享来源和 disabled
+  -> 同一事务先持久化 NOS 删除意图，再清理文件/统计并写 deleted 墓碑
+  -> 返回统一成功；NOS 消费者异步物理删除对象
+  -> 客户端清详情、分析和收藏缓存，移除当前行并刷新云端第一页
+```
+
+如果删除期间另一端已删除，同一 owner 得到幂等成功；如果另一端恢复了分享，条件 UPDATE 失败并返回状态冲突，客户端刷新后显示当前状态。任何失败都不得只在 Renderer 隐藏资源。删除成功后，旧的公开 URL、owner 详情和 owner analytics 均按不存在处理；本地文件、任务和消息链路完全不参与。
+
 ## 12. 安全、隐私和性能
 
 ### 12.1 隐私
@@ -2156,6 +2468,7 @@ OpenClaw/Cowork 消息
 - 收藏的具体 item ID；
 - 分享码、访问凭证、环境变量。
 - 分享访客的 `ip_hash/ip_masked`、User-Agent、Referer 或可反推个人的访问明细。
+- 永久删除前的分享标题、入口相对路径、NOS URL、审核原文/原因或模型原始响应。
 
 允许的聚合埋点维度：
 
@@ -2169,7 +2482,7 @@ OpenClaw/Cowork 消息
 
 ### 12.2 文件操作安全
 
-1. 所有文件读取、打开和显示在主进程执行；资料库不提供删除真实文件的能力；
+1. 所有本地文件读取、打开和显示在主进程执行；资料库不提供删除本机真实文件的能力。分享永久删除只作用于云端分享记录、统计和该分享引用的 NOS 对象；
 2. Renderer 只能提交本地资料 ID，主进程从 SQLite 解析真实路径；
 3. 路径必须经过规范化并限制为当前记录；
 4. HTML/SVG 继续走沙箱和清洗；
@@ -2182,11 +2495,14 @@ OpenClaw/Cowork 消息
 | --- | --- |
 | 1,000 条本地产物 SQLite 首屏查询 | P95 < 150ms |
 | 页面进入到本地首屏可见 | P95 < 300ms，不含应用冷启动 |
-| 同一 `queryKey` 的整页骨架挂载次数 | 最多 1 次；已有内容后为 0 次 |
+| 页面冷启动请求在 150ms 内完成 | 整页骨架挂载 0 次，直接提交结果或确认空态 |
+| 有可用快照的 query 切换 | 整页骨架挂载 0 次；工具栏和内容槽无位移，最终空态只在权威响应后出现 |
+| 无快照且超过 150ms 的冷查询/来源切换 | 结构化骨架最多挂载 1 次，可见不少于 200ms；全宽线条骨架挂载 0 次 |
 | 100 个变更事件在 300ms 内到达 | 合并为 1 个逻辑刷新；最多 1 个执行中请求和 1 个尾随批次 |
 | 后台回填期间列表可交互性 | 已显示内容不卸载；滚动、筛选、菜单和预览可用，不因文件总数增加整页骨架时长 |
 | 云端列表接口 | P95 < 500ms（服务端处理，不含弱网） |
 | 分享分析 7/30 天查询 | P95 < 500ms（owner 单资源、服务端处理，不含弱网） |
+| 分享永久删除接口 | P95 < 500ms（不等待 NOS 物理删除；子表量级需单独压测） |
 | 搜索输入主线程阻塞 | 单次 < 16ms |
 | watcher 单批重复事件 | 合并为一次索引写 |
 | 历史回填 | 不产生 > 50ms 的连续 Renderer 长任务 |
@@ -2213,6 +2529,8 @@ OpenClaw/Cowork 消息
 [LibraryWatch]
 [LibraryRefresh]
 [LibraryCloud]
+[HtmlShareDelete]
+[HtmlShareNosDelete]
 ```
 
 只记录：
@@ -2220,17 +2538,20 @@ OpenClaw/Cowork 消息
 - 索引初始化/迁移结果；
 - 回填开始、检查点和完成摘要；
 - 本地产物页面每次进入的聚合加载摘要：`platform/querySource/initialQueryMs/firstContentMs/initialSkeletonMounts`；
+- 查询切换聚合摘要：`querySource/transitionReason/cacheHit/resolvedBeforeIndicator/indicatorShown/indicatorVisibleMs/staleResponseCount/falseEmptyTransitions`；不记录 query 值；
 - 每轮事件合并摘要：`reasonBuckets/eventCount/distinctItemCount/ipcBatchCount/trailingRefresh/coalescedDurationMs`；
 - 回填完成后的聚合稳定性摘要：`indexedCountBucket/changeEventCount/refreshBatchCount/contentToSkeletonTransitions/totalDurationMs`；其中 `contentToSkeletonTransitions` 的正确值必须为 0；
 - watcher 降级数量；
 - 可见查询忽略异常无任务关系响应时的聚合数量；不记录 artifactId、路径、文件名或任务标题；
 - 云端请求状态码和耗时；
 - 分享分析范围天数、是否有数据和聚合耗时，不记录 shareId、URL 或访客标识；
+- 永久删除的来源类型、结果码、事务耗时和清理行数分桶，不记录 shareId、标题、路径或 URL；
+- NOS 删除队列的 pending/processing/failed 数量、最老 pending 年龄、重试次数分桶和消费耗时；
 - 事务失败及 Error 对象。
 
 不在每个文件事件、每张卡片、每次 `stat` 打 info 日志。
 
-以上刷新日志默认使用 debug；只在发生请求失败、协调器队列无法收敛、出现一次以上 `contentToSkeletonTransitions` 或定向 IPC 降级为全量校验时记录 warn。数量必须分桶或聚合，不记录 `itemId`、文件名、路径、任务标题、关键词或滚动位置。若接入产品埋点，只允许上报相同非敏感聚合字段，并复用现有客户端到服务端的可靠上报通道；不能把 Renderer `console` 当作线上性能数据源。
+以上刷新日志默认使用 debug；只在发生请求失败、协调器队列无法收敛、出现一次以上 `contentToSkeletonTransitions/falseEmptyTransitions`、已显示骨架短于 200ms 或定向 IPC 降级为全量校验时记录 warn。数量必须分桶或聚合，不记录 `itemId`、文件名、路径、任务标题、关键词或滚动位置。若接入产品埋点，只允许上报相同非敏感聚合字段，并复用现有客户端到服务端的可靠上报通道；不能把 Renderer `console` 当作线上性能数据源。
 
 ## 13. 涉及文件与模块边界
 
@@ -2245,12 +2566,15 @@ OpenClaw/Cowork 消息
 | `src/main/library/libraryIndexService.ts` | 候选收录、校验、回填状态；关系写入事务内再次确认任务存在，防止删除竞态回流 |
 | `src/main/library/libraryCloudClient.ts` | 云端列表接口、分享/站点归一化和有界客户端筛选 |
 | `src/main/library/libraryIpc.ts` | IPC 注册与输入校验 |
-| `src/renderer/components/library/LibraryView.tsx` | 页面容器、来源查询状态、本地产物工具栏与自动续页 |
+| `src/renderer/components/library/LibraryView.tsx` | 页面容器、查询 reducer 接线、本地产物工具栏与自动续页；不内嵌快照 LRU、显现 timer 或状态转换算法 |
 | `src/renderer/components/library/libraryRefreshCoordinator.ts` | 单订阅事件合并、300ms/1,000ms 调度、单请求与单尾随约束；保持为可注入时钟的纯 TypeScript 模块 |
 | `src/renderer/components/library/libraryLocalQueryState.ts` | 当前本地查询匹配、稳定 ID upsert、不可用项移除、排序窗口与游标边界纯函数；不访问 IPC 或 DOM |
-| `src/renderer/components/library/LibrarySharedFilesView.tsx` | 云端类型/可访问性筛选、分享与站点联合列表、分享设置/分析子路由、自动续页和空态（文件名保留为渐进迁移兼容） |
+| `src/renderer/components/library/libraryQueryTransitionState.ts`（建议新增） | 本地/云端共用的 `initial/transitioning/settled/refreshing/appending` reducer、query 快照 LRU、迟到响应保护和显现时序纯逻辑；不访问 IPC、DOM 或 i18n |
+| `src/renderer/components/library/LibraryQuerySkeleton.tsx`（建议新增） | 本地列表、本地网格和云端四列的结构化、无分隔线骨架；统一 reduced-motion、ARIA 和主题 token |
+| `src/renderer/components/library/LibrarySharedFilesView.tsx` | 云端类型/可访问性筛选、分享与站点联合列表、分享设置/分析子路由、永久删除危险区域、自动续页和空态；消费拆分后的查询状态，不自行绘制空白线条骨架（文件名保留为渐进迁移兼容） |
 | `src/renderer/components/library/LibraryPreviewModal.tsx` | 本地产物沉浸式预览与统一动作菜单 |
 | `src/renderer/components/library/HtmlShareAnalyticsView.tsx` | 分享文件摘要指标、日期范围、趋势、空态和错误重试；不承载 owner 校验或原始 IP 数据 |
+| `src/renderer/components/library/HtmlShareDeleteDialog.tsx`（建议新增） | 删除影响说明、完整文件名确认、提交锁定和错误展示；只负责交互，不拼接接口或缓存逻辑 |
 | `src/renderer/components/analytics/AccessAnalyticsChart.tsx`（可选提取） | 分享与网站共用的纯展示折线图，指标名称和序列由调用方传入 |
 | `src/shared/library/cloudAvailability.ts` | 分享/站点到「可访问 / 不可访问」的共享纯函数 |
 | `src/renderer/components/library/*` | 本地产物卡片、日期/任务分组、动作策略、空态和缩略图缓存；不渲染未关联任务兜底组 |
@@ -2268,17 +2592,19 @@ OpenClaw/Cowork 消息
 | `src/renderer/components/Sidebar.tsx` | 新入口、active 和埋点 |
 | `src/renderer/services/artifactDetection.ts` 或上层调用点 | 批量提交已确认文件候选 |
 | `src/renderer/components/artifacts/*` | 复用分享、预览、部署动作，不复制状态机 |
-| `src/renderer/components/library/libraryItemActionPolicy.ts` | 为分享文件固定设置/链接/会话动作，移除状态切换和伪删除动作 |
-| `src/renderer/services/i18n.ts` | 中英文资料库文案；停止使用「未关联任务」列表分组文案 |
+| `src/renderer/components/library/libraryItemActionPolicy.ts` | 为分享文件固定设置/链接/会话动作；列表菜单继续不放状态切换或永久删除，删除只在设置页危险区域 |
+| `src/renderer/services/i18n.ts` | 中英文资料库文案；补永久删除影响、输入确认、需先停止、能力不可用和错误文案 |
 | `src/renderer/components/sites/SitesView.tsx` | 接收 `shareId` 深链并复用既有站点详情、分析和设置 |
-| `src/shared/htmlShare/constants.ts` | 新增集中定义的 analytics IPC、范围和响应类型，不复用 `SiteAnalytics` 业务类型 |
-| `src/main/libs/htmlShare/htmlShareClient.ts` | 调用 owner analytics，只传白名单日期参数并归一化响应 |
-| `src/main/main.ts`、`src/main/preload.ts`、`src/renderer/types/electron.d.ts` | 注册并暴露最小 `htmlShare:getAnalytics` bridge；Main 校验 shareId/日期范围 |
+| `src/shared/htmlShare/constants.ts` | 新增集中定义的 analytics 与 `DeletePermanently` IPC、范围和响应类型，不复用 `SiteAnalytics` 业务类型 |
+| `src/main/libs/htmlShare/htmlShareClient.ts` | 调用 owner analytics 与 `/permanent` 删除接口，只传白名单参数并归一化响应 |
+| `src/main/main.ts`、`src/main/preload.ts`、`src/renderer/types/electron.d.ts` | 注册并暴露最小 analytics/永久删除 bridge；Main 校验 shareId/日期范围，不接受 Renderer 传 owner 或文件路径 |
 | 网站分析图表现有组件 | 仅在视觉复用收益明确时提取 `AccessAnalyticsChart`，保持网站 `pageViews/topPages` 与文件 `accesses` 的领域类型独立 |
 
 `App.tsx`、`main.ts`、`sqliteStore.ts` 和当前 `LibraryView.tsx` 都是大型文件。云端管理增量不得继续堆入 `LibraryView.tsx`：联合列表与分享设置保留独立组件，容器只保留来源路由、查询协调和共享错误边界；不顺手拆分本地产物索引或做大范围格式化。
 
 本次首开闪屏修复遵守同一大型文件约束：只把事件调度和本地查询合并纯逻辑分别提取到上述两个小模块，`LibraryView.tsx` 负责状态接线、渲染和滚动锚点，不借机拆分整个页面或修改云端业务。修复只涉及 `LobsterAI` 客户端、共享 IPC 常量/类型和本地查询；不涉及 `lobsterai-server`、线上 MySQL、SQLite DDL 或现有索引策略版本。回滚时可以恢复旧刷新协调方式，新 IPC 无写入副作用，已完成的本地回填数据不需要回滚。
+
+本次查询切换闪线修复继续遵守大型文件约束：查询 phase、快照和 timer 进入 `libraryQueryTransitionState.ts`，三种骨架进入独立展示组件；`LibraryView.tsx` 只编排查询和滚动，`LibrarySharedFilesView.tsx` 只按派生状态展示。该增量只涉及 `LobsterAI` Renderer 和对应 Vitest/i18n，不增加 IPC，不修改服务端、MySQL 5.7、客户端 SQLite DDL、分享/站点接口或免费用户配额逻辑。
 
 本次“删除最后一个任务关系后隐藏本地产物”的增量只涉及客户端本地查询、任务删除通知、索引关系写入保护、Renderer 分组和对应测试；不涉及 `lobsterai-server`、线上 MySQL 5.7、服务端 API 或 SQLite DDL。已有表和索引足以实现，发布时无需数据迁移或清理历史文件。
 
@@ -2293,6 +2619,8 @@ OpenClaw/Cowork 消息
 | `LibraryMapper.java/xml` | MySQL 5.7 聚合列表与 counts |
 | `LibraryCloudItem.java` | 云端联合 DTO |
 | `LibraryCloudListResponse.java` | list/cursor/counts |
+| `HtmlSharePermanentDeletionService.java` | owner/来源/状态校验、行锁、队列意图、子表清理、墓碑和幂等事务 |
+| `HtmlShareNosDeleteWorker.java`（若无外部消费者） | MySQL 5.7 小批量抢占、NOS 幂等删除、重试、陈旧任务回收和指标；若确认外部消费者则不重复实现 |
 
 需要修改：
 
@@ -2302,8 +2630,9 @@ OpenClaw/Cowork 消息
 | `HtmlShareService.java` | 更新 lineage 并保留旧客户端语义 |
 | `HtmlShareMapper.xml` | `updateShareContent` 写 `session_id/artifact_id` |
 | `HtmlShareController.java` | 增加 owner `GET /api/html-shares/{shareId}/analytics`，复用发布账号上下文与 owner 不可见语义 |
+| `HtmlShareController.java` | 增加 `DELETE /api/html-shares/{shareId}/permanent`，旧 DELETE 保持关闭语义 |
 | `HtmlShareAccessStatsService.java` | 新增分享生命周期聚合与日期补零方法；保留现有后台当前版本统计方法 |
-| `HtmlShareAccessStatsMapper.java/xml` | 增加跨内容版本的每日访问、每日独立访客和范围独立访客查询 |
+| `HtmlShareAccessStatsMapper.java/xml` | 增加跨内容版本查询、按 shareId 删除，以及 deleted/版本条件写保护 |
 | `HtmlShareOwnerAnalyticsResponse.java`（建议新增） | 只包含 `summary/trend/meta`，不复用或暴露后台 IP/维度 DTO |
 | `LibraryController.java` | 增加 `sharedStatus` 白名单参数 |
 | `LibraryService.java` | 校验 kind/status 组合并组装 `sharedStatusCounts` |
@@ -2312,13 +2641,25 @@ OpenClaw/Cowork 消息
 | `PublishingSubscriptionRecoveryService.java`（已新增） | 统一 64 条候选锁定、文件/在线网站条件恢复、停止静态网站状态恢复和 Node 待用户重部署分类；由订阅提交后事件与云端第一页复用 |
 | `PublishingSubscriptionActivatedEvent.java` / `PublishingSubscriptionRecoveryListener.java`（已新增） | 订阅事务提交后异步触发恢复，隔离订阅主事务耗时与失败 |
 | `HtmlShareMapper.java/xml` | 增加按 owner + `access_expires_at IS NOT NULL` 的 MySQL 5.7 游标查询，以及仅针对普通用户固定到期原因的条件恢复语句 |
+| `HtmlShareMapper.java/xml`、`HtmlShareFileMapper.java/xml` | 增加 owner 行锁、disabled 条件墓碑更新、deleted 幂等查询、文件快照和按 shareId 删除；常规 owner 查询排除 deleted |
+| `HtmlShareNosDeleteFileRecorder.java` / Mapper | 增加不带 Async/REQUIRES_NEW 的事务内同步入口，支持 `shared_file_deleted` 原因，并保证队列意图与墓碑同事务、URL 哈希幂等 |
+| 审核与访问采集 Service/Mapper | 异步写入增加 live + 内容版本守卫；删除时清理统计并脱敏审核内容，防止迟到写复活 |
+| 免费分享限额查询 | 明确继续包含 deleted、排除 failed；与只统计 live/disabled 的可见列表 SQL 分离 |
 | `ShareDeploymentMapper.java/xml` / `ShareDeploymentService.java` | 在线网站清除 deployment 到期时间；停止静态网站条件恢复现有 deployment；Node 用户主动重新部署沿用现有状态机，自动链路不得启动 Node 服务 |
 | `SubscriptionService.java` | 订阅激活事务提交后异步触发恢复；恢复失败不得回滚订阅 |
 | `LibraryService.java` / `LibraryCloudListResponse.java` | 有效个人订阅的无 cursor 第一页执行兜底检查，并可返回向后兼容的 `recoveryPending` |
 | `SiteListItem`/映射（可选） | 若资料库直接复用站点 DTO，则补 lineage/key；推荐独立 Library DTO |
-| `sql/Vxx__*.sql`（条件） | 分享管理首期不新增 DDL；仅在 EXPLAIN 确认后另行增加索引 |
+| `sql/Vxx__*.sql`（条件） | 分享管理与永久删除首期不新增核心 DDL；仅当本仓库实现队列消费者且现有状态不足以原子抢占时，单独评审兼容迁移 |
 
-正式实施分享文件管理页和访问分析时，还需同步更新现有 `docs/server-integration/2026-08-17-library-cloud-items.md`，冻结 `sharedStatus/sharedStatusCounts`、owner analytics、错误码、灰度顺序和兼容策略；订阅恢复合同同时同步到 `docs/server-integration/2026-08-20-publishing-quota-expiration.md`。联调文档必须明确区分已实现合同与待上线接口。本 Spec 是产品与技术目标设计，不替代实施时冻结的 API 合同。
+### 13.4 管理员后台与用户后台
+
+| 仓库/模块 | 修改 |
+| --- | --- |
+| `lobsterai-admin` 分享列表与 API 类型 | 默认排除 deleted；可选增加显式“已删除”只读筛选；deleted 禁止预览、审核、恢复、权限编辑和下载 |
+| `lobsterai-server` Admin HtmlShare Mapper/Service | 未传 status 时增加 `status <> 'deleted'`；显式审计查询只返回墓碑安全字段 |
+| `lobsterai-portal` | 当前没有对应分享文件管理入口，不修改；不得为了本功能新增重复入口 |
+
+正式实施分享文件管理页、访问分析和永久删除时，还需同步更新现有 `docs/server-integration/2026-08-17-library-cloud-items.md`，并新增或补充永久删除联调合同，冻结 `/permanent`、`41315/41316`、deleted 过滤、免费历史配额、NOS 清理完成定义、灰度顺序和兼容策略；订阅恢复合同同时同步到 `docs/server-integration/2026-08-20-publishing-quota-expiration.md`。联调文档必须明确区分已实现合同与待上线接口。本 Spec 是产品与技术目标设计，不替代实施时冻结的 API 合同。
 
 ## 14. 实施阶段
 
@@ -2365,6 +2706,19 @@ OpenClaw/Cowork 消息
 
 发布不依赖服务端顺序。若定向读取在灰度中出现异常，可临时关闭定向合并并退化为“保留内容的单次静默第一页校验”；不能回退为收到每个事件都显示整页骨架。由于没有 DDL 和数据格式变化，回滚不会影响已建立的索引、回填游标、真实文件或收藏。
 
+### 本次查询切换闪线修复的落地顺序
+
+1. **先冻结状态测试**：新增 `libraryQueryTransitionState.ts` 及 fake timer 单元测试，覆盖 150ms 前完成、超过阈值、骨架最短 200ms、快速连续 query、失败保留快照、卸载取消和账号 scope 清理；在测试通过前不改列表 JSX。
+2. **原子化查询切换**：把来源、类型、收藏、可访问性和已防抖关键词统一接到 `QUERY_CHANGED` action；删除“控件先渲染、被动 effect 下一帧再进入 initial”的状态间隙。网络请求仍由 effect 执行，但 effect 不再决定展示 phase。
+3. **接入页面级快照 LRU**：按 6.2.3 的 query/scope 规则保存最多 8 个快照；先覆盖本地与云端来源切换，再覆盖同来源筛选。登出和 owner scope 变化必须先通过自动测试证明不会短暂泄露旧账号数据。
+4. **拆分加载派生值**：以 `showInitialSkeleton/isTransitioning/isRefreshing/isAppending/isQueryBusy/ariaBusy` 替换跨组件共用的 `loading`；列表替换只依赖延迟后的 `showInitialSkeleton`，工具栏进度依赖 `isTransitioning || isRefreshing`，刷新按钮禁用依赖 `isQueryBusy`，加载更多只依赖 `isAppending`。
+5. **替换线条骨架**：新增本地列表、本地网格和云端四列结构化骨架；移除 loading 分支中的 `border-y/divide-y/row border-b`，保留正式列表自身的分隔线。补浅色、深色和 reduced-motion 快照/组件断言。
+6. **补错误和可访问性反馈**：过渡快照设为只读、`aria-busy`，慢请求只播报一次本地化加载文本；有旧快照的失败态明确说明当前显示的是上次结果，无快照时进入来源级错误，不经过空态。
+7. **加入无敏感数据观测**：聚合记录 query 来源、是否快照命中、是否在 150ms 内完成、骨架是否显现、可见时长和迟到响应数量；不记录关键词、文件名、路径、资源 ID 或 owner 标识。
+8. **最后进行 Electron 录屏回归**：分别以快速 IPC、500ms 延迟和失败响应覆盖 Tab、收藏、类型、状态、搜索、刷新与续页；在 60fps 录屏中逐帧确认没有整行横线、错误空态和跨账号旧内容。
+
+该增量可以单独随客户端发布，不依赖服务端或数据库迁移。若灰度发现快照状态异常，可关闭快照复用并退化为“150ms 延迟 + 无分隔线结构化骨架”，但不能回滚到每次 query 立即展示空行分隔线。关闭快照只影响视觉，不影响请求、游标和本地索引数据。
+
 ### 阶段 3：云端聚合
 
 1. 服务端 lineage 修复；
@@ -2379,16 +2733,19 @@ OpenClaw/Cowork 消息
 10. 账号 scope 收藏；
 11. 离线、降级和错误态。
 12. 增加订阅升级恢复：订阅事务提交后主动触发、云端第一页兜底、分享文件与在线网站条件恢复、静态网站 CAS 自动恢复、Node 服务手动重新部署和可选 `recoveryPending` 有界刷新；不新增 DDL。
+13. 增加分享文件永久删除：先完成服务端事务、deleted 查询过滤、免费历史配额回归和迟到写保护，再完成管理员后台兼容、NOS 消费者验证，最后开放客户端危险区域与文件名确认。
 
 ### 阶段 4：迁移和灰度
 
-1. 服务端先上线；
-2. 内部账号和测试环境验证 MySQL 5.7；
-3. 客户端功能开关灰度；
-4. 对比旧 SitesView 行为；
-5. 入口重定向；
-6. 观察索引性能、误收录和 watcher 降级；
-7. 达到指标后全量。
+1. 服务端先上线，永久删除开关保持关闭；
+2. 管理员后台上线 deleted 默认过滤和只读保护；
+3. 内部账号和测试环境验证 MySQL 5.7、免费 10 个历史名额不释放、并发幂等和所有 owner/public 查询不可见；
+4. 确认外部 NOS 消费者或上线本仓库消费者，验证实际物理删除、积压告警与重试后通过发布 Gate；
+5. 客户端功能开关灰度，旧服务端能力不足时保留条目并明确提示；
+6. 对比旧 SitesView 行为；
+7. 入口重定向；
+8. 观察删除失败率、NOS 队列年龄、索引性能、误收录和 watcher 降级；
+9. 达到指标后全量。
 
 ## 15. 验证与测试计划
 
@@ -2409,13 +2766,20 @@ OpenClaw/Cowork 消息
 - 收藏 owner scope 隔离；
 - 本地展示资格在游标和 `LIMIT` 前生效，跨页无短页、重复项或隐藏项计数泄漏；
 - 来源游标、追加去重和迟到响应；
+- 查询条件、目标 `queryKey` 和 `transitioning` phase 由同一 reducer action 原子提交，不出现新筛选配旧 `settled` 状态；
+- 请求在 149ms 完成时不显现骨架；150ms 后仍未完成才显现；骨架已显现时响应先缓存并满足 200ms 最短可见时间；新 query 和卸载立即取消 timer；
+- 快速连续切换来源/类型/收藏/状态/搜索时只有最后一个 `requestId + queryKey` 可以提交，迟到请求不能写快照、错误或滚动；
+- query 快照 LRU 按来源与 owner scope 隔离、每组最多 8 项；登出和账号切换同步清除云端快照，本地快照不受登录变化影响；
+- `initial/transitioning/refreshing/appending` 分别导出骨架、过渡忙碌、刷新按钮和续页状态，不再由同一个 `loading` 布尔值控制；
 - `LibraryRefreshCoordinator` 将 300ms 内事件合并为一个逻辑批次，持续事件在 1,000ms 内刷新，且任何时刻最多一个执行中和一个尾随批次；
 - 初始请求期间收到事件不会取消并重启初始骨架；初始请求完成后只执行一次尾随定向读取；
 - 定向合并覆盖新增项、字段更新、跨排序边界、失去展示资格、超过 100 个 ID 分片和旧 bridge 无 ID 降级；
 - 批量 `getLocalItems` 拒绝空数组、超过 100 个 ID、重复/非法 ID 和任何文件路径输入；
 - 云端可访问性归一化、类型到 `kind/category` 的映射、queryKey 隔离和游标重置；
-- 分享菜单动作策略不出现「重新打开」「删除分享记录」和本地文件动作；
+- 分享列表菜单动作策略不出现「重新打开」「删除分享记录」和本地文件动作；永久删除只能从设置页危险区域进入；
 - 分享设置写操作成功同步列表缓存、失败回滚；
+- 永久删除要求 disabled 和完整文件名精确匹配；live、空白、大小写或 Unicode 不一致均不能提交；
+- 永久删除成功更新当前 query 的 `counts.sharedFile/sharedStatusCounts.all/sharedStatusCounts.disabled`，使其他筛选缓存失效，清理收藏/详情/分析缓存并触发第一页权威刷新；失败和能力不可用不修改缓存；
 - 分享分析日期参数规范化、queryKey 隔离、迟到响应丢弃和账号 scope 清理；
 - 分享分析类型保持 `accesses`，不误映射为网站 `pageViews`；
 - watcher 防抖、原子保存、missing、permission denied；
@@ -2444,12 +2808,19 @@ OpenClaw/Cowork 消息
 - 分享设置标题栏显示独立分析入口；设置页与分析页互相返回时不丢失未提交草稿；
 - 分享分析默认 7 天、可切换 30 天，摘要/趋势/零数据/局部错误正确，且不渲染热门页面或访客明细；
 - 停止访问的分享仍可进入分析并查看历史数据；
-- 首期不渲染「允许下载」，列表和设置菜单均不渲染永久删除语义；
+- 首期不渲染「允许下载」；列表菜单不渲染删除，分享设置页底部仅对普通分享渲染永久删除危险区域；
+- live 分享的删除入口提示先停止且不自动串联；user/admin/moderation/active_limit/system 来源的 disabled 分享均可进入删除确认；
+- 删除对话框逐项说明公共链接、云端文件、分析、本地文件和免费名额影响，只有完整文件名一致时允许提交；提交中不能重复触发；
+- 删除成功返回云端列表并刷新；能力错误保留资源，404 先权威刷新并分别验证“远端已删收敛”和“旧服务端无路由”两种结果；
 - 列表视图始终单列，网格视图按宽度响应式分列；
 - 网格/列表偏好；
 - 卡片简约字段不溢出；
 - 分组跨页追加；
-- 新 `queryKey` 首次请求最多挂载一次骨架；首屏内容出现后，任意 `recorded/file_changed/repair/session_deleted` 事件都不会重新渲染整页骨架；
+- 页面冷启动请求在 150ms 内完成时不挂载骨架；超过阈值只挂载一次结构化骨架并满足 200ms 最短可见时间；
+- 来源、类型、收藏、可访问性和搜索切换时，有快照不挂载整页骨架；无目标来源快照时也不显示上一来源内容、错误空态或线条骨架；
+- 首屏内容出现后，任意 `recorded/file_changed/repair/session_deleted` 事件都不会重新渲染整页骨架；
+- 慢请求中的同来源旧快照设置 `aria-busy` 且条目动作不可用，筛选工具栏仍可继续操作；失败后明确标识上次结果，无快照失败直接进入来源级错误；
+- loading 分支中不出现 `border-y/divide-y/row border-b` 组合；本地列表、网格和云端四列骨架均有结构化占位块，并覆盖 reduced-motion；
 - 100 个事件风暴只形成一次批量 React 状态提交；请求进行中追加事件只形成一个尾随批次；
 - 回填从空索引开始时只发生“初始占位或空态 → 列表”的单向转换，不发生“列表 → 骨架”；
 - 在列表中部滚动、打开更多菜单或预览时注入回填和 watcher 事件，滚动锚点、筛选、菜单及预览保持不变；
@@ -2474,6 +2845,14 @@ OpenClaw/Cowork 消息
 - 更新过程中去重；
 - 来源 counts、sharedStatusCounts 与过滤一致，且 facet 忽略当前状态；
 - 普通分享列表只返回 live/disabled，不把 failed/deleted 计入状态总数；
+- 永久删除接口只允许当前 owner 的 disabled 普通分享；live 返回 `41315`，站点/他人/不存在统一不可见；
+- 同一 owner 重复删除幂等成功；删除与恢复、内容更新、权限修改并发时条件 UPDATE 不覆盖 deleted，冲突可返回 `41316`；
+- 删除事务先把全部当前 NOS 文件以 `shared_file_deleted` 入队，再删文件/统计并写墓碑；任一步失败整体回滚；队列 URL 唯一冲突不会重置已完成任务；
+- 墓碑保留 owner/shareId/sourceType/sourceSha256/createdAt，清除 lineage、分享码凭据、用户标题/入口、访问时间与容量；普通详情、analytics、公共入口、更新和恢复均不可见；
+- `html_share_files` 和三类访问统计按 shareId 清空；审核明细按策略脱敏；在途统计、last-access 和审核写不会在 deleted 后重新生成数据；
+- 免费累计创建数继续包含 deleted：10/10 删除后仍拒绝第 11 个，9/10 删除后仍为 9/10；活跃额度不在永久删除时重复释放；
+- Admin 默认列表排除 deleted，显式审计只读且不能预览、审核、恢复或编辑；
+- NOS 消费者覆盖多实例抢占、对象已不存在、短暂失败重试、陈旧 processing 回收、failed 告警和积压年龄指标；成功后脱敏 URL/路径元数据，测试环境必须出现真实 `status = 'deleted'` 且对象不存在的结果后才能宣称物理删除；
 - 站点最新 deployment 选择；
 - mixed collation 查询；
 - PUT 分享 lineage：缺失保留、非空更新；
@@ -2518,6 +2897,13 @@ OpenClaw/Cowork 消息
 18. Windows 分别准备 100、1,000、10,000 个可识别历史产物，重置测试用回填策略状态后首次进入本地产物；录屏确认整页骨架最多出现一次，列表一旦出现不再被卸载，文件越多只延长后台补充而不延长闪屏。
 19. Windows 回填期间持续滚动、切换类型、搜索、打开更多菜单和预览，确认主界面可交互、滚动锚点稳定且最多一个尾随刷新；随后重新进入确认 `completedAt` 生效，不再次启动同策略回填。
 20. Windows 在 Defender 开启状态下批量修改、重命名和原子保存同目录文件，确认 watcher 事件合并且不触发整页骨架；再模拟定向 IPC 失败，确认仅出现保留内容的错误/静默校验。
+21. 对 live 分享点击永久删除，确认只提示先停止且没有自动关闭；停止后输入错误文件名不能提交，输入完整文件名才可提交。
+22. 分别删除 user/admin/moderation/active_limit/system 原因关闭的普通分享，确认均可删除；站点来源没有该入口且 API 不能绕过 Site 删除。
+23. 删除成功后确认行、收藏、详情和分析缓存消失，公共 URL、owner 详情和 analytics 返回不可见；本地文件、任务和消息仍存在，重复提交幂等成功。
+24. 用免费账号验证 10/10 删除后仍不能创建，9/10 删除后仍显示 9/10；用订阅/企业账号确认停止已释放活跃名额，删除不再二次改变配额。
+25. 在测试环境跟踪 `shared_file_deleted` 队列到 NOS 实际对象不存在，模拟删除失败后可重试并产生告警；消费者未验证时阻止正式发布。
+26. 对本地/云端列表分别注入 `<150ms`、约 500ms、失败和乱序响应，以 60fps 录制并逐帧切换来源、收藏、类型、可访问性和搜索；确认快速请求无加载态，慢请求无全宽横线，错误不经过空态，只有最后一次 query 提交。
+27. 在个人账号 A、企业账号 B 和登出状态间切换，确认云端快照不跨 scope 短暂出现；随后切回本地产物，确认本地快照不因登录变化丢失。
 
 ## 16. 边界情况
 
@@ -2539,11 +2925,17 @@ OpenClaw/Cowork 消息
 | 已隐藏产物后来被新任务关联 | 原 `artifact_id` 恢复展示，归组到新任务并恢复原收藏状态 |
 | 任务删除与迟到 Artifact 事件并发 | 关系写事务确认任务仍存在；已删除任务不能使产物回流 |
 | 服务端仍保存已删本地 sessionId | 客户端校验失败后不显示错误会话 |
-| 分享已停止 | 继续展示「已关闭」；仅用户主动关闭时可在分享设置页恢复，列表菜单不提供恢复动作 |
-| 分享被管理员/审核/配额/系统关闭 | 设置页禁用状态开关并展示原因，不允许绕过服务端恢复 |
+| 分享已停止 | 继续展示「已关闭」；仅用户主动关闭时可在分享设置页恢复，列表菜单不提供恢复动作；owner 可从设置页危险区域永久删除 |
+| 分享被管理员/审核/配额/系统关闭 | 设置页禁用状态开关并展示原因，不允许绕过服务端恢复；仍允许 owner 永久删除普通分享 |
 | 历史 failed 分享记录 | 不进入常规分享列表或状态 facet；详情意外返回时显示不可操作错误态 |
 | 旧服务端没有过期或有效状态投影字段 | 保持原始状态展示，不按创建时间猜测过期；新字段可用后统一归入可访问/不可访问 |
 | 分享设置打开后记录被删除或换账号 | 退出设置页、清理缓存并刷新当前账号列表 |
+| 永久删除时另一端已删除 | owner 墓碑判断后幂等成功；客户端按成功清理缓存 |
+| 永久删除时另一端已恢复或更新 | 条件更新不覆盖新状态；返回需先停止或动作冲突，客户端刷新详情 |
+| 删除事务已提交但 NOS 暂时失败 | 分享保持不可访问，数据库内容不恢复；队列重试并告警，不让用户重复创建同 ID |
+| 删除后迟到统计/审核任务回写 | live + 内容版本条件不成立而跳过；兜底清理任务再次移除孤儿数据 |
+| 免费用户删除分享 | 可见数减少，历史创建数不变；达到 10/10 时仍拒绝新建 |
+| 管理员未指定状态查询分享 | 默认排除 deleted；只有显式审计筛选可见最小墓碑且所有写动作禁用 |
 | 分享更新了内容版本 | 设置页保持同一 `shareId`；分析按分享生命周期汇总旧版和新版，不出现历史归零 |
 | 分享分析范围早于统计上线时间 | 返回真实 `dataAvailableFrom`，未采集日期补 0，不做回算 |
 | 分享分析当前无访问 | 摘要显示 0、趋势显示零基线，不误报接口失败 |
@@ -2566,7 +2958,12 @@ OpenClaw/Cowork 消息
 | 页面隐藏或已切到云端时本地文件变化 | 只标记本地 query dirty；返回本地产物时刷新一次 |
 | 定向事件缺少 `itemIds` 或 bridge 版本不匹配 | 保留当前内容并执行一次静默权威校验，不进入首次骨架 |
 | 增量更新时滚动锚点对应项被删除 | 保持最近仍存在的相邻项，不跳回顶部 |
-| 用户切换个人/企业账号 | 清空云端 query，按新 scope 查询收藏 |
+| 查询在 150ms 阈值前完成 | 取消显现 timer，直接提交结果，骨架挂载次数为 0 |
+| 骨架显示后请求立即完成 | 暂存结果，满足 200ms 最短可见时间后提交；新 query 或卸载可立即取消 |
+| 用户快速连续改变多个筛选 | 每次生成新 requestId；只允许最终 query 写入，旧 timer、错误和响应全部忽略 |
+| 同来源查询失败且已有旧快照 | 保留只读旧快照并明确提示“当前显示上次结果”，不显示错误空态 |
+| 切换来源且目标无快照 | 不显示上一来源条目；保持稳定内容槽，超时后显示结构化骨架 |
+| 用户切换个人/企业账号 | 同步清空旧 scope 云端快照和请求，按新 scope 查询收藏；不得短暂显示旧账号资源 |
 | 搜索时云端超时 | 保留本地搜索结果，单独提示云端超时 |
 | 本地 SQLite 恢复备份 | watcher 根据恢复后的索引重新建立 |
 
@@ -2618,13 +3015,18 @@ OpenClaw/Cowork 消息
 - [ ] 本地产物条目菜单与预览使用同一动作集；条目菜单包含分享、收藏、系统应用打开和文件夹定位，不展示相关任务。
 - [ ] 本地产物预览标题栏只显示图标、文件名、最后修改时间、分享和收藏；系统应用打开和文件夹定位进入「更多」浮层，不占用主体预览区域。
 - [ ] 云端列表只显示资源、统一可访问状态、访问权限和更多操作，不显示访问量、文件大小、创建时间或最近更新时间。
-- [ ] 分享文件菜单使用「分享设置 / 打开链接 / 复制链接 / 可选相关会话」，不出现「重新打开」「删除分享记录」或本地路径动作。
+- [ ] 分享文件列表菜单使用「分享设置 / 打开链接 / 复制链接 / 可选相关会话」，不出现「重新打开」「删除分享记录」或本地路径动作。
 - [ ] 分享设置页仅在一处显示资源状态；可查看链接、权限、分享时间、最后修改时间及可选相关任务，不显示文件大小、访问量或无服务端能力支撑的「允许下载」。
+- [ ] 分享设置页底部有独立危险区域；live 必须先停止，disabled 需完整文件名确认；影响说明明确区分云端内容、本地原件和免费名额。
 - [ ] 分享设置标题栏提供「数据分析」图标；分析页显示独立访客、访问次数和 7/30 天趋势，不显示热门页面或访客明细。
 - [ ] 分享设置无修改时隐藏保存操作；修改后经确认保存，成功反馈不引发布局跳动或整页刷新。
 - [ ] 支持浅色、深色和系统主题。
 - [ ] 本地可用而云端失败时页面仍可操作。
-- [x] 每个新 `queryKey` 的整页骨架最多挂载一次；已有内容后 `contentToSkeletonTransitions = 0`。
+- [x] 首次回填、文件监听、修复和任务删除等同 query 后台事件满足 `contentToSkeletonTransitions = 0`。
+- [ ] 页面冷启动请求在 150ms 内完成时骨架挂载次数为 0；慢请求的结构化骨架最多挂载一次且至少可见 200ms。
+- [ ] 来源、类型、收藏、可访问性和搜索切换时不出现全宽横线、错误空态或“旧内容—骨架—新内容”往返；有快照时整页骨架挂载次数为 0。
+- [ ] 快速连续查询只有最后一个 `requestId + queryKey` 提交；过渡失败保留明确标记的旧快照，账号切换不显示旧 scope 云端内容。
+- [ ] 加载、查询过渡、手动刷新和自动续页分别使用独立派生状态；刷新按钮与底部续页不再受首次骨架布尔值控制。
 - [x] 首次回填、文件监听、修复和任务删除只做定向合并或保留内容的静默校验，不卸载列表、不清空已确认空态。
 - [ ] 后台变更期间筛选、滚动锚点、更多菜单、预览和网格/列表选择保持不变；本地产物隐藏时不执行无意义查询。
 - [ ] Windows 在 100、1,000、10,000 个历史产物数据集下，文件数量只影响后台回填总时长，不增加整页骨架次数或造成持续闪屏。
@@ -2638,7 +3040,13 @@ OpenClaw/Cowork 消息
 - [ ] 常规分享列表与状态 facet 只包含 live/disabled；没有 failed 或 expired 筛选。
 - [ ] 分页在相同更新时间下稳定、不漏项，客户端可去重。
 - [ ] 分享设置复用现有详情、访问权限和状态接口，关闭/恢复语义与 disabledSource 一致。
-- [ ] 普通用户界面不宣称能够永久删除分享记录；数据库无新增下载权限字段。
+- [x] 普通分享可通过新 `/permanent` 接口永久删除；旧 DELETE 仍只关闭分享，站点继续走 Site 删除接口；数据库无新增下载权限字段。
+- [x] 删除仅接受当前 owner、普通来源和 disabled 状态；重复删除幂等，错误 owner/来源不泄露存在性。
+- [x] deleted 墓碑不进入普通列表、counts、详情、analytics、公共访问或任何恢复/编辑动作，`shareId` 永不复用。
+- [x] 删除事务可靠清理文件表与访问统计、脱敏审核内容并先持久化 NOS 删除意图；迟到异步写不会复活已删数据。
+- [x] 免费用户 deleted 继续占用历史创建数；可见列表数量会减少，但 `countHistoricalFilesByUserId` 继续使用 `status <> 'failed'`，删除不释放免费累计创建名额；订阅/企业活跃额度不重复释放。
+- [x] Admin 默认排除 deleted，显式审计只读；用户后台无重复入口。
+- [ ] NOS 删除消费者已明确归属并在测试环境验证实际对象删除、重试、积压和告警；未满足时不得对外承诺物理删除。
 - [ ] 分享 owner analytics 只允许当前个人/企业发布账号读取普通分享；站点继续使用 Site analytics。
 - [ ] 分享分析按稳定 `shareId` 汇总全部内容版本，访问次数与范围独立访客口径正确，缺失日期补 0。
 - [ ] disabled 分享可读停用前历史；owner 响应不包含 IP、User-Agent、Referer 或来源维度明细。
@@ -2659,10 +3067,14 @@ OpenClaw/Cowork 消息
 - [x] 所有新增/修改 TypeScript 文件通过 changed-file ESLint。
 - [x] 本地 store、关系、合并和 IPC 有 Vitest 覆盖。
 - [x] 刷新协调器使用 fake timer 覆盖防抖、最大等待、单并发、单尾随、隐藏页 dirty、卸载和迟到响应。
-- [ ] Renderer 测试断言首次骨架挂载次数和内容到骨架转换次数，不只依赖截图人工判断。
+- [ ] `libraryQueryTransitionState` 的 fake timer 测试覆盖 150ms/200ms、快照 LRU、乱序响应、失败、卸载和 owner scope 清理。
+- [ ] Renderer 测试分别断言首次骨架、查询过渡、手动刷新和续页的挂载范围；加载 JSX 不再包含全宽空行分隔线，不只依赖截图人工判断。
+- [ ] macOS/Windows 使用快速、慢速、失败和乱序响应完成 60fps 录屏回归，逐帧确认没有横线闪烁、错误空态和跨账号快照。
 - [x] 主进程/Preload 改动通过 `npm run compile:electron`。
-- [ ] Renderer 改动通过 `npm run build` 和手动 Electron 验证。
+- [x] Renderer 改动通过 `npm run build`。
+- [ ] 永久删除交互完成手动 Electron 验证。
 - [ ] 服务端不依赖外部服务的单元测试通过。
+- [ ] 分享永久删除的 MySQL 5.7 事务/Mapper 测试、免费配额回归、并发和查询不可见性测试通过；依赖 NOS 的消费验证按独立集成测试执行。
 - [x] 提交前检查无无关格式化、生成文件和中英文遗漏。
 
 ## 18. 最终设计结论
@@ -2678,8 +3090,12 @@ OpenClaw/Cowork 消息
 9. MySQL 查询使用派生表、`UNION ALL`、相关子查询和显式游标谓词，兼容 5.7。
 10. UI 采用 LobsterAI 主题和管理页布局：1120px 有界内容区、本地产物单列分组、云端四列扁平管理列表、详情承载高级信息。
 11. 云端默认不按会话分组；分享和站点混排，状态统一为「可访问 / 不可访问」，列表不展示访问量、文件大小或更新时间。
-12. 分享条目进入分享设置，站点条目进入网站设置；两类分析均由设置页标题栏进入，云端列表菜单不直接切换状态，也不提供不存在的永久删除语义。
+12. 分享条目进入分享设置，站点条目进入网站设置；两类分析均由设置页标题栏进入，云端列表菜单不直接切换状态或删除。普通分享的永久删除只位于分享设置页危险区域，必须先停止并输入完整文件名确认。
 13. 当前数据库足以支持统一云端管理页首期方案；「允许下载」在服务端提供字段和强制校验前不进入正式客户端。
 14. 分享文件分析复用 V52 访问统计表和采集链路，通过新的 owner 只读接口返回聚合数据；按 `shareId` 汇总整个分享生命周期，不新增 DDL，也不向普通用户暴露访客明细。
 15. 普通用户限时资源在升级为有效订阅后按资源成本分流：分享文件和在线网站条件恢复，已停止静态网站恢复现有静态发布状态，已停止 Node 服务只提示用户重新部署；订阅提交后事件主动触发、云端无 cursor 第一页兜底，全流程不新增表且自动检查不启动 Node 服务。
-16. 本地产物首次查询、后台刷新和续页使用独立状态；历史回填与 watcher 事件经协调器合并后按 ID 定向读取并原位更新。每个查询最多挂载一次整页骨架，内容出现后任何后台事件都不得让列表回到骨架，Windows 文件数量只影响后台索引总时长，不影响已显示页面稳定性。
+16. 页面冷启动、用户查询切换、同 query 后台刷新和续页使用独立状态；历史回填与 watcher 事件经协调器合并后按 ID 定向读取并原位更新。冷请求使用 150ms 延迟和无分隔线结构化骨架，已有快照的查询切换与后台刷新不卸载内容，Windows 文件数量只影响后台索引总时长，不影响已显示页面稳定性。
+17. 分享文件永久删除采用混合语义：用户侧不可恢复，主行保留 deleted 最小墓碑，文件、统计和内容性审核信息清理，NOS 通过可靠队列物理删除；本地文件和任务不受影响，原 `shareId` 不复用。
+18. 免费用户的历史创建上限包含 deleted 墓碑，删除不能释放 10 个累计名额；常规 Library 可见数仍只统计 live/disabled。管理员默认隐藏 deleted，必要审计只读。
+19. 当前仓库只确认了 NOS 删除入队能力，未确认消费闭环；消费者实际可用、重试和告警验证是正式发布阻断项。
+20. 查询切换闪线修复是纯客户端 Renderer 增量：不新增 IPC、服务端 API、MySQL 5.7 或 SQLite 迁移，也不改变分享、站点、收藏和免费配额业务语义。

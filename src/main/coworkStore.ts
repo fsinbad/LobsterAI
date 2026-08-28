@@ -2489,7 +2489,7 @@ export class CoworkStore {
         Number(cfg.get('memoryUserMemoriesMaxItems')),
       ),
       skipMissedJobs: parseBooleanConfig(cfg.get('skipMissedJobs'), true),
-      openClawHeartbeatEnabled: parseBooleanConfig(cfg.get('openClawHeartbeatEnabled'), true),
+      openClawHeartbeatEnabled: parseBooleanConfig(cfg.get('openClawHeartbeatEnabled'), false),
       embeddingEnabled: parseBooleanConfig(cfg.get('embeddingEnabled'), DEFAULT_EMBEDDING_ENABLED),
       embeddingProvider: cfg.get('embeddingProvider') || DEFAULT_EMBEDDING_PROVIDER,
       embeddingModel: cfg.get('embeddingModel') || DEFAULT_EMBEDDING_MODEL,

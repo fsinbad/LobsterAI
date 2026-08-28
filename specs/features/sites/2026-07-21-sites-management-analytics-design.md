@@ -1,8 +1,9 @@
 # 站点管理与访问分析功能设计文档
 
-> 创建日期：2026-07-21  
-> 状态：待评审  
-> 涉及仓库：`LobsterAI`、`lobsterai-server`  
+> 创建日期：2026-07-21\
+> 最近更新：2026-08-26（页面访问排行与 favicon 统计纠偏）\
+> 状态：纠偏代码与修复脚本已完成；测试库已修复，待服务端发布与生产数据修复\
+> 涉及仓库：`LobsterAI`、`lobsterai-server`\
 > 产品入口：LobsterAI 左侧栏「站点」
 
 ## 1. 概述
@@ -15,7 +16,7 @@ LobsterAI 已经能够从 Artifact 面板把本地服务部署为动态 Node 服
 2. 站点当前能否访问，部署是否正常？
 3. 站点是公开访问还是分享码访问？
 4. 如何停止或恢复访问？
-5. 最近有多少页面浏览量（PV）和独立访客（UV）？哪些页面最热门？
+5. 最近有多少页面浏览量（PV）和独立访客（UV）？哪些页面访问最多？
 6. 当前套餐还能同时上线多少个站点，达到上限后如何安全腾出名额？
 
 本功能在 LobsterAI 左侧栏增加「站点」入口，提供空态创建引导、站点列表、站点详情、访问设置和访问分析。整体交互参考需求附图，但视觉实现必须沿用当前 LobsterAI 的管理页框架、主题变量、侧栏折叠行为和中英文国际化体系。
@@ -34,7 +35,7 @@ LobsterAI 已经能够从 Artifact 面板把本地服务部署为动态 Node 服
 | 用户部署详情      | `GET /api/html-shares/{shareId}/deployment` 已实现                             | 可复用，站点详情接口统一聚合        |
 | 部署数量限制      | Node 另有全局默认 3；通用 HTML 分享还有默认 10，二者都可能自动停止较早记录     | 站点必须拆出并替换为套餐统一额度    |
 | 用户访问分析      | 尚无所有者可调用的统计接口                                                     | 新增                                |
-| 热门页面          | 当前没有页面路径维度                                                           | 新增                                |
+| 页面访问排行      | 当前没有页面路径维度                                                           | 新增                                |
 | 跨日精确 UV       | 当前只能按日记录独立 IP，不能把每日 UV 相加作为区间 UV                         | 新增访客维度聚合                    |
 
 测试库相关表已存在且有数据，`information_schema` 的近似行数如下：
@@ -49,6 +50,25 @@ LobsterAI 已经能够从 Artifact 面板把本地服务部署为动态 Node 服
 | `html_share_access_dimension_stats` |      299 | Referer、UA 等维度          |
 
 测试库没有 `flyway_schema_history` 表。当前仓库虽使用 `sql/Vxx__*.sql` 命名，但上线方案不能假设 Flyway 会自动执行迁移，必须纳入 DBA/发布平台实际 SQL 执行与 `information_schema` 验证步骤。本文档不记录测试库账号或密码。
+
+#### 1.2.1 2026-08-26 页面访问统计复核
+
+站点分析上线后的只读复核发现，页面访问排行会出现 `/favicon.ico`。该路径是浏览器自动请求的网站图标资源，不是用户访问的网页，不应进入 PV、UV、趋势或页面访问排行。测试数据库版本为 MySQL `5.7.33-36-log`，现有路径明细只包含 `/` 与 `/favicon.ico`：`/` 共 108 PV，`/favicon.ico` 共 59 PV，后者涉及 9 个站点并占当前路径 PV 的约 35%。每日聚合 PV 与路径明细 PV 均为 167，证明错误路径已经同步污染摘要和趋势，不是仅在排行表中多出一行。
+
+根因是两个规则叠加：
+
+1. 静态站点找不到请求文件时会把入口 `index.html` 作为 SPA 回退响应，缺失的 `/favicon.ico` 因此可能得到 `200 text/html`；
+2. 当前页面分类器对成功响应只检查 `2xx + text/html`，没有对所有 2xx 响应继续确认请求是否为顶层文档导航。
+
+本次纠偏以“请求用途 + 响应结果”共同判断页面访问，不能通过客户端隐藏 `/favicon.ico` 掩盖错误；同时需要修复新增数据和已经写入的历史聚合。数据库修复必须兼容线上 MySQL 5.7。
+
+| 层级               | 当前问题或契约                                             | 目标方案                                                     | 当前状态             |
+| ------------------ | ---------------------------------------------------------- | ------------------------------------------------------------ | -------------------- |
+| Electron 分析页    | 标题含义不够直观，首页展示重复说明，说明文字长期占位       | 使用「页面访问排行」、原样展示 `/`、说明默认隐藏             | 已实现并通过 lint/build |
+| 分析查询 API       | `topPages` 字段和 DTO 已稳定                               | 保持协议不变，由正确的明细与聚合数据提供结果                 | 无需改协议           |
+| 页面访问分类       | 2xx HTML 未统一校验请求用途                                | 2xx/304 共用顶层文档导航分类                                 | 已实现并通过源码编译 |
+| 静态站点 SPA 回退  | 缺失资源也可能回退入口 HTML                                | 仅缺失的文档导航回退，资源请求返回 404                       | 已实现并通过源码编译 |
+| 历史分析数据       | favicon 已进入 path、visitor 和 daily 三层聚合             | 按 path 明细删除精确 favicon 后重建受影响的上层聚合          | 测试库已修复，生产待发布 |
 
 ### 1.3 核心模型决策
 
@@ -74,7 +94,7 @@ HTML、图片、SVG、Markdown、Mermaid、Office/PDF 等普通 Artifact 分享�
 2. 展示当前用户的动态服务和静态站点，每个站点只显示一条，不把历史部署版本重复列出。
 3. 清晰区分访问状态、部署状态和访问方式。
 4. 支持修改站点名称、访问方式、停止/恢复访问，以及在停止后永久删除站点。
-5. 提供最近 7/30 天的 PV、UV、每日趋势及热门页面。
+5. 提供最近 7/30 天的 PV、UV、每日趋势及页面访问排行。
 6. 空态提供「新建站点」和模板卡片，点击后创建新任务并把对应提示词填入对话框。
 7. 复用现有鉴权、订阅、分享码、内容审核、部署和治理能力，不修改管理员后台。
 8. 不让统计写入失败影响公网站点访问。
@@ -136,7 +156,7 @@ HTML、图片、SVG、Markdown、Mermaid、Office/PDF 等普通 Artifact 分享�
 
 **Given** 站点在过去 30 天有访问。  
 **When** 用户打开「分析」并选择过去 30 天。  
-**Then** 页面展示区间 PV、区间 UV、按日趋势和热门页面；无访问日期补 0，区间 UV 不通过每日 UV 相加计算。
+**Then** 页面展示区间 PV、区间 UV、按日趋势和页面访问排行；无访问日期补 0，区间 UV 不通过每日 UV 相加计算，图片、网站图标、脚本和接口等资源请求不进入任何页面指标。
 
 ### 场景 8：无订阅用户管理既有站点
 
@@ -165,12 +185,14 @@ HTML、图片、SVG、Markdown、Mermaid、Office/PDF 等普通 Artifact 分享�
 | PV（页面浏览量） | 站点服务端成功返回 HTML 文档的一次有效 `GET` 请求 |
 | UV（独立访客）   | 日期范围内按站点访客 Cookie 识别的不同访客数量    |
 | 每日 UV          | 当天不同访客数量                                  |
-| 热门页面         | 日期范围内按规范化 URL path 聚合的 PV 和 UV       |
+| 页面访问排行     | 日期范围内按规范化 URL path 聚合并排序的 PV 和 UV |
 | 站点生命周期统计 | 同一 `share_id` 下跨多次重新部署累计的统计        |
 
 以下请求不计入产品分析：
 
-- JS、CSS、图片、字体、接口和其他非 HTML 资源请求；
+- JS、CSS、图片、字体、网站图标、接口和其他资源请求，即使错误地返回 HTML 也不计入；
+- `Sec-Fetch-Dest` 明确不是 `document` 的请求，以及能够确定不是顶层导航的请求；
+- `/favicon.ico` 和 `/_lobster_share/*` 等保留资源或平台内部路径；
 - 分享码输入页和验证接口；
 - 管理员预览；
 - 健康检查和 LobsterAI 内部路径；
@@ -316,7 +338,12 @@ UI 不得只展示一个模糊的「状态」。列表可以提供一个综合�
 - 首期粒度固定为「天」，不展示无法生效的粒度选择器；
 - PV 卡片、UV 卡片；
 - PV/UV 双折线趋势：UV 使用高亮蓝色实线，PV 使用高区分度紫色实线，图例使用对应颜色圆点；平滑曲线的控制点不得越过相邻数据范围或零轴，线下可使用轻量渐变面积填充，不使用柱状图；
-- 热门页面表格：页面 path、PV、UV；无数据时显示明确空态，不只保留表头；
+- 页面访问排行卡片：标题固定为「页面访问排行」，标题旁显示信息图标，不常驻展示说明文字；
+- 标题不使用「热门页面」，因为它没有说明排序指标；不使用「页面统计」，因为它会与整个分析模块混淆；「访问页面排行」语序也不如「页面访问排行」自然；
+- 信息说明默认隐藏，鼠标悬停、键盘聚焦时显示，触控设备点击后显示；文案为「按所选时间范围内的页面浏览量排序。“/”表示首页。只统计成功打开的网页，不包含网站图标、图片、脚本和接口请求。」；
+- 表格列为「页面」「浏览量」「访客数」，直接展示规范化 path；首页只显示 `/`，不额外显示「首页」；长路径截断并允许查看完整 path；
+- 页面访问排行最多显示浏览量最高的 10 个页面，按浏览量降序、访客数降序、path 升序稳定排序；无数据时显示「暂无页面访问数据」，不只保留表头；
+- 不把页面 path 设计为直接访问链接，避免所有者从分析页打开页面后再次污染访问数据；也不得只在 Renderer 过滤 `/favicon.ico`，否则摘要和趋势仍然错误；
 - 无数据时展示零值卡片和空图，不显示错误；
 - 查询失败只影响分析页签，不阻断设置。
 
@@ -329,7 +356,8 @@ UI 不得只展示一个模糊的「状态」。列表可以提供一个综合�
 - 访问方式：公开访问、分享码访问；点击选项只更新页面内草稿，不立即调用服务端；
 - 参考部署菜单的权限草稿交互；没有变化时不展示提交操作，发生变化后显示轻量操作栏，用户二次提交后才调用更新接口；
 - 支持取消待提交变更并恢复服务端当前值；提交期间禁用重复操作，成功后再更新已保存状态和分享码；
-- 分享码模式下显示复制按钮；选择公开访问草稿后立即隐藏旧分享码，避免草稿状态和展示信息矛盾；
+- 访问地址与分享码组成同一个浅色圆角信息容器：第一行展示完整 URL 的单行省略和唯一复制按钮，已保存的分享码模式在分隔线下方第二行展示当前分享码；复制按钮在公开模式复制链接，在分享码模式一次复制链接和分享码，不增加单独的分享码复制入口；
+- 分享码展示跟随访问方式草稿：选择公开访问或停止访问后立即隐藏旧分享码；从公开访问切换到分享码但尚未保存时显示「保存后将显示分享码」，不伪造占位码；已保存为分享码模式但明文无法回显时明确显示「当前分享码无法获取」并禁用组合复制，不显示含义不明的 `—`；访问方式草稿未保存期间禁用复制，取消修改后恢复已保存状态；
 - 名称或访问方式存在未保存变更时，返回列表前弹出放弃变更确认；
 - 访问控制使用紧凑单行危险操作区，支持停止/恢复访问并保留二次确认；
 - 删除入口只放在设置页底部，不放在列表快捷菜单；在线、部署中以及 Node 云资源仍未释放时按钮禁用并提示先停止；
@@ -353,12 +381,13 @@ Node 确认文案必须包含「停止后将释放云资源，恢复访问需要
 永久删除与停止访问是两个明确阶段：
 
 ```text
-在线 -> 停止访问（释放额度、可恢复或重新部署） -> 永久删除（不可恢复）
+在线 -> 停止访问（关闭公网访问；Node 同时释放云资源） -> 永久删除（不可恢复）
 ```
 
 规则：
 
 - 删除入口仅位于设置页底部危险操作区，要求输入当前站点名称后才启用红色「永久删除」按钮；
+- 删除确认弹窗仅在当前订阅状态明确为免费用户时额外提示「本次删除不会释放免费建站名额，历史创建数量仍会保留」；个人订阅、企业及订阅状态未知时不展示该免费额度提示；静态站点和 Node 服务遵循相同规则，Node 同时存在持久化数据删除风险时合并显示在同一个警示区；
 - 在线和部署中的站点不能删除；Node 站点最新部署必须处于 `stopped`、`expired`、`build_failed`、`deploy_failed` 或 `failed`，避免资源清理失败时误删管理记录；
 - 对历史在线数量限制、管理员策略或内容审核产生的 `blocked` Node 站点，如果最新部署仍处于 `queued`、`building`、`deploying`、`health_checking` 或 `live`，设置页必须提供「停止服务」入口；二次确认后复用停止访问接口释放云资源，成功后再开放删除入口，避免出现既不能停止也不能删除的交互死角；
 - 已启用持久化的 Node 服务在删除墓碑前同步清空对应云端数据；清理失败则整次删除失败，站点保持已停止状态供用户重试；
@@ -367,7 +396,7 @@ Node 确认文案必须包含「停止后将释放云资源，恢复访问需要
 - 分析异步写入的 `INSERT` 必须同时校验站点未被标记为 `deleted`，避免删除事务与队列中旧访问事件竞态后重新生成统计；
 - 部署详情不再对用户可见；`share_deployments` 最小记录保留用于资源清理、故障审计和地址归属证明，不允许据此恢复站点；
 - 删除接口幂等：同一所有者对已删除 `share_id` 重试返回成功，其他用户仍返回不存在/无权访问；
-- 额度在停止访问时已经释放，永久删除不参与配额计算。
+- 免费用户采用历史总量计数，停止访问和永久删除均不返还免费建站名额，`deleted` 墓碑继续计入历史创建数；订阅/企业采用活跃计数，名额在停止访问时释放，永久删除不再次改变额度。
 
 ### 4.8 创建任务与部署职责边界
 
@@ -715,6 +744,8 @@ GET /api/sites/{shareId}/analytics?from=2026-06-22&to=2026-07-21&limit=10
 
 区间 `uniqueVisitors` 必须对整个范围内的 `visitor_hash` 去重，禁止把 `trend[].uniqueVisitors` 求和作为区间 UV。
 
+`topPages` 是“页面访问排行”的稳定 API 字段名，客户端文案调整不修改协议。每项只返回规范化 `path`、区间 `pageViews` 和该 path 的区间去重 `uniqueVisitors`；服务端按 `pageViews DESC, uniqueVisitors DESC, normalized_path ASC` 排序并应用 `limit`。接口不得返回页面 `<title>`，也不得返回 favicon、图片、脚本、接口等非页面路径。
+
 ### 7.8 部署配额预检
 
 ```http
@@ -823,33 +854,56 @@ Content-Type: application/json
 
 1. 重新部署后统计会切到新内容版本，用户看不到连续的站点生命周期趋势；
 2. `unique_ip_count` 是单日独立 IP，不等于产品意义的跨日 UV；
-3. 没有 path 维度，无法提供热门页面。
+3. 没有 path 维度，无法提供页面访问排行。
 
 因此保留现有表和审核流程，新增站点分析聚合表。两套数据分别服务「治理」和「用户产品分析」，避免改变现有阈值审核口径。
 
 ### 8.2 页面请求分类
 
-新增 `SitePageViewClassifier`，在静态文件或 Node 代理响应成功后判断是否记录：
+提取无状态的 `SiteDocumentRequestClassifier` 统一判断请求是否为顶层文档导航，`SitePageViewClassifier` 再结合站点、响应和排除规则决定是否记录。静态文件服务与 Node 代理均必须在获得真实响应后执行相同判定：
 
 ```text
 站点 source type
   AND 非管理员预览
   AND 分享码验证已通过
   AND method = GET
-  AND 响应为 Content-Type 与 text/html 兼容的 2xx，或确认是顶层文档导航的 304
+  AND 请求确认为顶层文档导航
+  AND（响应为 Content-Type 与 text/html 兼容的 2xx，或响应为 304）
   AND path 非平台内部路径
+  AND path 非 /favicon.ico 等保留资源路径
   AND User-Agent 非已知 bot/health checker
 ```
 
 当前 `ShareDeploymentServiceHostFilter` 在代理前、仅根路径记录访问。需要改成先取得 `ResponseEntity<byte[]>`，再根据真实响应状态和 Content-Type 记录。这样可以避免上游失败仍计 PV，并能统计 `/pricing`、`/about` 等 HTML 页面路径。
 
-浏览器普通刷新可能携带 `If-None-Match` 或 `If-Modified-Since` 并收到 `304 Not Modified`。此类请求仍属于一次页面浏览：当 `Sec-Fetch-Dest: document`，或浏览器未提供 Fetch Metadata 但 `Accept` 明确包含 `text/html` 时计 1 PV；脚本、图片、接口 fetch 和无法确认用途的 304 不计数。同一访客 Cookie 刷新只增加 PV，不增加 UV。
+顶层文档导航按以下顺序识别：
+
+1. 请求存在 `Sec-Fetch-Dest` 时，仅 `document` 为顶层页面；`image`、`script`、`style`、`font`、`empty`、`iframe` 等全部排除；
+2. 缺少 `Sec-Fetch-Dest` 但存在 `Sec-Fetch-Mode` 时，仅 `navigate` 且 `Accept` 包含 `text/html` 时接受；
+3. 两个 Fetch Metadata 头都缺失时，为兼容旧浏览器，仅在 `Accept` 明确包含 `text/html` 时接受；
+4. `Purpose` 或 `Sec-Purpose` 明确包含 `prefetch`、`prerender` 时排除，避免尚未真正展示给用户的预取页面提前计数；
+5. 请求头明确显示为资源或异步 fetch 时，即使响应因 SPA 回退变成 `200 text/html` 也不得计数；
+6. 无法确认用途时采取保守策略，不计入产品分析。
+
+浏览器普通刷新可能携带 `If-None-Match` 或 `If-Modified-Since` 并收到 `304 Not Modified`。确认是顶层文档导航的 304 仍计 1 PV；脚本、图片、接口 fetch 和用途不明的 304 不计数。同一访客 Cookie 刷新只增加 PV，不增加 UV。2xx 与 304 必须复用同一个文档导航分类器，不能只对 304 检查 Fetch Metadata。
+
+#### 静态站点缺失资源与 SPA 回退
+
+静态站点请求文件不存在时不能无条件回退入口 HTML：
+
+- 文件存在：按真实文件和 Content-Type 返回；
+- 文件不存在且请求确认为顶层文档导航：返回入口 HTML，支持 `/about` 等 SPA 深链接；
+- 文件不存在且请求用途为图片、favicon、脚本、样式、字体或异步 fetch：返回 404；
+- `/favicon.ico` 是站点保留资源路径，无论上游或回退响应是否为 HTML，都不进入页面统计；
+- Node 服务可能自行对所有路径返回 HTML，因此 Node 响应同样必须经过请求用途判定，不能只依赖 Content-Type。
+
+文档导航判断必须由静态回退和统计分类共同复用，避免两套规则漂移。不得使用“所有带扩展名的路径都是资源”的粗略规则，因为 `/report.html` 可能是真实文档页面。
 
 普通 Artifact 分享继续使用现有统计逻辑，不进入站点产品分析表。
 
 ### 8.3 Path 规范化
 
-热门页面仅保存 URL path：
+页面访问排行仅保存 URL path：
 
 1. 去除 query 和 fragment；
 2. 确保以 `/` 开头；
@@ -864,7 +918,7 @@ Content-Type: application/json
 
 ```text
 /_lobster_share/*
-/favicon.ico（仅当返回非 HTML 时本就不会计数）
+/favicon.ico（无条件排除，不依赖响应 Content-Type）
 ```
 
 ### 8.4 访客识别
@@ -971,8 +1025,8 @@ UPDATE site_access_stats_daily
 | 区间 PV     | `SUM(site_access_stats_daily.page_view_count)`                 |
 | 区间 UV     | `COUNT(DISTINCT site_visitor_access_stats_daily.visitor_hash)` |
 | 每日趋势    | 每日表左连接日期序列，缺失补 0                                 |
-| 热门页面 PV | path visitor 表按 path 分组后 `SUM(page_view_count)`           |
-| 热门页面 UV | path visitor 表按 path 分组后 `COUNT(DISTINCT visitor_hash)`   |
+| 页面排行 PV | path visitor 表按 path 分组后 `SUM(page_view_count)`           |
+| 页面排行 UV | path visitor 表按 path 分组后 `COUNT(DISTINCT visitor_hash)`   |
 
 日期范围最多 90 天。查询结果可按 `shareId + from + to + limit` 在进程内缓存 30 秒，站点页刷新不要求秒级实时。
 
@@ -1044,7 +1098,7 @@ src/renderer/components/sites/
 
 - `SitesView`：列表/详情内部导航、筛选、分页和轮询；
 - `SiteDetail`：页签与详情刷新；
-- `SiteAnalytics`：日期范围、汇总、趋势和热门页面；
+- `SiteAnalytics`：日期范围、汇总、趋势和页面访问排行；排行直接展示 path，说明收纳在默认隐藏的信息提示中；
 - `SiteSettings`：名称、访问方式和访问状态；
 - `SiteQuotaReplacementDialog`：展示套餐用量、搜索/分页候选站点、单选、停止二次确认和停止后的配额重检；组件由部署弹窗宿主复用，不把候选站点写入全局 Store；
 - `siteViewState.ts`：纯函数状态推导、轮询判断、筛选规范化，便于 Vitest；
@@ -1108,8 +1162,11 @@ siteResumeAccess
 siteRedeploy
 sitePageViews
 siteUniqueVisitors
-siteTopPages
-siteAnalyticsServerObservedHint
+sitesPopularPages
+sitesPopularPagesDescription
+sitesPopularPagesViews
+sitesPopularPagesVisitors
+sitesNoAnalyticsData
 siteTemplateResume
 siteTemplateShop
 siteTemplateInvitation
@@ -1128,6 +1185,17 @@ siteQuotaConfigUnavailable
 ```
 
 模板提示词也必须在 `zh`、`en` 中分别维护，不能把中文提示词硬编码在组件里。
+
+页面访问排行中文文案：
+
+```text
+标题：页面访问排行
+列：页面 / 浏览量 / 访客数
+说明：按所选时间范围内的页面浏览量排序。“/”表示首页。只统计成功打开的网页，不包含网站图标、图片、脚本和接口请求。
+空态：暂无页面访问数据
+```
+
+英文标题使用 `Top pages by views`，说明、列名和空态必须与中文语义一致。说明不常驻占用卡片高度，通过可访问的信息提示展示；触发元素提供本地化 `aria-label`，并支持悬停、键盘焦点和触控点击。路径作为纯文本渲染，`/` 不替换为 `Home` 或「首页」。
 
 ## 10. 服务端实现边界
 
@@ -1277,6 +1345,69 @@ WHERE table_schema = DATABASE()
 - Electron 企业配置 `ui.sites`；
 - 灰度阶段入口可隐藏，但服务端所有权和鉴权不能依赖客户端隐藏。
 
+### 11.4 历史非页面请求数据修复
+
+修复新请求分类后，历史 `/favicon.ico` 明细仍会继续污染所选 7/30 天范围内的排行、PV 摘要和趋势，因此必须执行一次性数据纠正。不能只在 API 或 Renderer 隐藏 path，也不能只删除 `site_path_visitor_access_stats_daily` 的 favicon 行，因为 `site_visitor_access_stats_daily` 和 `site_access_stats_daily` 已经同步累计了对应请求。
+
+`site_path_visitor_access_stats_daily` 同时保存 path、`visitor_hash`、PV 和首末访问时间，可作为保留期内重建另外两张聚合表的事实来源。自动修复首批只处理已确认无业务歧义的精确路径 `/favicon.ico`；其他带 `.js`、`.css`、`.png`、`.html` 等扩展名的路径先审计，不允许按扩展名通配删除，避免误删真实文档路由。
+
+执行步骤：
+
+1. 先上线请求分类和静态 SPA 回退修复，并确认不再产生新的 `/favicon.ico` 明细；
+2. 在线修复默认只处理 `stat_date < :repair_date` 的已结束日期，`:repair_date` 由发布脚本按产品统计时区 `Asia/Shanghai` 明确传入，不能依赖数据库会话时区的 `CURRENT_DATE`；当天已有脏数据在次日成为已结束日期后再处理。若必须当天完成，则先在所有实例关闭 `site.analytics.enabled`，等待异步队列归零，再执行修复并在校验通过后恢复采集；
+3. 导出或建立带发布批次标识的持久快照，完整保存受影响三表的原始行、主键与时间字段，同时记录行数、PV、UV、最早/最晚日期和校验哈希；临时表不能代替提交后的回滚快照；
+4. 创建会话级临时表，保存本批含 `/favicon.ico` 的全部 `(share_id, stat_date)`，并以这两个字段作为主键；
+5. 在单批事务内删除这些站点日期下 path 明细中的精确 `/favicon.ico` 行；
+6. 删除受影响站点日期下现有 visitor 聚合，再从剩余 path 明细按 `(share_id, stat_date, visitor_hash)` 分组重建：PV 使用 `SUM(page_view_count)`，`first_accessed_at`/`last_accessed_at` 使用 `MIN/MAX`，`created_at` 使用明细最早值，`updated_at` 使用本批统一修复时间；
+7. 删除受影响站点日期下现有 daily 聚合，再从剩余 path 明细按 `(share_id, stat_date)` 分组重建：PV 使用 `SUM(page_view_count)`，UV 使用 `COUNT(DISTINCT visitor_hash)`，首末访问时间和创建/更新时间按第 6 步同一规则生成；
+8. 若某个受影响日期删除 favicon 后没有任何有效页面明细，则不重建该日期的 visitor/daily 行，查询接口按既有缺日补零逻辑返回 0；
+9. 校验通过后提交；提交前异常直接回滚事务，提交后异常只允许按发布批次从持久快照恢复。
+
+MySQL 5.7 约束：
+
+- 使用 `CREATE TEMPORARY TABLE`、`INSERT ... SELECT`、`GROUP BY` 和 JOIN delete/update；
+- 不使用 CTE、窗口函数、`JSON_TABLE`、函数索引或 MySQL 8 专属语法；
+- 持久快照的建表或导出必须在修复事务之前完成，不能把会触发隐式提交的普通 DDL 混入删除/重建事务；如在库内建快照，先 `CREATE TABLE ... LIKE` 保留结构，再写入批次数据；
+- 避免在同一语句中直接修改并读取目标表导致 1093 错误，聚合结果先落临时表；
+- 不与 `html_shares` 做非必要 JOIN，避免不同历史默认 collation 产生比较错误；确需关联时显式统一 collation；
+- 以已结束日期或 `share_id` 分批提交，限制事务时长与锁范围；每批使用固定修复时间并记录开始/结束时间、影响行数和校验结果；
+- 修复脚本是受控的一次性发布脚本，不改写 `V61__site_access_analytics.sql`，也不能由应用启动自动执行。
+
+每批必须满足以下校验：
+
+```text
+daily.page_view_count
+  = 同 share_id/stat_date 下 path 明细 SUM(page_view_count)
+
+daily.unique_visitor_count
+  = 同 share_id/stat_date 下 path 明细 COUNT(DISTINCT visitor_hash)
+
+visitor.page_view_count
+  = 同 share_id/stat_date/visitor_hash 下 path 明细 SUM(page_view_count)
+
+daily.first_accessed_at / daily.last_accessed_at
+  = 同 share_id/stat_date 下 path 明细 MIN(first_accessed_at) / MAX(last_accessed_at)
+
+visitor.first_accessed_at / visitor.last_accessed_at
+  = 同 share_id/stat_date/visitor_hash 下 path 明细 MIN(first_accessed_at) / MAX(last_accessed_at)
+
+normalized_path = '/favicon.ico' 的剩余行数 = 0
+```
+
+测试环境已于 2026-08-26 执行修复：10 个受影响站点日期中的 59 PV favicon 明细被移除，修复后 path、visitor、daily 三层总 PV 均为 108，daily/visitor 一致性检查均为 0，三张 `_bak_20260826` 持久快照表保留。首次执行在校验阶段触发 MySQL 5.7 的临时表重复引用限制并由异常处理完整回滚；脚本随后改为分语句校验并成功重试，证明事务回滚和快照重试路径有效。生产修复前仍需再次只读盘点路径分布，不能直接复用测试库数量作为生产影响范围。
+
+### 11.5 发布顺序与回滚
+
+1. 发布服务端文档导航分类与静态缺失资源回退修复，API 契约保持不变；
+2. 在测试环境用真实浏览器验证首页、favicon、静态资源、SPA 深链接、Node 通配 HTML 和 304；
+3. 确认新增 `/favicon.ico` 统计为 0 后，执行测试库历史修复并完成一致性校验；
+4. 灰度服务端并观察分类拒绝原因、统计写入失败率和新路径分布；
+5. 执行生产历史修复；
+6. 发布 Electron 页面访问排行文案、信息提示和原始 `/` 展示；
+7. 连续观察至少 7 天，再结束纠偏发布窗口。
+
+如果服务端必须回滚到旧版本，应先关闭 `site.analytics.enabled`，避免重新写入 favicon 等资源请求；不得在恢复旧分类器的同时继续采集。历史数据脚本回滚使用批次快照，只恢复本批受影响记录，不回滚其他时间内产生的合法访问。Electron 文案可以独立回滚，但不能作为服务端数据错误的兜底。
+
 ## 12. 安全与隐私
 
 1. 所有站点管理和分析接口先校验 JWT 和资源所有权。
@@ -1318,9 +1449,14 @@ WHERE table_schema = DATABASE()
 | 查询区间早于统计上线                | 返回 0 并通过 `dataAvailableFrom` 说明可用起始日期                  |
 | 日期跨时区                          | 首期统一服务端 `Asia/Shanghai`，响应返回时区                        |
 | 某天无数据                          | 趋势补 0                                                            |
-| 同一访客访问多个页面                | 区间 UV 只计 1，热门页面 UV 分别计数                                |
+| 同一访客访问多个页面                | 区间 UV 只计 1，页面排行中各 path 的 UV 分别计数                     |
 | URL 含敏感 query                    | query 不入库、不返回                                                |
 | SPA 内部路由切换                    | 首期不计额外 PV，指标说明明确                                       |
+| 静态站点缺少 `/favicon.ico`         | favicon 请求返回 404，不回退入口 HTML，也不写入任何分析表            |
+| 静态站点存在真实 favicon            | 正常返回图片，但因不是文档导航而不计 PV/UV                           |
+| Node 对任意路径都返回 HTML          | 仍按请求用途判断，favicon、图片和异步 fetch 不计数                   |
+| 浏览器没有 Fetch Metadata           | 仅在 `Accept` 明确包含 `text/html` 时兼容计为文档导航                 |
+| 历史排行已有 `/favicon.ico`         | 服务端修复后按 11.4 从 path 明细重建 visitor/daily 聚合，不做 UI 隐藏 |
 | 统计数据库写入失败                  | 站点正常返回，统计降级并告警                                        |
 | 站点列表请求较慢                    | 保留骨架屏和取消旧请求，不阻塞 Cowork 引擎                          |
 | 用户在详情期间站点被管理员关闭      | 下次轮询更新状态，操作失败时刷新详情                                |
@@ -1345,23 +1481,34 @@ WHERE table_schema = DATABASE()
 
 ### Phase 2：访问分析
 
-1. 实现请求分类器和匿名访客 Cookie；
+1. 实现共享文档导航分类器、页面访问分类器和匿名访客 Cookie；
 2. 实现异步聚合写入；
 3. 实现用户查询 API；
 4. 实现清理任务、指标和告警；
-5. 在测试环境验证 PV、UV、热门页面和跨日去重。
+5. 在测试环境验证 PV、UV、页面访问排行和跨日去重；
+6. 验证静态缺失资源只对顶层文档导航执行 SPA 回退，favicon 和其他资源不计数。
+
+### Phase 2.1：页面统计纠偏与历史修复
+
+1. 将 2xx 和 304 统一接入顶层文档导航判断；
+2. 静态缺失资源按请求用途决定 SPA 回退或 404；
+3. `/favicon.ico` 作为保留资源路径无条件排除；
+4. 测试环境确认不再产生错误明细后，按 11.4 备份并重建历史聚合；
+5. 灰度服务端、修复生产历史数据并观察 7 天；
+6. 纠偏期间禁止通过客户端过滤路径掩盖服务端或数据库错误。
 
 ### Phase 3：Electron UI 与灰度
 
 1. 新增站点 IPC client/handler/preload 类型；
 2. 新增侧栏入口和 `SitesView`；
 3. 实现空态模板、列表、详情、分析、设置；
-4. 实现登录/订阅/企业配置和轮询；
-5. 完成中英文和埋点；
-6. 手工验证 macOS、Windows、浅色/深色和侧栏折叠；
-7. 先内部账号灰度，再向订阅用户灰度；
-8. 观察统计失败率、查询耗时、部署停止失败和 API 错误率；
-9. 指标稳定后正式开放入口。
+4. 页面排行使用「页面访问排行」，原样显示 `/`，说明通过默认隐藏的信息提示展示；
+5. 实现登录/订阅/企业配置和轮询；
+6. 完成中英文和埋点；
+7. 手工验证 macOS、Windows、浅色/深色和侧栏折叠；
+8. 先内部账号灰度，再向订阅用户灰度；
+9. 观察统计失败率、查询耗时、部署停止失败和 API 错误率；
+10. 指标稳定后正式开放入口。
 
 ### Phase 4：订阅站点配额
 
@@ -1383,11 +1530,12 @@ WHERE table_schema = DATABASE()
 | `src/renderer/App.tsx`                                             | 增加 `sites` 主视图和创建任务回调                                                                          |
 | `src/renderer/components/Sidebar.tsx`                              | 增加站点入口                                                                                               |
 | `src/renderer/components/icons/SidebarSitesIcon.tsx`               | 新图标                                                                                                     |
-| `src/renderer/components/sites/*`                                  | 站点列表、详情、分析、设置、模板                                                                           |
+| `src/renderer/components/sites/*`                                  | 站点列表、详情、分析、设置、模板；页面排行原样展示 path，并提供默认隐藏的统计说明                           |
+| `src/renderer/components/ui/Tooltip.tsx`                            | 信息提示支持鼠标悬停、键盘焦点、触控聚焦和 Escape 关闭                                                     |
 | `src/renderer/components/artifacts/SiteQuotaReplacementDialog.tsx` | 配额用量、候选站点分页/选择和停止二次确认                                                                  |
 | `src/renderer/components/artifacts/ArtifactPanel.tsx`              | 在既有部署查询后接入配额 gate；保留并恢复原部署上下文                                                      |
 | `src/renderer/components/sites/SiteDefaultIcon.tsx`                | 统一默认服务图标，在浏览器卡片容器中使用无红底、跟随主题色的龙虾线性图形，不包含站点名称或按站点生成的配色 |
-| `src/renderer/services/i18n.ts`                                    | 中英文文案和模板提示词                                                                                     |
+| `src/renderer/services/i18n.ts`                                    | 中英文文案、页面访问排行说明和模板提示词                                                                   |
 | `src/shared/site/constants.ts`                                     | IPC、状态、类型、错误码常量                                                                                |
 | `src/shared/site/types.ts`                                         | 请求/响应类型                                                                                              |
 | `src/main/libs/site/siteClient.ts`                                 | 服务端 API client                                                                                          |
@@ -1405,13 +1553,15 @@ WHERE table_schema = DATABASE()
 | `web/controller/SiteController.java`               | 用户站点 API                                                 |
 | `service/site/SiteQuotaService.java`               | 套餐解析、统一计数、预检和原子预留                           |
 | `service/site/SiteQuotaReservationCleanupJob.java` | 过期预留的小批次回收和指标                                   |
-| `service/site/*`                                   | 聚合、分类、统计、异步写入                                   |
+| `service/site/SiteDocumentRequestClassifier.java`  | 统一识别顶层 HTML 文档导航，供静态回退与统计分类共同复用      |
+| `service/site/SitePageViewClassifier.java`         | 结合请求用途、响应、内部路径和 bot 规则判定有效页面访问       |
+| `service/site/*`                                   | 站点聚合、统计、异步写入和清理                               |
 | `service/site/SiteDeletionStore.java`              | 删除墓碑、分析/页面文件清理和 NOS 异步删除                   |
 | `mapper/SiteMapper.java` / XML                     | 用户站点列表和详情聚合                                       |
 | `mapper/SiteQuotaMapper.java` / XML                | 占用计数、候选查询、用户锁和 reservation CRUD                |
 | `mapper/SiteAnalyticsMapper.java` / XML            | 统计写入和查询                                               |
 | `entity/dto/site/*`                                | 稳定 DTO                                                     |
-| `ShareDeploymentServiceHostFilter.java`            | 成功 HTML 响应后记录                                         |
+| `ShareDeploymentServiceHostFilter.java`            | 仅文档导航允许缺失文件回退入口 HTML；成功有效页面响应后记录    |
 | `HtmlShareService.java`                            | 重命名、静态 disabled 复用；站点来源脱离普通分享自动关闭额度 |
 | `HtmlShareMapper.xml`                              | 普通分享计数/最旧候选排除 Node 与静态站点来源                |
 | `ShareDeploymentService.java`                      | 停止/恢复语义、竞态保护和持久化服务数据清理                  |
@@ -1422,6 +1572,7 @@ WHERE table_schema = DATABASE()
 | `ErrorCode.java`                                   | 站点业务错误                                                 |
 | `HtmlShareProperties` 或新配置类                   | 时区、保留期、线程池和开关                                   |
 | `SiteQuotaProperties.java`                         | 配额开关、预留有效期、清理批次和兼容版本                     |
+| `sql/repair_site_analytics_non_page_paths_20260826.sql` | MySQL 5.7 一次性受控历史修复脚本，不由应用启动自动执行    |
 
 服务端完成新 API 后，按服务器仓库要求在：
 
@@ -1450,9 +1601,13 @@ LobsterAI/docs/server-integration/2026-07-22-sites-management-analytics-api.md
 
 `SitePageViewClassifierTest`：
 
-- 只计成功 HTML `GET`；
+- 2xx HTML 只有在 `Sec-Fetch-Dest: document` 时计数；
+- 2xx HTML 对 `image`、`script`、`style`、`empty` 和 `iframe` 请求不计数；
+- 缺少 Fetch Metadata 时，仅 `Accept` 明确包含 `text/html` 的请求按兼容规则计数；
+- `prefetch` 和 `prerender` 请求不计数；
 - 顶层 HTML 文档的 `304 Not Modified` 刷新计 PV；
 - `304` 的脚本、图片、接口 fetch 和用途不明请求不计 PV；
+- `/favicon.ico` 即使收到 `200 text/html` 也不计 PV；
 - 排除资源、API、错误页、平台页、管理员预览和机器人；
 - Node/静态路径分类一致；
 - query 被去除；
@@ -1480,7 +1635,7 @@ LobsterAI/docs/server-integration/2026-07-22-sites-management-analytics-api.md
 - 同一访客访问多个 path，站点 UV 仍为 1；
 - 同一访客跨日，区间 UV 仍为 1，每日 UV 各为 1；
 - 多访客并发首次访问不丢 UV；
-- 区间 PV/UV、趋势和热门页面正确；
+- 区间 PV/UV、趋势和页面访问排行正确；
 - 日期缺口补零；
 - 最大范围、limit 和所有权校验；
 - 异步写入异常不影响公网响应。
@@ -1488,6 +1643,10 @@ LobsterAI/docs/server-integration/2026-07-22-sites-management-analytics-api.md
 `ShareDeploymentServiceHostFilterTest`：
 
 - 只在实际成功响应后统计；
+- 静态文件存在时按真实 Content-Type 返回，favicon 和其他资源不计数；
+- 缺失 `/favicon.ico`、脚本、图片时返回 404，不回退入口 HTML；
+- `/about` 等顶层文档导航在文件缺失时回退入口 HTML 并按 `/about` 计数；
+- Node 服务即使对 favicon 或资源请求返回 HTML，也不会产生页面统计；
 - 分享码页不计数，验证后页面计数；
 - 部署状态页不计数；
 - Cookie 属性正确；
@@ -1497,7 +1656,7 @@ LobsterAI/docs/server-integration/2026-07-22-sites-management-analytics-api.md
 
 - `siteClient.test.ts`：URL 编码、分页、错误 envelope、日期参数；
 - `siteViewState.test.ts`：状态标签、筛选、轮询启停、过期响应保护；
-- `SitesView.test.tsx`：登录态、空态、列表、详情、分析空数据；
+- `SitesView.test.tsx`：登录态、空态、列表、详情、分析空数据、页面排行标题、原始 `/` 展示、说明默认隐藏以及悬停/焦点/触控触发；
 - `SiteSettings.test.tsx`：停止确认、Node/静态差异、订阅错误、删除按钮状态、名称确认和失败保留；
 - `SiteQuotaReplacementDialog.test.tsx`：套餐用量、空候选、搜索分页、单选、Node/静态二次确认、停止失败及重复停止防护；
 - `useSiteDeploymentQuotaGate.test.ts`：正常放行、超额拦截、停止后重检、取消保留上下文、最终创建竞态错误回到弹窗、reservation 释放；
@@ -1512,23 +1671,27 @@ LobsterAI/docs/server-integration/2026-07-22-sites-management-analytics-api.md
 2. 确认列表各一条且 URL 正确；
 3. 公开/分享码来回切换；
 4. 使用两个浏览器访问根路径和子路径，核对 PV/UV；
-5. 同一浏览器跨日模拟，核对区间 UV 不重复；
-6. 停止静态站点并恢复；
-7. 停止 Node 服务，确认云资源清理且恢复要求重新部署；
-8. 重新部署后确认 `share_id`、URL 和历史分析连续；
-9. 管理员停止后确认用户不能恢复；
-10. 模拟统计表不可用，确认公网站点仍可访问；
-11. 为四个套餐分别构造 5/15/40/100 个混合静态与 Node 在线站点，确认最后一个名额可用、再部署一个被拦截；
-12. 在预览卡片点击部署，确认超额时未打包/上传，弹窗可搜索、分页并选择已有站点；
-13. 分别选择静态和 Node 站点，确认二次提示不同，停止成功后返回原部署弹窗但不自动提交；
-14. 取消弹窗、停止失败、无候选站点时均不创建部署；
-15. 两个客户端并发争抢最后一个名额，确认最多一个成功，另一个回到最新配额弹窗；
-16. 模拟套餐降级到 `used > limit`，确认不自动停站，需要逐个停止且提示剩余数量；
-17. 同一在线 `share_id` 重新部署不新增计数；已停止站点重新部署和静态恢复在满额时被拦截；
-18. 模拟客户端退出和上传失败，确认 reservation 主动释放或在 10 分钟后被清理。
-19. 在线站点不能删除；停止静态站点后输入正确名称可删除，原 URL 不可访问且重新部署获得新 `share_id`。
-20. 停止启用持久化的 Node 服务后删除，确认云函数、持久化数据、页面文件和分析被清理；模拟任一云资源清理失败，确认站点保留且可重试。
-21. 对同一已删除站点重复调用 DELETE，确认幂等成功且原地址不会被新站点复用。
+5. 使用缺少 favicon 的静态站点打开和刷新首页，确认 favicon 返回 404，单次页面打开只增加 1 PV，排行不出现 `/favicon.ico`；
+6. 使用包含真实 favicon 的站点访问，确认图标正常但统计不变化；
+7. 直接打开 SPA `/about`，确认入口回退和 `/about` 统计正常；通过 History API 内部跳转时确认首期不增加 PV；
+8. 让 Node 服务对任意路径返回 HTML，确认 favicon、图片和接口 fetch 仍不计数；
+9. 同一浏览器跨日模拟，核对区间 UV 不重复；
+10. 停止静态站点并恢复；
+11. 停止 Node 服务，确认云资源清理且恢复要求重新部署；
+12. 重新部署后确认 `share_id`、URL 和历史分析连续；
+13. 管理员停止后确认用户不能恢复；
+14. 模拟统计表不可用，确认公网站点仍可访问；
+15. 为四个套餐分别构造 5/15/40/100 个混合静态与 Node 在线站点，确认最后一个名额可用、再部署一个被拦截；
+16. 在预览卡片点击部署，确认超额时未打包/上传，弹窗可搜索、分页并选择已有站点；
+17. 分别选择静态和 Node 站点，确认二次提示不同，停止成功后返回原部署弹窗但不自动提交；
+18. 取消弹窗、停止失败、无候选站点时均不创建部署；
+19. 两个客户端并发争抢最后一个名额，确认最多一个成功，另一个回到最新配额弹窗；
+20. 模拟套餐降级到 `used > limit`，确认不自动停站，需要逐个停止且提示剩余数量；
+21. 同一在线 `share_id` 重新部署不新增计数；已停止站点重新部署和静态恢复在满额时被拦截；
+22. 模拟客户端退出和上传失败，确认 reservation 主动释放或在 10 分钟后被清理；
+23. 在线站点不能删除；停止静态站点后输入正确名称可删除，原 URL 不可访问且重新部署获得新 `share_id`；
+24. 停止启用持久化的 Node 服务后删除，确认云函数、持久化数据、页面文件和分析被清理；模拟任一云资源清理失败，确认站点保留且可重试；
+25. 对同一已删除站点重复调用 DELETE，确认幂等成功且原地址不会被新站点复用。
 
 ## 17. 可观测性
 
@@ -1538,6 +1701,7 @@ LobsterAI/docs/server-integration/2026-07-22-sites-management-analytics-api.md
 site_api_requests_total{endpoint,result}
 site_api_latency_ms{endpoint}
 site_analytics_record_total{result}
+site_analytics_classification_total{decision,reason}
 site_analytics_queue_depth
 site_analytics_write_latency_ms
 site_analytics_query_latency_ms
@@ -1556,6 +1720,7 @@ site_quota_config_error_total{plan}
 日志：
 
 - 站点列表/统计成功不打逐请求 info；
+- 文档导航分类使用固定低基数 `reason` 指标（如 `document`、`non_document_dest`、`reserved_path`、`non_html_response`），不得把原始 path 或 User-Agent 放入指标标签；
 - 修改、停止、恢复记录简洁 lifecycle 日志；
 - 统计失败限频 warn，包含 `shareId` 和错误类型，不含访客哈希、分享码和 URL query；
 - 动态资源清理失败用 error/warn 并保留 `deploymentId` 以便运维定位。
@@ -1602,20 +1767,24 @@ site_quota_dialog_cancel
 12. 管理员、审核和额度停止不能被用户绕过。
 13. 静态站点停止后重新部署仍复用原 `share_id` 和 URL。
 14. 分析页仅支持 7/30 天范围切换，默认展示过去 7 天。
-15. PV 只统计成功 HTML 文档请求，不统计资源、错误页和管理员预览。
+15. PV 只统计确认是顶层导航的成功 HTML 文档请求，以及确认是文档导航的 304；不统计资源、异步 fetch、错误页和管理员预览。
 16. 区间 UV 跨日精确去重，不等于每日 UV 之和。
-17. 热门页面不包含 query string，显示 PV 和 UV。
-18. 重新部署后分析数据保持连续。
-19. 统计写入或查询失败不影响公网站点访问和站点设置。
-20. 客户端和服务端相关测试、构建和 changed-file lint 通过。
-21. 数据库迁移在测试环境通过 `information_schema` 验证，发布记录可追溯。
-22. 四档有效订阅的统一在线站点上限分别为标准 5、进阶 15、专业 40、卓越 100；Node 与静态共用额度，同一 `share_id` 只计一次。
-23. 预览卡片部署前完成配额预检；达到上限时不打包、不上传、不创建部署，而是展示套餐用量和可停止站点弹窗。
-24. 用户必须选择站点并完成二次确认；服务端不会自动停止最旧或低访问站点。停止成功后再次校验，并回到原部署弹窗，不自动提交部署。
-25. 新建、已停止站点重新部署和静态恢复均受最终原子校验；同一在线站点原地重新部署不额外占名额。
-26. 并发请求不会突破套餐上限；reservation 可幂等消费、主动释放和超时回收，回滚/异常不会触发自动停站。
-27. 套餐降级造成超额时保留既有站点但阻止新增名额，客户端显示还需停止数量；升级后额度立即生效。
-28. 服务端不存在独立的“单用户最多 3 个火山云函数”产品限制、配置或自动停旧函数逻辑；动态服务仅与静态站点共同受 5/15/40/100 套餐额度约束。云厂商容量不足只导致本次部署明确失败，不会自动停止既有站点。
+17. 页面访问排行不包含 query string，标题、说明、列名和空态符合 4.5；首页只显示 `/`，说明默认隐藏并可通过悬停、键盘焦点和触控访问。
+18. 缺失 `/favicon.ico` 时静态服务返回 404，不回退入口 HTML；真实 favicon 可以正常返回，但两者都不进入 PV、UV、趋势或页面访问排行。
+19. 单次打开首页只增加 1 PV；同一访客刷新后 PV 增加而 UV 不变，排行中不存在 `/favicon.ico`。
+20. 静态 SPA 深链接仍能回退入口 HTML 并按请求 path 统计，客户端内部无刷新路由切换首期不计数。
+21. 历史修复后，daily、visitor 与 path 明细满足 11.4 的一致性条件，且 `/favicon.ico` 明细为 0；修复脚本兼容 MySQL 5.7 并可按批次恢复。
+22. 重新部署后分析数据保持连续。
+23. 统计写入或查询失败不影响公网站点访问和站点设置。
+24. 客户端和服务端相关测试、构建和 changed-file lint 通过。
+25. 数据库迁移在测试环境通过 `information_schema` 验证，发布记录可追溯。
+26. 四档有效订阅的统一在线站点上限分别为标准 5、进阶 15、专业 40、卓越 100；Node 与静态共用额度，同一 `share_id` 只计一次。
+27. 预览卡片部署前完成配额预检；达到上限时不打包、不上传、不创建部署，而是展示套餐用量和可停止站点弹窗。
+28. 用户必须选择站点并完成二次确认；服务端不会自动停止最旧或低访问站点。停止成功后再次校验，并回到原部署弹窗，不自动提交部署。
+29. 新建、已停止站点重新部署和静态恢复均受最终原子校验；同一在线站点原地重新部署不额外占名额。
+30. 并发请求不会突破套餐上限；reservation 可幂等消费、主动释放和超时回收，回滚/异常不会触发自动停站。
+31. 套餐降级造成超额时保留既有站点但阻止新增名额，客户端显示还需停止数量；升级后额度立即生效。
+32. 服务端不存在独立的“单用户最多 3 个火山云函数”产品限制、配置或自动停旧函数逻辑；动态服务仅与静态站点共同受 5/15/40/100 套餐额度约束。云厂商容量不足只导致本次部署明确失败，不会自动停止既有站点。
 
 ## 19. 后续扩展
 

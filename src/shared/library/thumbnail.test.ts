@@ -3,6 +3,7 @@ import { describe, expect, test } from 'vitest';
 import { LibraryArtifactType } from './constants';
 import {
   createLibraryThumbnailRenderRequest,
+  isLibraryRasterThumbnailExtension,
   LibraryThumbnailDimensions,
 } from './thumbnail';
 
@@ -23,6 +24,7 @@ describe('library thumbnail render request', () => {
       contentBase64: 'YWJj',
       width: LibraryThumbnailDimensions.Width,
       height: LibraryThumbnailDimensions.Height,
+      renderGeneration: 0,
     });
   });
 
@@ -32,8 +34,19 @@ describe('library thumbnail render request', () => {
   });
 
   test('preserves an explicitly requested capture size', () => {
-    const request = createLibraryThumbnailRenderRequest('photo.jpg', 'YWJj', 320, 180);
+    const request = createLibraryThumbnailRenderRequest('photo.jpg', 'YWJj', 320, 180, 42);
 
-    expect(request).toMatchObject({ width: 320, height: 180 });
+    expect(request).toMatchObject({ width: 320, height: 180, renderGeneration: 42 });
+  });
+
+  test.each(['.png', '.JPG', '.jpeg', '.gif', '.webp', '.bmp', '.avif'])(
+    'routes %s through direct raster thumbnail rendering',
+    extension => {
+      expect(isLibraryRasterThumbnailExtension(extension)).toBe(true);
+    },
+  );
+
+  test('keeps SVG on the isolated document renderer path', () => {
+    expect(isLibraryRasterThumbnailExtension('.svg')).toBe(false);
   });
 });

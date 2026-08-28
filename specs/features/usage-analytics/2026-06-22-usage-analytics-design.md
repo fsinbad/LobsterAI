@@ -294,6 +294,28 @@ export const LogReporterActionPrefix = {
   - `isServerModel`：boolean，是否为服务端套餐模型。
 - 隐私边界：不上传 provider API Key、base URL、鉴权类型或其他模型凭证配置。
 
+#### 2.4.6.1 `lobsterai_plan_model_catalog_action`
+
+- 状态：已实现。
+- 触发时机：用户在设置页点击「套餐模型」tab、切换套餐模型分类、点击「购买套餐」并完成外链打开尝试后发送。
+- 事件含义：统计套餐模型入口使用、模型分类浏览偏好和购买套餐入口转化。
+- 业务参数：
+  - `source`：string，触发来源。当前取值包括 `settings_sidebar`、`settings_shortcut`、`settings_plan_model_catalog`。
+  - `actionType`：string，动作类型。当前取值包括 `open_tab`、`category_change`、`open_pricing`。
+  - `previousTab`：string，切换前设置 tab；仅 `open_tab` 时发送。
+  - `targetTab`：string，目标设置 tab；仅 `open_tab` 时发送，当前为 `planModelIntro`。
+  - `activeCategory`：string，触发时当前套餐模型分类。当前取值包括 `text`、`image`、`video`。
+  - `previousCategory`：string，切换前套餐模型分类；仅分类切换时发送。
+  - `targetCategory`：string，目标套餐模型分类；仅分类切换时发送。
+  - `visibleModelCount`：number，触发动作时当前或目标分类下可见模型数量。
+  - `textModelCount` / `imageModelCount` / `videoModelCount`：number，当前目录中各分类模型数量。
+  - `totalModelCount`：number，当前目录模型总数。
+  - `result`：string，动作结果。当前取值为 `success` 或 `failed`；仅 `open_pricing` 时发送。
+  - `errorCode`：string，失败分类。当前取值包括 `open_external_failed`、`unknown`；仅 `open_pricing` 失败时发送。
+- 隐私边界：
+  - 不上传模型 ID、模型展示名称、模型说明、套餐购买 URL、外链打开错误详情或用户账号信息。
+  - 模型目录相关字段只记录分类和数量，用于分析入口与分类浏览行为。
+
 #### 2.4.7 `lobsterai_general_setting_changed`
 
 - 状态：已实现。
@@ -633,18 +655,44 @@ export const LogReporterActionPrefix = {
 #### 2.4.28 `lobsterai_account_menu_action`
 
 - 状态：已实现。
-- 触发时机：用户在首页左下角「我的」入口执行主动动作后发送。包括未登录点击登录、已登录打开/关闭账号菜单、展开/收起剩余额度、打开用量概览、打开充值页、打开邀请页、退出登录。
+- 触发时机：用户在首页左下角「我的」入口执行主动动作后发送。包括未登录点击登录、已登录打开/关闭账号菜单、展开/收起剩余额度、打开用量概览、打开充值页、打开套餐升级页、打开邀请页、退出登录。
 - 事件含义：统计账号菜单入口的使用情况和常用路径。
 - 业务参数：
   - `source`：string，触发来源。当前固定为 `home_account_menu`。
-  - `actionType`：string，动作类型。当前取值包括 `login`、`open_menu`、`close_menu`、`expand_credits`、`collapse_credits`、`open_usage_overview`、`open_recharge`、`open_invitation`、`logout`。
+  - `actionType`：string，动作类型。当前取值包括 `login`、`open_menu`、`close_menu`、`retry_profile_summary`、`open_credits_detail`、`expand_credits`、`collapse_credits`、`open_usage_overview`、`open_recharge`、`open_recharge_failed`、`open_plan_upgrade`、`open_invitation`、`open_credits_reset_campaign`、`open_credits_final_reward`、`logout`。
   - `result`：string，动作结果。当前取值为 `success` 或 `failed`；仅登录、打开外链和退出登录等异步动作发送。
+  - `errorCode`：string，失败分类。当前取值包括 `open_external_failed`、`unknown`；当前仅充值外链打开失败发送。
   - `isLoggedIn`：boolean，触发动作时是否处于登录态。
   - `hasCredits`：boolean，当前账号摘要中是否存在额度明细。
   - `creditItemCount`：number，当前账号摘要中的额度明细数量。
+  - `accountMode`：string，当前账号模式。当前取值为 `personal`、`enterprise` 或 `unknown`；当前仅套餐升级入口发送。
+  - `subscriptionStatus`：string，当前订阅状态。当前取值沿用账号 quota，例如 `free`、`active`、`enterprise`；当前仅套餐升级入口发送。
+  - `planTier`：string，当前套餐档位的规范化枚举。当前取值包括 `basic`、`standard`、`advanced`、`professional`、`excellent`、`enterprise`、`unknown`；当前仅套餐升级入口发送。
+  - `hasSubscriptionPlan`：boolean，当前账号摘要中是否存在 `subscription` 类型权益；当前仅套餐升级入口发送。
+  - `canUpgrade`：boolean，当前展示状态下是否允许继续升级；当前仅套餐升级入口发送。
 - 隐私边界：
-  - 不上传手机号、手机号后四位、昵称、头像 URL、具体剩余额度数值、额度明细 label、额度类型、到期时间、Portal URL、登录 URL 或退出登录错误详情。
+  - 不上传手机号、手机号后四位、昵称、头像 URL、具体剩余额度数值、额度明细 label、套餐展示文案、套餐到期时间、Portal URL、登录 URL 或退出登录错误详情。
   - 额度相关字段只记录是否有额度明细和明细数量，不记录资产金额。
+  - 套餐相关字段只记录规范化档位、订阅状态和是否可升级，不记录用户可见套餐名称或权益明细。
+
+#### 2.4.28.1 `lobsterai_daily_check_in_action`
+
+- 状态：已实现。
+- 触发时机：用户点击首页右上角或左下角「我的」浮层里的每日积分礼领取入口后发送。领取请求成功、已领取、需登录、活动不可用或领取失败时补充结果事件。
+- 事件含义：统计每日积分礼两个入口的领取转化、登录拦截和失败情况。
+- 业务参数：
+  - `source`：string，触发来源。当前取值为 `home_header` 或 `account_menu`。
+  - `actionType`：string，动作类型。当前取值包括 `claim_click`、`login_required`、`claim_success`、`claim_already_claimed`、`claim_unavailable`、`claim_failed`。
+  - `result`：string，动作结果。当前取值为 `success` 或 `failed`；仅结果类动作发送。
+  - `activityCode`：string，活动编码。
+  - `configRevision`：number，活动配置版本。
+  - `isLoggedIn`：boolean，触发动作时是否处于客户端登录态。
+  - `isAuthenticated`：boolean，活动上下文是否已通过服务端认证。
+  - `canClaim`：boolean，点击时活动上下文是否允许领取。
+  - `errorCode`：string，失败分类。当前取值包括 `login_required`、`already_claimed`、`not_active`、`not_found`、`revision_mismatch`、`action_invalid`、`config_invalid`、`server_error`、`unknown`；仅失败、已领取或不可用等结果发送。
+- 隐私边界：
+  - 不上传手机号、昵称、头像 URL、活动展示文案、奖励积分数值、已领取积分数值、有效期、登录 URL、接口错误详情或用户账号标识。
+  - 活动字段只记录活动编码、配置版本、来源和状态类枚举，用于统计入口转化和问题分类。
 
 #### 2.4.29 `lobsterai_sidebar_action`
 

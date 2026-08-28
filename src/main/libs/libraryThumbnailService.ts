@@ -2,6 +2,8 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
+import { isLibraryRasterThumbnailExtension } from '../../shared/library/thumbnail';
+
 interface ThumbnailFileStat {
   isFile: () => boolean;
   mtimeMs: number;
@@ -23,8 +25,23 @@ interface LibraryThumbnailServiceOptions {
   size?: ThumbnailSize;
 }
 
-const THUMBNAIL_CACHE_VERSION = 'cross-platform-renderer-v1';
+export const LibraryThumbnailCacheVersion = {
+  RasterCanvas: 'raster-canvas-v1',
+  PresentedFrame: 'presented-frame-v2',
+  PptxFirstSlidePresentedFrame: 'pptx-first-slide-presented-frame-v3',
+} as const;
 const DEFAULT_THUMBNAIL_SIZE = { width: 480, height: 270 };
+
+export const getLibraryThumbnailCacheVersion = (filePath: string): string => {
+  const extension = path.extname(filePath).toLowerCase();
+  if (extension === '.pptx') {
+    return LibraryThumbnailCacheVersion.PptxFirstSlidePresentedFrame;
+  }
+  if (isLibraryRasterThumbnailExtension(extension)) {
+    return LibraryThumbnailCacheVersion.RasterCanvas;
+  }
+  return LibraryThumbnailCacheVersion.PresentedFrame;
+};
 
 export class LibraryThumbnailService {
   private readonly createThumbnail: LibraryThumbnailServiceOptions['createThumbnail'];
@@ -58,7 +75,7 @@ export class LibraryThumbnailService {
     if (!stat.isFile()) throw new Error('Not a file');
 
     const cacheKey = [
-      THUMBNAIL_CACHE_VERSION,
+      getLibraryThumbnailCacheVersion(resolvedPath),
       resolvedPath,
       stat.mtimeMs,
       stat.size,

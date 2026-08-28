@@ -36,6 +36,7 @@ import type {
   HtmlShareAccessMode,
   HtmlShareConfigurableStatus,
   HtmlShareDisabledSource,
+  HtmlSharePermanentDeleteResult,
   HtmlShareSourceType,
   HtmlShareStatus,
 } from '../../shared/htmlShare/constants';
@@ -526,11 +527,21 @@ interface ClientBannerData {
   activityDescription: string;
   weight?: number;
   status?: number;
+  minClientVersion?: string | null;
+  onlineAt?: string;
+  offlineAt?: string;
   linkUrl: string;
   imageUrl: string;
   imageWidth?: number;
   imageHeight?: number;
   updatedAt?: string;
+}
+
+interface ClientBannerSnapshotData {
+  serverTime: string;
+  nextRefreshAt: string | null;
+  clientVersion: string;
+  banners: ClientBannerData[];
 }
 
 interface HtmlShareResult {
@@ -1274,6 +1285,7 @@ interface IElectronAPI {
       accessMode: HtmlShareAccessMode;
     }) => Promise<HtmlShareResult>;
     disable: (shareId: string) => Promise<HtmlShareResult>;
+    deletePermanently: (shareId: string) => Promise<HtmlSharePermanentDeleteResult>;
     get: (shareId: string) => Promise<{ success: boolean; share?: unknown; error?: string }>;
   };
   shareDeployment: {
@@ -1773,6 +1785,7 @@ interface IElectronAPI {
         explicitContextCache?: boolean;
         costMultiplier?: number;
         description?: string;
+        moreModel?: boolean;
         accessible?: boolean;
         restrictionHint?: string;
       }>;
@@ -1790,6 +1803,35 @@ interface IElectronAPI {
         thinkingConfig?: import('../../shared/providers/modelThinking').ModelThinkingConfig;
         contextWindow?: number | null;
         costMultiplier?: number;
+        moreModel?: boolean;
+      }>;
+      imageModels?: Array<{
+        modelId: string;
+        modelName: string;
+        provider?: string;
+        providerLabel?: string;
+        mediaType?: string;
+        description?: string;
+        capabilities?: string | null;
+        billingUnit?: string;
+        unitLabel?: string;
+        unitCredits?: number;
+        unitPriceYuan?: number;
+        pricingDescription?: string | null;
+      }>;
+      videoModels?: Array<{
+        modelId: string;
+        modelName: string;
+        provider?: string;
+        providerLabel?: string;
+        mediaType?: string;
+        description?: string;
+        capabilities?: string | null;
+        billingUnit?: string;
+        unitLabel?: string;
+        unitCredits?: number;
+        unitPriceYuan?: number;
+        pricingDescription?: string | null;
       }>;
       error?: string;
     }>;
@@ -1797,6 +1839,10 @@ interface IElectronAPI {
     claimCreditsFinalReward: (campaignCode: string) => Promise<{ success: boolean; data?: CreditsFinalRewardClaimData; error?: string }>;
     getActiveClientBanner: () => Promise<{ success: boolean; data?: ClientBannerData | null }>;
     getActiveClientBanners: () => Promise<{ success: boolean; data?: ClientBannerData[] }>;
+    getClientBannerSnapshot: () => Promise<{
+      success: boolean;
+      data?: ClientBannerSnapshotData;
+    }>;
     getPendingCallback: () => Promise<string | null>;
     onCallback: (callback: (data: { code: string }) => void) => () => void;
     onQuotaChanged: (callback: () => void) => () => void;

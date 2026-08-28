@@ -5,7 +5,9 @@ import { expect, test } from 'vitest';
 import {
   canConfigureModelThinking,
   CascadeSide,
+  countVisibleModelSelectorRows,
   isModelAgenticBlocked,
+  partitionModelSelectorModels,
   resolveCascadePlacement,
   resolveDropdownListMaxHeight,
   resolveHoverCardTop,
@@ -13,6 +15,34 @@ import {
   resolvePickerThinkingLevel,
   supportsConfigurableModelThinkingProtocol,
 } from './ModelSelector';
+
+test('keeps primary and more-model order stable while moving the folded group last', () => {
+  const primaryFirst = { id: 'primary-1', name: 'Primary 1' };
+  const moreFirst = { id: 'more-1', name: 'More 1', moreModel: true };
+  const primarySecond = { id: 'primary-2', name: 'Primary 2' };
+  const moreSecond = { id: 'more-2', name: 'More 2', moreModel: true };
+
+  expect(partitionModelSelectorModels([
+    primaryFirst,
+    moreFirst,
+    primarySecond,
+    moreSecond,
+  ])).toEqual({
+    primaryModels: [primaryFirst, primarySecond],
+    moreModels: [moreFirst, moreSecond],
+  });
+});
+
+test('counts a collapsed more-model section as one row until expanded', () => {
+  const models = [
+    { id: 'primary', name: 'Primary' },
+    { id: 'more-1', name: 'More 1', moreModel: true },
+    { id: 'more-2', name: 'More 2', moreModel: true },
+  ];
+
+  expect(countVisibleModelSelectorRows(models, false)).toBe(2);
+  expect(countVisibleModelSelectorRows(models, true)).toBe(4);
+});
 
 test('keeps model hover card above the viewport bottom', () => {
   expect(resolveHoverCardTop(790, 260, 900)).toBe(632);

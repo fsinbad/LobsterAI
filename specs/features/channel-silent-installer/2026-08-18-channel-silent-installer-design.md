@@ -9,7 +9,7 @@ LobsterAI 当前 Windows NSIS 安装包已经支持 `/S` 静默安装，企业�
 ### 1.1 目标
 
 - 允许通过显式打包参数生成“用户双击也静默安装”的 Windows 完整安装包或 Web 安装包。
-- `dictbind --silent` 绑定包不显示 LobsterAI 自有的静默 Banner，由有道词典绑定流程承载安装体验。
+- 静默安装（双击静默包或命令行 `/S`，如应用商店后台安装）不显示任何 LobsterAI 自有安装窗口，安装体验由分发渠道承载。
 - 继续复用现有 NSIS 安装器、渠道归因、签名、OpenClaw runtime 打包和资源恢复流程。
 - 将双击静默行为固化在构建产物中，不依赖用户机器环境变量或安装时读取 `.keyfrom-build`。
 - 保持普通渠道包的安装向导体验不变。
@@ -94,9 +94,9 @@ LobsterAI-WebSetup-x64-${version}-${keyfrom}-silent.exe
 - 在 `scripts/nsis-installer.nsh` 的安装器初始化阶段处理双击静默。
 - 判断顺序应保证显式 `/S` 与渠道双击静默最终都进入同一 silent mode。
 - 双击静默包应在写安装日志前完成 `SetSilent silent`，保证 `ui_mode` 记录为 `silent`。
-- `keyfrom=dictbind` 且启用双击静默策略时，不调用插件自有的 `Banner::show`；该例外必须由编译期渠道与安装器策略共同限定，不能影响普通 `dictbind` 包或其他渠道包。
-- 除上述 Banner 展示例外外，原有 `${Silent}` 分支，包括失败弹窗默认按钮、进程关闭、回滚和卸载路径，必须继续复用。
-- 其他渠道和普通 `/S` 安装继续保留既有静默 Banner 行为。
+- 安装器不内置任何静默模式 Banner 或自有窗口；静默安装（构建标记或 `/S`）的进度体验由调用方（应用商店、渠道绑定流程、网管工具）承载。
+- 原有 `${Silent}` 分支，包括失败弹窗 `/SD` 默认按钮、进程关闭、回滚和卸载路径，必须继续复用。
+- 交互式安装向导与 `--updated` 更新进度页不受影响。
 - 该行为只影响安装器 UI 展示，不跳过安装前置校验和失败保护。
 - Windows UAC、安装器 `RequestExecutionLevel` 和 Defender 排除项逻辑保持不变；系统是否显示提权确认由 Windows 策略决定。
 
@@ -156,7 +156,7 @@ ${EndIf}
 | 用户对双击静默包传 `/D=<path>` | 遵循 NSIS silent install 对安装目录参数的既有规则 |
 | 未传入双击静默参数 | 默认交互式安装，不失败 |
 | 渠道值非法 | 构建脚本按现有规则失败或回退，不能生成未标识策略的异常包 |
-| 旧版本正在运行 | 复用现有进程停止与日志逻辑；仅 `dictbind --silent` 不显示 Banner |
+| 旧版本正在运行 | 复用现有进程停止与日志逻辑；静默安装不显示任何安装器自有窗口 |
 | 安装资源解压失败 | 复用现有失败处理、日志、回滚和 silent MessageBox 默认选择 |
 | UAC 被取消 | 安装不继续，静默策略不绕过系统确认 |
 | 更新安装器带 `--updated` | 保持现有更新模式，不因打包参数隐藏必要进度 |
@@ -173,4 +173,4 @@ ${EndIf}
 8. 传入 `dist:win:web -- --keyfrom dictbind --silent` 时，最终 WebSetup 产物名包含 `-silent`，双击后下载与安装过程均不展示 LobsterAI 安装器 UI；Windows UAC 不在此约束内。
 9. WebSetup 静默下载失败时使用非交互默认选项退出，不因错误弹窗阻塞无人值守流程。
 10. macOS、Linux 和应用运行时 UI 不受该功能影响。
-11. `dictbind` 非静默包、其他渠道的双击静默包以及普通 `/S` 安装仍保留各自既有 UI/Banner 行为。
+11. 任何静默安装（双击静默包或命令行 `/S`）均不显示 LobsterAI 自有窗口；交互式安装向导与 `--updated` 更新进度页保持既有 UI。

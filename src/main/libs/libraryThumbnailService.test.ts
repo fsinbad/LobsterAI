@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'vitest';
 
-import { LibraryThumbnailService } from './libraryThumbnailService';
+import {
+  getLibraryThumbnailCacheVersion,
+  LibraryThumbnailCacheVersion,
+  LibraryThumbnailService,
+} from './libraryThumbnailService';
 
 const createStat = (mtimeMs: number, size = 10) => ({
   isFile: () => true,
@@ -13,6 +17,24 @@ const flushTasks = (): Promise<void> => new Promise(resolve => {
 });
 
 describe('LibraryThumbnailService', () => {
+  test('versions the cache independently for raster, PPTX and other renderer strategies', () => {
+    expect(getLibraryThumbnailCacheVersion('/tmp/slides.pptx')).toBe(
+      LibraryThumbnailCacheVersion.PptxFirstSlidePresentedFrame,
+    );
+    expect(getLibraryThumbnailCacheVersion('/tmp/slides.PPTX')).toBe(
+      LibraryThumbnailCacheVersion.PptxFirstSlidePresentedFrame,
+    );
+    expect(getLibraryThumbnailCacheVersion('/tmp/photo.JPG')).toBe(
+      LibraryThumbnailCacheVersion.RasterCanvas,
+    );
+    expect(getLibraryThumbnailCacheVersion('/tmp/report.pdf')).toBe(
+      LibraryThumbnailCacheVersion.PresentedFrame,
+    );
+    expect(getLibraryThumbnailCacheVersion('/tmp/vector.svg')).toBe(
+      LibraryThumbnailCacheVersion.PresentedFrame,
+    );
+  });
+
   test('uses a fixed cross-platform 16:9 thumbnail size', async () => {
     let receivedSize: { width: number; height: number } | undefined;
     const service = new LibraryThumbnailService({

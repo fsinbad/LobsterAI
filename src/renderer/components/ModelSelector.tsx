@@ -86,6 +86,26 @@ export const ModelSelectorGroup = {
 } as const;
 type ModelSelectorGroup = typeof ModelSelectorGroup[keyof typeof ModelSelectorGroup];
 
+export interface ModelSelectorSections {
+  primaryModels: Model[];
+  moreModels: Model[];
+}
+
+export const partitionModelSelectorModels = (models: Model[]): ModelSelectorSections => ({
+  primaryModels: models.filter(model => model.moreModel !== true),
+  moreModels: models.filter(model => model.moreModel === true),
+});
+
+export const countVisibleModelSelectorRows = (
+  models: Model[],
+  moreModelsExpanded: boolean,
+): number => {
+  const sections = partitionModelSelectorModels(models);
+  return sections.primaryModels.length
+    + (sections.moreModels.length > 0 ? 1 : 0)
+    + (moreModelsExpanded ? sections.moreModels.length : 0);
+};
+
 export interface ModelSelectorChangeMeta {
   group: ModelSelectorGroup;
   thinkingLevel?: ModelThinkingLevelType;
@@ -341,10 +361,13 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   const [portalStyle, setPortalStyle] = React.useState<React.CSSProperties>({});
   const [listMaxHeight, setListMaxHeight] = React.useState<number>(LIST_MAX_HEIGHT);
   const [activeGroup, setActiveGroup] = React.useState<ModelSelectorGroup>(ModelSelectorGroup.Server);
+  const [moreModelsExpanded, setMoreModelsExpanded] = React.useState(false);
   const containerRef = React.useRef<HTMLDivElement>(null);
   const dropdownRef = React.useRef<HTMLDivElement>(null);
   const scrollContainerRef = React.useRef<HTMLDivElement>(null);
   const selectedItemRef = React.useRef<HTMLButtonElement>(null);
+  const moreModelsSectionRef = React.useRef<HTMLDivElement>(null);
+  const revealMoreModelsOnExpandRef = React.useRef(false);
   const [hoveredModel, setHoveredModel] = React.useState<Model | null>(null);
   const [hoverCardStyle, setHoverCardStyle] = React.useState<React.CSSProperties>({});
   const [hoverCardSide, setHoverCardSide] = React.useState<CascadeSide>(CascadeSide.Right);
@@ -393,10 +416,12 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   const visibleModels = shouldShowGroupTabs
     ? (visibleGroup === ModelSelectorGroup.Server ? serverModels : userModels)
     : availableModels;
-  const accessibleModels = visibleModels.filter(m => m.accessible !== false);
-  const restrictedModels = visibleModels.filter(m => m.accessible === false);
+  const visibleSections = partitionModelSelectorModels(visibleModels);
   // Keep the list height identical across tabs so switching never resizes the dropdown.
-  const largestGroupRowCount = Math.max(serverModels.length, userModels.length) + (defaultLabel ? 1 : 0);
+  const largestGroupRowCount = Math.max(
+    countVisibleModelSelectorRows(serverModels, moreModelsExpanded),
+    countVisibleModelSelectorRows(userModels, moreModelsExpanded),
+  ) + (defaultLabel ? 1 : 0);
   const stableListMinHeight = shouldShowGroupTabs
     ? Math.min(largestGroupRowCount * MODEL_ITEM_HEIGHT + LIST_VERTICAL_PADDING, LIST_MAX_HEIGHT)
     : undefined;
@@ -514,6 +539,29 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
     scrollContainer.scrollTop = Math.min(Math.max(0, targetScrollTop), maxScrollTop);
   }, [isOpen, selectedModelKey, visibleGroup, visibleModels.length, listMaxHeight]);
 
+  React.useLayoutEffect(() => {
+    if (!isOpen || !moreModelsExpanded || !revealMoreModelsOnExpandRef.current) return;
+
+    const scrollContainer = scrollContainerRef.current;
+    const moreModelsSection = moreModelsSectionRef.current;
+    if (!scrollContainer || !moreModelsSection) return;
+    revealMoreModelsOnExpandRef.current = false;
+
+    const containerRect = scrollContainer.getBoundingClientRect();
+    const sectionRect = moreModelsSection.getBoundingClientRect();
+    const sectionTop = sectionRect.top - containerRect.top + scrollContainer.scrollTop;
+    const sectionBottom = sectionTop + sectionRect.height;
+    const viewportTop = scrollContainer.scrollTop;
+    const viewportBottom = viewportTop + scrollContainer.clientHeight;
+    if (sectionTop >= viewportTop && sectionBottom <= viewportBottom) return;
+
+    const targetScrollTop = sectionRect.height <= scrollContainer.clientHeight
+      ? sectionBottom - scrollContainer.clientHeight
+      : sectionTop;
+    const maxScrollTop = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight);
+    scrollContainer.scrollTop = Math.min(Math.max(0, targetScrollTop), maxScrollTop);
+  }, [isOpen, moreModelsExpanded]);
+
   const toggleOpen = () => {
     if (disabled) return;
     if (!isOpen) {
@@ -523,7 +571,11 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
       if (portal) {
         updatePortalPosition(nextDirection);
       }
-      setActiveGroup(getPreferredGroup());
+      const preferredGroup = getPreferredGroup();
+      setActiveGroup(preferredGroup);
+      setMoreModelsExpanded(
+        selectedModel?.moreModel === true && getModelGroup(selectedModel) === preferredGroup,
+      );
       setIsOpen(true);
     } else {
       setIsOpen(false);
@@ -592,6 +644,16 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
       setIsThinkingMenuOpen(false);
     }
   }, [isOpen]);
+
+  React.useEffect(() => {
+    if (
+      isOpen
+      && selectedModel?.moreModel === true
+      && selectedModelGroup === visibleGroup
+    ) {
+      setMoreModelsExpanded(true);
+    }
+  }, [isOpen, selectedModel?.moreModel, selectedModelGroup, visibleGroup]);
 
   React.useLayoutEffect(() => {
     if (!hoveredModel || !hoverCardRef.current) return;
@@ -814,7 +876,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
         )}
         {model.costMultiplier != null && model.costMultiplier > 0 && (
           <span className="shrink-0 text-[11px] text-secondary whitespace-nowrap">
-            x{model.costMultiplier} {i18nService.t('authCreditsUnit')}
+            x{model.costMultiplier}
           </span>
         )}
         <span className="flex-1" />
@@ -830,6 +892,44 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
           <CheckIcon className="h-4 w-4 shrink-0 text-primary" strokeWidth={2.5} />
         )}
       </button>
+    );
+  };
+
+  const renderModelRows = (models: Model[]) => {
+    const accessibleModels = models.filter(model => model.accessible !== false);
+    const restrictedModels = models.filter(model => model.accessible === false);
+    return (
+      <>
+        {accessibleModels.map(renderModelItem)}
+        {restrictedModels.length > 0 && (
+          <div>{restrictedModels.map(renderModelItem)}</div>
+        )}
+      </>
+    );
+  };
+
+  const renderMoreModelsSection = () => {
+    if (visibleSections.moreModels.length === 0) return null;
+    const handleToggle = () => {
+      const nextExpanded = !moreModelsExpanded;
+      revealMoreModelsOnExpandRef.current = nextExpanded;
+      setMoreModelsExpanded(nextExpanded);
+    };
+    return (
+      <div ref={moreModelsSectionRef}>
+        <button
+          type="button"
+          aria-expanded={moreModelsExpanded}
+          onClick={handleToggle}
+          className="mx-2 flex w-[calc(100%-1rem)] items-center justify-between rounded-lg bg-surface-raised px-3 py-2 text-left text-[13px] font-semibold leading-5 text-foreground transition-colors hover:bg-surface-hover"
+        >
+          <span>{i18nService.t('modelSelectorMoreModels')}</span>
+          <ChevronDownIcon
+            className={`h-4 w-4 shrink-0 text-secondary transition-transform ${moreModelsExpanded ? 'rotate-180' : ''}`}
+          />
+        </button>
+        {moreModelsExpanded && renderModelRows(visibleSections.moreModels)}
+      </div>
     );
   };
 
@@ -943,7 +1043,12 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
               key={group.key}
               role="tab"
               aria-selected={active}
-              onClick={() => setActiveGroup(group.key)}
+              onClick={() => {
+                setActiveGroup(group.key);
+                setMoreModelsExpanded(
+                  selectedModel?.moreModel === true && getModelGroup(selectedModel) === group.key,
+                );
+              }}
               className={`flex min-w-0 flex-1 items-center justify-center rounded-md px-2 py-1.5 text-[12px] leading-4 transition-colors ${
                 active
                   ? 'bg-surface font-semibold text-foreground shadow-sm'
@@ -1017,12 +1122,8 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
             {!selectedModel && <CheckIcon className="h-4 w-4 shrink-0 text-primary" strokeWidth={2.5} />}
           </button>
         )}
-        {accessibleModels.map(renderModelItem)}
-        {restrictedModels.length > 0 && (
-          <div>
-            {restrictedModels.map(renderModelItem)}
-          </div>
-        )}
+        {renderModelRows(visibleSections.primaryModels)}
+        {renderMoreModelsSection()}
       </div>
       {renderCurrentModelFooter()}
     </div>

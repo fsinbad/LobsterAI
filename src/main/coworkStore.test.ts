@@ -1332,10 +1332,10 @@ test('getConfig defaults skipMissedJobs to true when config is missing', () => {
   expect(config.skipMissedJobs).toBe(true);
 });
 
-test('getConfig defaults OpenClaw heartbeat to enabled when config is missing', () => {
+test('getConfig defaults OpenClaw heartbeat to disabled when config is missing', () => {
   const config = store.getConfig();
 
-  expect(config.openClawHeartbeatEnabled).toBe(true);
+  expect(config.openClawHeartbeatEnabled).toBe(false);
 });
 
 test('backfillEmptyAgentModels assigns the current default model to empty agents only', () => {

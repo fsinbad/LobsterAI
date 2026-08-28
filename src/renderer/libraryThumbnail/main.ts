@@ -1,10 +1,18 @@
 import DOMPurify from 'dompurify';
 
 import { LibraryArtifactType } from '../../shared/library/constants';
-import type {
-  LibraryThumbnailRenderRequest,
-  LibraryThumbnailRenderResult,
+import {
+  isLibraryRasterThumbnailExtension,
+  type LibraryThumbnailRenderMetrics,
+  type LibraryThumbnailRenderRequest,
+  type LibraryThumbnailRenderResult,
 } from '../../shared/library/thumbnail';
+import {
+  renderPptxFirstSlide,
+  waitForPptxSlideLayout,
+  waitForPptxSlideReady,
+} from './pptxThumbnailRenderer';
+import { calculateRasterThumbnailDrawRect } from './rasterThumbnailLayout';
 
 declare global {
   interface Window {
@@ -18,6 +26,8 @@ const root = document.getElementById('library-thumbnail-root');
 if (!root) throw new Error('Missing thumbnail root');
 
 let activeCleanup: (() => void) | undefined;
+const THUMBNAIL_SURFACE_COLOR = '#f5f6f8';
+const PNG_DATA_URL_PREFIX = 'data:image/png;base64,';
 
 const IMAGE_MIME_TYPES: Record<string, string> = {
   '.avif': 'image/avif',
@@ -129,11 +139,55 @@ const renderImage = async (
   const image = new Image();
   image.alt = '';
   image.decoding = 'async';
-  image.src = objectUrl;
   image.className = 'thumbnail-media';
   root.appendChild(image);
   activeCleanup = () => URL.revokeObjectURL(objectUrl);
-  await loadElement(image);
+  const loaded = loadElement(image);
+  image.src = objectUrl;
+  await loaded;
+  await image.decode();
+};
+
+const renderRasterImage = async (
+  request: LibraryThumbnailRenderRequest,
+  bytes: Uint8Array,
+): Promise<string> => {
+  const blob = new Blob([toArrayBuffer(bytes)], {
+    type: IMAGE_MIME_TYPES[request.extension] || 'application/octet-stream',
+  });
+  const objectUrl = URL.createObjectURL(blob);
+  const image = new Image();
+  image.alt = '';
+  image.decoding = 'async';
+  activeCleanup = () => URL.revokeObjectURL(objectUrl);
+  const loaded = loadElement(image);
+  image.src = objectUrl;
+  await loaded;
+  await image.decode();
+
+  const canvas = document.createElement('canvas');
+  canvas.width = request.width;
+  canvas.height = request.height;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('Raster thumbnail canvas is unavailable');
+  const drawRect = calculateRasterThumbnailDrawRect(
+    image.naturalWidth,
+    image.naturalHeight,
+    request.width,
+    request.height,
+  );
+  context.fillStyle = THUMBNAIL_SURFACE_COLOR;
+  context.fillRect(0, 0, request.width, request.height);
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = 'high';
+  context.drawImage(image, drawRect.x, drawRect.y, drawRect.width, drawRect.height);
+  root.appendChild(canvas);
+
+  const dataUrl = canvas.toDataURL('image/png');
+  if (!dataUrl.startsWith(PNG_DATA_URL_PREFIX)) {
+    throw new Error('Raster thumbnail PNG encoding failed');
+  }
+  return dataUrl.slice(PNG_DATA_URL_PREFIX.length);
 };
 
 const renderVideo = async (
@@ -287,17 +341,23 @@ const renderSpreadsheet = async (
 const renderPptx = async (
   request: LibraryThumbnailRenderRequest,
   bytes: Uint8Array,
-): Promise<void> => {
+): Promise<Partial<LibraryThumbnailRenderMetrics>> => {
   const pptxPreview = await import('pptx-preview');
-  const previewer = pptxPreview.init(root, { width: 640, mode: 'list' });
-  activeCleanup = () => previewer.destroy?.();
-  await previewer.preview(toArrayBuffer(bytes));
-  await waitForStableLayout();
-  const slides = Array.from(root.querySelectorAll<HTMLElement>('.pptx-preview-wrapper > div'));
-  slides.slice(1).forEach(slide => { slide.style.display = 'none'; });
-  const slide = slides[0] || root.firstElementChild as HTMLElement | null;
-  if (!slide) throw new Error('PPTX slide is unavailable');
+  const { previewer, slide, slideCount } = await renderPptxFirstSlide(
+    pptxPreview,
+    root,
+    toArrayBuffer(bytes),
+    640,
+  );
+  activeCleanup = () => previewer.destroy();
+  const readiness = await waitForPptxSlideReady(slide);
   fitElement(slide, request.width, request.height, 4);
+  await waitForPptxSlideLayout(slide);
+  return {
+    slideCount,
+    renderedSlideIndex: 0,
+    ...readiness,
+  };
 };
 
 const renderHtml = async (
@@ -363,46 +423,52 @@ const renderText = async (
   root.appendChild(pre);
 };
 
-const renderRequest = async (request: LibraryThumbnailRenderRequest): Promise<void> => {
+const renderRequest = async (
+  request: LibraryThumbnailRenderRequest,
+): Promise<Partial<LibraryThumbnailRenderMetrics> & { pngBase64?: string }> => {
   const bytes = decodeBase64(request.contentBase64);
-  if (request.artifactType === LibraryArtifactType.Image
-    || request.artifactType === LibraryArtifactType.Svg) {
+  if (
+    request.artifactType === LibraryArtifactType.Image
+    && isLibraryRasterThumbnailExtension(request.extension)
+  ) {
+    return { pngBase64: await renderRasterImage(request, bytes) };
+  }
+  if (request.artifactType === LibraryArtifactType.Svg) {
     await renderImage(request, bytes);
-    return;
+    return {};
   }
   if (request.artifactType === LibraryArtifactType.Video) {
     await renderVideo(request, bytes);
-    return;
+    return {};
   }
   if (request.artifactType === LibraryArtifactType.Html) {
     await renderHtml(request, bytes);
-    return;
+    return {};
   }
   if (request.artifactType === LibraryArtifactType.Mermaid) {
     await renderMermaid(request, bytes);
-    return;
+    return {};
   }
   if (request.artifactType === LibraryArtifactType.Markdown
     || request.artifactType === LibraryArtifactType.Text
     || request.artifactType === LibraryArtifactType.Code) {
     await renderText(request, bytes);
-    return;
+    return {};
   }
   if (request.extension === '.pdf') {
     await renderPdf(request, bytes);
-    return;
+    return {};
   }
   if (request.extension === '.docx') {
     await renderDocx(request, bytes);
-    return;
+    return {};
   }
   if (request.extension === '.pptx') {
-    await renderPptx(request, bytes);
-    return;
+    return renderPptx(request, bytes);
   }
   if (['.xls', '.xlsx', '.csv', '.tsv'].includes(request.extension)) {
     await renderSpreadsheet(request, bytes);
-    return;
+    return {};
   }
   throw new Error('Unsupported document thumbnail format');
 };
@@ -410,14 +476,25 @@ const renderRequest = async (request: LibraryThumbnailRenderRequest): Promise<vo
 window.renderLibraryThumbnail = async request => {
   resetRoot();
   configureDocument(request);
+  const startedAt = performance.now();
   try {
-    await renderRequest(request);
+    const output = await renderRequest(request);
     await waitForStableLayout();
-    return { success: true };
+    const { pngBase64, ...metrics } = output;
+    return {
+      success: true,
+      renderGeneration: request.renderGeneration,
+      pngBase64,
+      metrics: {
+        renderDurationMs: Math.round(performance.now() - startedAt),
+        ...metrics,
+      },
+    };
   } catch (error) {
     resetRoot();
     return {
       success: false,
+      renderGeneration: request.renderGeneration,
       error: error instanceof Error ? error.message : 'Thumbnail rendering failed',
     };
   }

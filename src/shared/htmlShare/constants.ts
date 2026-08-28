@@ -9,6 +9,7 @@ export const HtmlShareIpc = {
   UpdateStatus: 'htmlShare:updateStatus',
   UpdateAccessMode: 'htmlShare:updateAccessMode',
   Disable: 'htmlShare:disable',
+  DeletePermanently: 'htmlShare:deletePermanently',
   Get: 'htmlShare:get',
   GetQuota: 'htmlShare:getQuota',
   GetTrialPolicy: 'htmlShare:getTrialPolicy',
@@ -83,6 +84,13 @@ export interface HtmlShareAnalyticsResult {
   code?: number;
 }
 
+export interface HtmlSharePermanentDeleteResult {
+  success: boolean;
+  error?: string;
+  code?: number;
+  httpStatus?: number;
+}
+
 export const HtmlShareDisabledSource = {
   User: 'user',
   Admin: 'admin',
@@ -104,6 +112,8 @@ export const HtmlShareErrorCode = {
   UnsafeSvg: 41312,
   AccessExpired: 41313,
   QuotaConfigInvalid: 41314,
+  DeleteRequiresDisabled: 41315,
+  ActionConflict: 41316,
   FeatureUnavailable: 49001,
   DisabledCannotUpdate: 49002,
 } as const;

@@ -14,6 +14,16 @@
 
 旧客户端不会调用新接口；既有 `/api/html-shares/*`、`/api/share-deployments/*` 和管理员接口保持兼容。
 
+### 2026-08-26 页面访问排行纠偏发布顺序
+
+1. 发布服务端共享文档导航分类器和静态缺失资源回退修复；
+2. 验证首页、SPA 深链接、favicon、图片、脚本、异步 fetch、预取请求和 304；
+3. 确认不再新增 `/favicon.ico` 明细后，在目标库执行 `sql/repair_site_analytics_non_page_paths_20260826.sql`；
+4. 核对 path、visitor、daily 三层 PV 及逐日 UV 一致；保留三张 `_bak_20260826` 快照表直至观察期结束；
+5. 发布 Electron 页面访问排行文案和信息提示。
+
+本次纠偏不修改分析 API 的请求或响应结构，`topPages` 字段保持不变。旧客户端可以继续使用；服务端若回滚到旧分类器，应先关闭 `site.analytics.enabled`，避免重新写入资源请求。
+
 ## 用户 API
 
 所有接口返回统一结构：
@@ -36,7 +46,7 @@
 | `PUT`    | `/api/sites/{shareId}/access-mode`                                         | 修改访问方式，请求体 `{ "accessMode": "public\|code" }`        |
 | `PATCH`  | `/api/sites/{shareId}/access-status`                                       | 停止或恢复，请求体 `{ "status": "disabled\|live" }`            |
 | `DELETE` | `/api/sites/{shareId}`                                                     | 永久删除已停止站点；重复删除幂等成功                           |
-| `GET`    | `/api/sites/{shareId}/analytics?from=yyyy-MM-dd&to=yyyy-MM-dd&limit=10`    | PV、跨日期去重 UV、每日趋势和热门页面                          |
+| `GET`    | `/api/sites/{shareId}/analytics?from=yyyy-MM-dd&to=yyyy-MM-dd&limit=10`    | PV、跨日期去重 UV、每日趋势和页面访问排行                      |
 | `GET`    | `/api/sites/deployment-quota?targetShareId=&page=1&pageSize=10&keyword=`   | 部署预检、套餐用量及可停止站点候选                             |
 | `POST`   | `/api/sites/deployment-quota/reservations`                                 | 最终提交前申请短期名额；请求体包含 `requestKey` 和可选目标站点 |
 | `DELETE` | `/api/sites/deployment-quota/reservations/{reservationId}`                 | 打包、上传或提交失败时主动释放名额                             |
@@ -71,13 +81,17 @@
 
 ## 分析口径
 
-- 只统计站点 Host 上 `GET` 且真实响应为成功 HTML 的页面请求；浏览器缓存刷新返回 `304 Not Modified` 时，仅确认是顶层 HTML 文档导航的请求计数。
-- 不统计管理员预览、分享码页面、`/_lobster_share/*`、健康检查、机器人和非 HTML 静态资源。
+- 只统计站点 Host 上确认为顶层文档导航的 `GET`：真实响应为成功 HTML，或浏览器缓存刷新返回 `304 Not Modified`。
+- `Sec-Fetch-Dest` 存在时仅接受 `document`；缺失时依次使用 `Sec-Fetch-Mode: navigate + Accept: text/html` 和旧浏览器的 `Accept: text/html` 兼容规则。
+- 不统计 `image`、`script`、`style`、`font`、`empty`、`iframe`、prefetch/prerender、管理员预览、分享码页面、`/_lobster_share/*`、健康检查和机器人；资源请求即使错误返回 `200 text/html` 也不计数。
+- `/favicon.ico` 无条件排除。静态文件缺失时，只有文档导航允许回退入口 HTML；缺失的 favicon、图片、脚本等资源返回 404。
 - PV 是 HTML 页面浏览次数，包括命中条件缓存的顶层文档刷新；资源和接口的 `304` 不计数。
 - 日趋势 UV 为当日访客数；汇总 UV 使用所选日期范围内 `visitor_hash` 再去重，不能累加每日 UV。
 - Cookie 为 `lobster_site_vid`，属性为 `Secure; HttpOnly; SameSite=Lax; Path=/; Max-Age=31536000`。
 - 数据库只保存访客 HMAC、path 和 path SHA-256，不保存原始 IP、query、fragment 或 Referer。
 - 分析异步写入，失败不得影响站点响应。
+
+Electron 页面标题使用「页面访问排行」，列名为「页面 / 浏览量 / 访客数」。首页直接显示 `/`；统计说明默认隐藏，通过标题旁信息图标访问。客户端不得自行过滤 `/favicon.ico` 来掩盖服务端或历史数据问题。
 
 ## 配置
 
@@ -133,3 +147,5 @@ WHERE table_schema = DATABASE()
 ```
 
 迁移不回填旧的 IP 统计；上线前的产品分析数据按 0 展示。测试库没有 Flyway 历史表时，需要由发布负责人单独记录 SQL 执行结果。开启配额前还需核对服务启动日志中的四档配置，确认当前环境所有有效订阅的 `plans.name` 都能命中对应额度。
+
+历史 favicon 修复脚本兼容 MySQL 5.7，只处理 `Asia/Shanghai` 已结束日期。脚本先创建 path、visitor、daily 三张持久快照，再在事务内删除精确 `/favicon.ico` 并从剩余 path 明细重建上层聚合；任何校验失败都会回滚原表修改。测试环境 2026-08-26 执行结果为：favicon 明细 0，三层总 PV 均为 108，daily/visitor 不一致数均为 0。
