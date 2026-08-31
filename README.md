@@ -292,14 +292,14 @@ Offline or private-source packaging can use:
 Join the WeChat group for help, feedback, and release updates:
 
 <p align="center">
-  <img src="https://shared.ydstatic.com/market/souti/fihserChatWeb/online/2.0.4/dist/assets/wechat_group-B34qRm1G.png" alt="WeChat Community QR Code" width="200">
+  <img src="https://shared.ydstatic.com/market/souti/fihserChatWeb/online/2.1.5/dist/assets/wechat_group-C529RDAy.png" alt="WeChat Community QR Code" width="200">
 </p>
 
 Please use the repository issue templates for bugs and feature requests. For pull requests, include a short summary, linked issue when relevant, screenshots for UI changes, and notes for Electron-specific behavior such as IPC, storage, runtime, or windowing changes.
 
 ## Star History
 
-[![Star History Chart](docs/res/star-history-202677.png)](https://www.star-history.com/?repos=netease-youdao%2Flobsterai&type=date&legend=bottom-right)
+[![Star History Chart](docs/res/star-history-2026828.png)](https://www.star-history.com/?repos=netease-youdao%2Flobsterai&type=date&legend=bottom-right)
 
 ## License
 
