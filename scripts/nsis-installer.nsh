@@ -286,6 +286,13 @@ FunctionEnd
 ; 1. NukemAI.exe -- the main app AND the OpenClaw gateway (ELECTRON_RUN_AS_NODE)
 ; 2. node.exe whose binary lives inside the NukemAI install tree
 ;    (Web Search bridge server, MCP servers spawned with detached:true)
+; 3. any other process whose executable lives under the install root --
+;    python-win skill/MCP servers, bundled git/ssh helpers -- matched by
+;    path prefix (field failure 2026-09-01: a survivor under the tree made
+;    the old-install replacement fail on a held handle). The invoking
+;    installer/uninstaller pid is excluded because the stock fallback can
+;    run the old uninstaller in place from $INSTDIR, and a drive-root
+;    install (root length <= 3) skips the sweep entirely.
 ;
 ; Stop-Process -Force is equivalent to taskkill /F -- the processes have no
 ; chance to run before-quit cleanup. The kill is re-issued on every poll
@@ -308,11 +315,23 @@ FunctionEnd
   ; directory, including on the helper-not-found path.
   CreateDirectory "$APPDATA\NukemAI"
   StrCmp $lobsterTrustedPowerShellPath "" StopNukemAIProcessesDone
+  ; The path-prefix sweep in both helpers below needs the install root and
+  ; this process id. Both travel through the child environment, not string
+  ; interpolation: the install directory is user-selected and may hold shell
+  ; metacharacters. Cleared at StopNukemAIProcessesLog, which every path
+  ; reaches.
+  System::Call 'Kernel32::SetEnvironmentVariable(t "LOBSTERAI_STOP_ROOT", t "$INSTDIR")i'
+  System::Call 'Kernel32::SetEnvironmentVariable(t "LOBSTERAI_STOP_SELF_PID", t "$lobsterCurrentProcessPid")i'
   nsExec::ExecToLog '"$lobsterTrustedPowerShellPath" -NoProfile -NonInteractive -Command "\
+    $$root = $$env:LOBSTERAI_STOP_ROOT;\
+    if ($$root -and -not $$root.EndsWith([char]92)) { $$root = $$root + [char]92 };\
+    $$selfPid = $$env:LOBSTERAI_STOP_SELF_PID;\
+    $$sweep = $$root -and $$root.Length -gt 3;\
     for ($$i = 0; $$i -lt 30; $$i++) {\
       $$procs = @();\
       $$procs += Get-Process -Name NukemAI -ErrorAction SilentlyContinue;\
       $$procs += Get-Process node -ErrorAction SilentlyContinue | Where-Object { $$_.Path -like \"*NukemAI*\" };\
+      if ($$sweep) { $$procs += Get-Process -ErrorAction SilentlyContinue | Where-Object { $$fp = $$null; try { $$fp = $$_.Path } catch { }; $$fp -and $$fp.StartsWith($$root, [System.StringComparison]::OrdinalIgnoreCase) -and $$_.Id.ToString() -ne $$selfPid } };\
       if ($$procs.Count -eq 0) { exit 0 };\
       $$procs | Stop-Process -Force -ErrorAction SilentlyContinue;\
       Start-Sleep -Milliseconds 500;\
@@ -336,9 +355,14 @@ FunctionEnd
   System::Call 'Kernel32::SetEnvironmentVariable(t "LOBSTERAI_STOP_ATTEMPT_ID", t "$lobsterInstallerAttemptId")i'
   nsExec::ExecToLog '"$lobsterTrustedPowerShellPath" -NoProfile -NonInteractive -Command "\
     $$ts = Get-Date -Format \"yyyy-MM-dd HH:mm:ss\";\
+    $$root = $$env:LOBSTERAI_STOP_ROOT;\
+    if ($$root -and -not $$root.EndsWith([char]92)) { $$root = $$root + [char]92 };\
+    $$selfPid = $$env:LOBSTERAI_STOP_SELF_PID;\
+    $$sweep = $$root -and $$root.Length -gt 3;\
     $$procs = @();\
     $$procs += Get-Process -Name NukemAI -ErrorAction SilentlyContinue;\
     $$procs += Get-Process node -ErrorAction SilentlyContinue | Where-Object { $$_.Path -like \"*NukemAI*\" };\
+    if ($$sweep) { $$procs += Get-Process -ErrorAction SilentlyContinue | Where-Object { $$fp = $$null; try { $$fp = $$_.Path } catch { }; $$fp -and $$fp.StartsWith($$root, [System.StringComparison]::OrdinalIgnoreCase) -and $$_.Id.ToString() -ne $$selfPid } };\
     foreach ($$p in $$procs) {\
       $$fp = \"unknown\";\
       try { if ($$p.Path) { $$fp = $$p.Path } } catch { };\
@@ -363,6 +387,9 @@ FunctionEnd
   StrCpy $R2 "helper-not-found"
 
   StopNukemAIProcessesLog:
+  ; Clearing variables that were never set (helper-not-found path) is a no-op.
+  System::Call 'Kernel32::SetEnvironmentVariable(t "LOBSTERAI_STOP_ROOT", t "")i'
+  System::Call 'Kernel32::SetEnvironmentVariable(t "LOBSTERAI_STOP_SELF_PID", t "")i'
   System::Call 'kernel32::GetTickCount()i .r6'
   IntOp $5 $6 - $7
   FileOpen $9 "$APPDATA\NukemAI\install-timing.log" a
@@ -1363,11 +1390,16 @@ FunctionEnd
     ; directory itself from being renamed. Move the current directory to the
     ; plugin temp directory before attempting the update fast path.
     ;
-    ; The fast path is deliberately limited to an in-app update whose selected
-    ; registry root owns this exact install directory. Manual reinstalls and
-    ; ambiguous/mismatched installs retain electron-builder's old-uninstaller
-    ; fallback. A successful backup is not deleted until customInstall runs,
-    ; so extraction does not compete with a recursive old-tree deletion.
+    ; The fast path covers every install whose selected registry root owns
+    ; this exact install directory: in-app updates and manual/channel
+    ; overwrite installs alike. Falling back to the legacy uninstaller means
+    ; stock un.atomicRMDir (--updated is always passed) moving the whole tree
+    ; file-by-file into the unexcluded %TEMP% plugins dir -- 79s..31min in
+    ; field logs, and one locked file aborts it wholesale after five silent
+    ; retries (exit=2 dialog, 2026-09-01). Ambiguous or mismatched
+    ; registrations retain electron-builder's old-uninstaller fallback. A
+    ; successful backup is not deleted until customInstall runs, so
+    ; extraction does not compete with a recursive old-tree deletion.
     DetailPrint "[Installer] Preparing previous installation for replacement"
     System::Call 'kernel32::GetTickCount()i .r7'
     StrCpy $lobsterOldInstallOriginalPath "$INSTDIR"
@@ -1379,7 +1411,7 @@ FunctionEnd
     StrCpy $lobsterOldInstallBackupPath ""
     StrCpy $lobsterOldInstallFailedPath ""
     StrCpy $lobsterOldInstallRenameStatus "not-applicable"
-    StrCpy $lobsterOldInstallRenameReason "not-updated"
+    StrCpy $lobsterOldInstallRenameReason "not-evaluated"
     StrCpy $lobsterOldInstallRenameError "0"
     StrCpy $lobsterOldInstallRenameAttempts "0"
     StrCpy $lobsterOldInstallRollbackReason ""
@@ -1401,10 +1433,6 @@ FunctionEnd
     !insertmacro GetTimestamp $8
     FileWrite $9 "$8 phase=old-install-rename-start attempt_id=$lobsterInstallerAttemptId instdir=$lobsterOldInstallOriginalPath registered_instdir=$lobsterOldInstallRegisteredPath current_directory=$lobsterOldInstallCurrentDirectory install_mode=$installMode$\r$\n"
     FileClose $9
-
-    ${IfNot} ${isUpdated}
-      Goto OldInstallRenameComplete
-    ${EndIf}
 
     StrCpy $lobsterOldInstallRenameReason "registered-install-missing"
     StrCmp $lobsterOldInstallRegisteredPathNormalized "" OldInstallRenameComplete

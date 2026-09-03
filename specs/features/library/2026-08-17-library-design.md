@@ -1318,24 +1318,28 @@ Windows 上 `realpath/stat`、杀毒软件扫描和目录 watcher 建立可能�
 
 ### 7.8 缩略图与预览
 
-1. 缩略图只对可见卡片懒加载；
-2. Renderer 缓存键使用 `clientRendererVersion + filePath + fileMtimeMs`，主进程在重新 `stat` 后使用规范化路径、真实 mtime、大小和 rendererVersion 复核；异步结果只有在请求缓存键仍等于卡片当前缓存键时才可回填；
+1. 缩略图只对可见卡片和上下各一屏预取区懒加载；可见项优先于预取项，卡片离开预取区后撤销尚未开始的任务，并通知主进程取消仍在队列中的请求；
+2. Renderer 缓存键使用 `clientRendererVersion + filePath + fileMtimeMs + fileSizeBytes`，主进程在重新 `stat` 后使用规范化路径、真实 mtime、大小和 rendererVersion 复核；异步结果只有在请求缓存键仍等于卡片当前缓存键时才可回填；
 3. 缓存位于客户端 `userData/library/thumbnails`，不写 SQLite BLOB；
-4. 文件变化后旧缓存自然失效，后台可按 LRU 清理；
-5. macOS、Windows 和 Linux 优先使用 LobsterAI 隔离的跨平台 Renderer 生成缩略图；Renderer 失败后才尝试 Electron `nativeImage.createThumbnailFromPath()`，两条链路均失败时显示类型封面；同版本请求去重且并发不超过 3；
-6. JPG、JPEG、PNG、GIF、WebP、AVIF 和 BMP 在 Renderer 内完成解码，并按 contain 规则绘制到固定尺寸 Canvas；Renderer 直接返回 Canvas PNG，主进程不得再通过共享隐藏窗口截图栅格图片；SVG 继续使用隔离渲染链路；
+4. 文件变化后旧缓存自然失效，后台可按 LRU 清理；磁盘缓存先写同目录临时文件再原子 rename，读取前校验 PNG 签名，空文件、截断文件和非 PNG 文件必须删除并重新生成；
+5. macOS、Windows 和 Linux 优先使用 LobsterAI 隔离的跨平台 Renderer 生成缩略图；Renderer 失败后才尝试 Electron `nativeImage.createThumbnailFromPath()`，两条链路均失败时显示类型封面；Renderer 侧按缓存键去重，客户端共享调度器最多并发 2 个 IPC，主进程只保留一个可按可见性提权、可取消的渲染队列，不得再叠加 Renderer 私有 FIFO；
+6. JPG/JPEG/PNG/GIF/WebP/AVIF/BMP、清洗后的 SVG、PDF 第一页、文本/Markdown/代码、视频抽帧、Mermaid 和表格首屏都在 Renderer 内绘制到固定尺寸 Canvas 并直接返回 PNG；这些格式不得进入隐藏窗口 presentation/capturePage。只有 HTML、DOCX 和 PPTX 等必须依赖完整 DOM 排版的格式保留 presentation 路径；
 7. PPTX 缩略图只解析并渲染第 1 张幻灯片，不得使用列表模式创建整份演示文稿的页面 DOM 后再隐藏；第一页为空白时保留真实空白结果，不擅自改用第 2 页；
-8. PPTX Renderer 只有在第一页字体就绪、内嵌图片完成加载和解码、布局连续两帧稳定后才可返回成功；媒体等待必须有超时并在失败时进入统一降级链路；
+8. PPTX Renderer 在解析完成后必须直接从第一页源模型计算 `sourceHasVisualContent` 和 `sourceVisualElementCount`：检查有效背景、第一页节点以及布局/母版中的 `userDrawn` 节点；空占位符和纯白背景不算视觉内容。随后再从第一页 DOM 独立计算 `domHasVisualContent`。只有字体就绪、内嵌图片完成加载和解码、源模型有内容时 DOM 也有对应内容、布局连续两帧稳定后才可返回成功；媒体等待必须有超时并在失败时进入统一降级链路；
 9. 每次隐藏窗口渲染必须携带单调递增的 `renderGeneration`，Renderer 原样回传；主进程只接受与当前请求完全一致的代次，代次缺失或不匹配均视为失败；共享窗口只在实际尺寸变化时调整内容尺寸，不在每次请求中重复设置 zoom factor；
-10. Windows 对 HTML、SVG、文档和视频等非栅格内容订阅完整 presentation frame：第一次回调只作为前序帧屏障，随后主动 `invalidate`，直接使用第二次回调的 `NativeImage` 生成 PNG，不再额外调用 `capturePage()`；所有订阅和定时器都必须在成功、失败和超时路径释放；macOS 和 Linux 保留隔离 Renderer 的 `capturePage` 路径；
-11. 代次不匹配、画面为空、PPTX 有视觉内容但画面异常空白或渲染/画面提交超时时，必须销毁共享窗口，并在全新窗口完整重渲染一次；第二次仍失败才进入原生缩略图和类型封面降级链路，不得仅对旧 DOM 重复截图；
-12. 只有通过 Renderer 就绪契约或原生缩略图成功生成的非空图片才能写入缓存；栅格 Canvas、通用 presentation frame 和 PPTX 第一页 presentation frame 分别使用独立 rendererVersion，本次变更必须使历史白图和串图缓存全部自然失效；
-13. 缩略图日志只记录扩展名、渲染代次、策略、文件大小、页数、资源数量、耗时和失败阶段，不记录完整文件路径、文件名或内容；正常成功不写 info 日志，慢渲染、重试和降级分别使用受控 warn/error 日志；
-14. HTML、SVG 和文档继续使用现有隔离/清洗预览链路；
-15. 不为生成缩略图把本地文件上传到云端；
-16. 云端站点首期可以使用类型封面，不自动抓取不可信网站截图。
+10. Windows 的 HTML、DOCX 和 PPTX presentation frame 必须在内容区下方绘制由 `renderGeneration` 派生的 2px 提交戳；主进程订阅 frame、主动 `invalidate`，只接受颜色与当前代次匹配的帧，再裁掉提交戳生成 PNG。旧帧、尺寸不符帧和错误代次帧继续等待至 3 秒超时；所有订阅和定时器都必须在成功、失败和超时路径释放；macOS 和 Linux 保留隔离 Renderer 的限定区域 `capturePage` 路径；
+11. 代次不匹配、画面为空、源模型或 DOM 任一确认有内容但最终画面异常空白、渲染超时或画面提交超时时，必须销毁共享窗口；仅稳定标记为 `retryable` 的失败在全新窗口完整重渲染一次，格式不支持、文件过大、PPTX 无页面或确定性解析失败不得重复占用队列。Renderer 重试仍失败后才进入原生缩略图和类型封面降级链路；只有 `sourceHasVisualContent = false` 且 `domHasVisualContent = false` 时，空白画面才表示第一页确实为空并保留真实结果；
+12. 只有通过 Renderer 就绪契约或原生缩略图成功生成且通过 PNG 校验的图片才能写入缓存；栅格 Canvas、通用直接 Canvas、通用 presentation frame 和 PPTX 源内容感知的第一页 presentation frame 分别使用独立 rendererVersion，本次变更必须同时升级主进程策略缓存版本与 Renderer 内存缓存版本，使历史白图和串图全部自然失效；
+13. 缩略图 IPC 返回共享的稳定 `failureCode`、`failureStage` 和 `retryable`，至少区分源文件读取、Renderer 初始化/超时、PPTX 解析、第一页 DOM、媒体、布局、presentation、画面校验、取消和原生降级。客户端状态明确区分 `queued / rendering / retry-wait / ready / failed / unsupported`；瞬态失败仅在卡片仍位于预取区时按 500ms、2s 最多重试两次，确定性失败停在可手动重试的类型封面；
+14. 日期头、任务头和文件行按当前滚动容器虚拟化，仅挂载可视区及 3 行 overscan；网格按容器宽度把文件切成虚拟行，列表按单文件虚拟行，快速滚动时不让已离屏卡片和观察器常驻 DOM；
+15. 日志只记录扩展名、失败码/阶段、策略、文件大小、页数、资源数量、耗时和重试次数，不记录完整文件路径、文件名或内容；正常成功不写 info 日志，慢渲染、重试和降级分别使用受控 warn/error 日志；
+16. HTML、SVG 和文档继续使用现有隔离/清洗预览链路；缩略图改成 Canvas 只改变栅格化方式，不放宽内容安全边界；
+17. 不为生成缩略图把本地文件上传到云端；本次改动不新增服务端 API、MySQL 或 SQLite 迁移；
+18. 云端站点首期可以使用类型封面，不自动抓取不可信网站截图。
 
-缩略图至少覆盖以下验收矩阵：栅格图片与 Markdown/HTML/PDF 交替排列并快速滚动、同一卡片路径或 mtime 变化、冷缓存和热缓存，以及连续 20 次按“图片 → 文档 → 图片 → 文档”生成时不得出现白图、串图或上一项画面。PPTX 另覆盖单页纯文字、多页纯文字、多页全屏图片、多页图文混排、第一页故意为空白、损坏文件和未安装 Office/WPS。Windows 10/11 分别覆盖 100%、125% 和 150% 系统缩放，并至少验证一次硬件加速关闭场景。多页文件在 Renderer 中只能存在第一页 DOM；失败不得留下可被缓存的白图、错误文件画面或未释放的 frame subscription。
+PPTX 源内容与最终画面的判定矩阵为：源第一页有内容且画面非空时成功；源第一页有内容但 DOM 为空时按 Renderer 不兼容失败；源模型或 DOM 任一确认有内容、但最终画面空白时按 presentation/画面校验失败；仅当源模型与 DOM 都明确无内容且画面空白时，才按真实空白第一页成功。代次和第二提交帧屏障继续负责拦截上一文件画面，不用“检测到第一页空白就改用第二页”的方式掩盖问题。
+
+缩略图至少覆盖以下验收矩阵：300 个栅格图片、SVG、Markdown、HTML、PDF、视频、表格、DOCX 与 PPTX 混排并持续快速滚动；同一卡片路径、mtime 或大小变化；冷缓存、热缓存、损坏缓存；瞬态失败自动重试、确定性失败不自动重试、离屏排队任务取消；连续 20 次按“图片 → 文档 → 图片 → 文档”生成时不得出现白图、串图或上一项画面。PPTX 另覆盖单页纯文字、多页纯文字、多页全屏图片、多页图文混排、第一页故意为空白、损坏文件和未安装 Office/WPS。Windows 10/11 分别覆盖 100%、125% 和 150% 系统缩放，并至少验证一次硬件加速关闭场景。多页文件在 Renderer 中只能存在第一页 DOM；失败不得留下可被缓存的白图、错误文件画面或未释放的 frame subscription。快速滚动稳定后，可视卡片应在有限队列内持续收敛为 `ready` 或明确 `failed/unsupported`，不得永久停留在通用图标且无状态。
 
 ## 8. 本地 SQLite 设计
 
@@ -3030,6 +3034,9 @@ OpenClaw/Cowork 消息
 - [x] 首次回填、文件监听、修复和任务删除只做定向合并或保留内容的静默校验，不卸载列表、不清空已确认空态。
 - [ ] 后台变更期间筛选、滚动锚点、更多菜单、预览和网格/列表选择保持不变；本地产物隐藏时不执行无意义查询。
 - [ ] Windows 在 100、1,000、10,000 个历史产物数据集下，文件数量只影响后台回填总时长，不增加整页骨架次数或造成持续闪屏。
+- [x] 本地产物日期头、任务头和文件行按滚动容器虚拟化；网格快速滚动只挂载可视区与 overscan，不让离屏缩略图继续占用队列。
+- [x] 缩略图卡片能区分排队/渲染/重试等待、成功、失败和不支持；可见项优先，瞬态失败有限重试，确定性失败不会因组件重挂载自动重跑。
+- [ ] Windows 10/11 在 100%/125%/150% 缩放及硬件加速开/关组合下完成 300 个混合文件的快速滚动实机验收。
 - [ ] 中英文、键盘、焦点和 ARIA 验证通过。
 
 ### 17.5 云端
@@ -3070,6 +3077,8 @@ OpenClaw/Cowork 消息
 - [ ] `libraryQueryTransitionState` 的 fake timer 测试覆盖 150ms/200ms、快照 LRU、乱序响应、失败、卸载和 owner scope 清理。
 - [ ] Renderer 测试分别断言首次骨架、查询过渡、手动刷新和续页的挂载范围；加载 JSX 不再包含全宽空行分隔线，不只依赖截图人工判断。
 - [ ] macOS/Windows 使用快速、慢速、失败和乱序响应完成 60fps 录屏回归，逐帧确认没有横线闪烁、错误空态和跨账号快照。
+- [x] 缩略图共享调度器覆盖并发上限、可见项提权、同版本去重、离屏取消、瞬态退避和确定性失败负缓存。
+- [x] Windows presentation 提交戳覆盖旧代次拦截、订阅释放及 100%/125%/150% 位图缩放；磁盘缓存覆盖 PNG 校验、损坏重建和原子写入。
 - [x] 主进程/Preload 改动通过 `npm run compile:electron`。
 - [x] Renderer 改动通过 `npm run build`。
 - [ ] 永久删除交互完成手动 Electron 验证。

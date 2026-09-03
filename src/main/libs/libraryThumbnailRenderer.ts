@@ -4,10 +4,17 @@ import path from 'path';
 
 import {
   createLibraryThumbnailRenderRequest,
-  isLibraryRasterThumbnailExtension,
+  getLibraryThumbnailFailureDetails,
+  isLibraryDirectPngThumbnailExtension,
+  isLibraryThumbnailFailureRetryable,
+  LibraryThumbnailError,
+  LibraryThumbnailFailureCode,
+  type LibraryThumbnailFailureCodeType,
   LibraryThumbnailLimits,
+  LibraryThumbnailPresentationStamp,
   type LibraryThumbnailRenderMetrics,
   type LibraryThumbnailRenderResult,
+  withLibraryThumbnailErrorMetrics,
 } from '../../shared/library/thumbnail';
 import { waitForCommittedThumbnailPresentation } from './libraryThumbnailPresentation';
 import { isLikelyBlankThumbnailBitmap } from './libraryThumbnailValidation';
@@ -46,7 +53,6 @@ export class LibraryThumbnailRenderer {
   private readonly presentationTimeoutMs: number;
   private readonly platform: NodeJS.Platform;
   private window?: BrowserWindow;
-  private queueTail: Promise<void> = Promise.resolve();
   private renderGeneration = 0;
 
   constructor(options: LibraryThumbnailRendererOptions) {
@@ -61,12 +67,7 @@ export class LibraryThumbnailRenderer {
   }
 
   render(filePath: string, size: ThumbnailSize): Promise<Buffer> {
-    const task = this.queueTail.then(() => this.renderWithRecovery(filePath, size));
-    this.queueTail = task.then(
-      (): void => {},
-      (): void => {},
-    );
-    return task;
+    return this.renderWithRecovery(filePath, size);
   }
 
   dispose(): void {
@@ -82,27 +83,66 @@ export class LibraryThumbnailRenderer {
       } catch (error) {
         lastError = error;
         this.destroyCurrentWindow();
-        if (attempt < LibraryThumbnailLimits.MaxRenderAttempts) {
+        const failure = getLibraryThumbnailFailureDetails(
+          error,
+          LibraryThumbnailFailureCode.RendererFailed,
+        );
+        if (
+          attempt < LibraryThumbnailLimits.MaxRenderAttempts
+          && isLibraryThumbnailFailureRetryable(failure.code)
+        ) {
           console.warn('[LibraryThumbnail] Retrying render in a fresh window', {
             extension,
             attempt,
-            strategy: isLibraryRasterThumbnailExtension(extension)
-              ? 'raster-canvas'
-              : 'isolated-renderer',
+            strategy: isLibraryDirectPngThumbnailExtension(extension)
+              ? 'direct-canvas'
+              : 'isolated-presentation',
+            failureCode: failure.code,
+            failureStage: failure.stage,
+            sourceSizeBytes: failure.metrics?.sourceSizeBytes,
+            slideCount: failure.metrics?.slideCount,
+            imageCount: failure.metrics?.imageCount,
           });
+          continue;
         }
+        break;
       }
     }
-    throw lastError instanceof Error ? lastError : new Error('Thumbnail rendering failed');
+    if (lastError instanceof Error) throw lastError;
+    throw new LibraryThumbnailError(
+      LibraryThumbnailFailureCode.RendererFailed,
+      'Thumbnail rendering failed',
+    );
   }
 
   private async renderNow(filePath: string, size: ThumbnailSize): Promise<Buffer> {
-    const stat = await fs.promises.stat(filePath);
+    let stat: fs.Stats;
+    try {
+      stat = await fs.promises.stat(filePath);
+    } catch (error) {
+      throw new LibraryThumbnailError(
+        LibraryThumbnailFailureCode.SourceReadFailed,
+        error instanceof Error ? error.message : 'Thumbnail source could not be read',
+      );
+    }
     if (stat.size > this.maxSourceBytes) {
-      throw new Error('File is too large for thumbnail rendering');
+      throw new LibraryThumbnailError(
+        LibraryThumbnailFailureCode.SourceTooLarge,
+        'File is too large for thumbnail rendering',
+        { sourceSizeBytes: stat.size },
+      );
     }
 
-    const content = await fs.promises.readFile(filePath);
+    let content: Buffer;
+    try {
+      content = await fs.promises.readFile(filePath);
+    } catch (error) {
+      throw new LibraryThumbnailError(
+        LibraryThumbnailFailureCode.SourceReadFailed,
+        error instanceof Error ? error.message : 'Thumbnail source could not be read',
+        { sourceSizeBytes: stat.size },
+      );
+    }
     this.renderGeneration += 1;
     const request = createLibraryThumbnailRenderRequest(
       path.basename(filePath),
@@ -111,52 +151,101 @@ export class LibraryThumbnailRenderer {
       size.height,
       this.renderGeneration,
     );
-    if (!request) throw new Error('Unsupported thumbnail format');
+    if (!request) {
+      throw new LibraryThumbnailError(
+        LibraryThumbnailFailureCode.UnsupportedFormat,
+        'Unsupported thumbnail format',
+        { sourceSizeBytes: stat.size },
+      );
+    }
 
-    const rendererWindow = await this.ensureWindow(size);
+    let rendererWindow: BrowserWindow;
+    try {
+      rendererWindow = await this.ensureWindow(size);
+    } catch (error) {
+      throw withLibraryThumbnailErrorMetrics(
+        error,
+        LibraryThumbnailFailureCode.RendererFailed,
+        { sourceSizeBytes: stat.size },
+      );
+    }
+    const windowHeight = size.height + LibraryThumbnailPresentationStamp.Height;
     const [currentWidth, currentHeight] = rendererWindow.getContentSize();
-    if (currentWidth !== size.width || currentHeight !== size.height) {
-      rendererWindow.setContentSize(size.width, size.height, false);
+    if (currentWidth !== size.width || currentHeight !== windowHeight) {
+      rendererWindow.setContentSize(size.width, windowHeight, false);
     }
 
     const script = `window.renderLibraryThumbnail(${JSON.stringify(request)})`;
-    const result = await this.withTimeout(
-      rendererWindow.webContents.executeJavaScript(script, true),
-      this.renderTimeoutMs,
-      'Thumbnail rendering timed out',
-    );
+    let result: unknown;
+    try {
+      result = await this.withTimeout(
+        rendererWindow.webContents.executeJavaScript(script, true),
+        this.renderTimeoutMs,
+        LibraryThumbnailFailureCode.RendererTimeout,
+        'Thumbnail rendering timed out',
+      );
+    } catch (error) {
+      throw withLibraryThumbnailErrorMetrics(
+        error,
+        LibraryThumbnailFailureCode.RendererFailed,
+        { sourceSizeBytes: stat.size },
+      );
+    }
     if (!isRenderResult(result)) {
-      throw new Error('Invalid thumbnail renderer response');
+      throw new LibraryThumbnailError(
+        LibraryThumbnailFailureCode.RendererResponseInvalid,
+        'Invalid thumbnail renderer response',
+        { sourceSizeBytes: stat.size },
+      );
     }
     if (result.renderGeneration !== request.renderGeneration) {
-      throw new Error('Thumbnail renderer generation mismatch');
+      throw new LibraryThumbnailError(
+        LibraryThumbnailFailureCode.RenderGenerationMismatch,
+        'Thumbnail renderer generation mismatch',
+        { sourceSizeBytes: stat.size, ...result.metrics },
+      );
     }
     if (!result.success) {
-      throw new Error(result.error || 'Thumbnail rendering failed');
+      throw new LibraryThumbnailError(
+        result.failureCode ?? LibraryThumbnailFailureCode.RendererFailed,
+        result.error || 'Thumbnail rendering failed',
+        { sourceSizeBytes: stat.size, ...result.metrics },
+      );
     }
-    if (result.metrics && result.metrics.renderDurationMs >= SLOW_RENDER_THRESHOLD_MS) {
+    const metrics: LibraryThumbnailRenderMetrics = {
+      renderDurationMs: result.metrics?.renderDurationMs ?? 0,
+      sourceSizeBytes: stat.size,
+      ...result.metrics,
+    };
+    if (metrics.renderDurationMs >= SLOW_RENDER_THRESHOLD_MS) {
       console.warn('[LibraryThumbnail] Slow renderer completion', {
         extension: request.extension,
         renderGeneration: request.renderGeneration,
-        strategy: result.pngBase64 ? 'raster-canvas' : 'isolated-renderer',
-        renderDurationMs: result.metrics.renderDurationMs,
-        slideCount: result.metrics.slideCount,
-        imageCount: result.metrics.imageCount,
+        strategy: result.pngBase64 ? 'direct-canvas' : 'isolated-presentation',
+        renderDurationMs: metrics.renderDurationMs,
+        sourceSizeBytes: metrics.sourceSizeBytes,
+        slideCount: metrics.slideCount,
+        imageCount: metrics.imageCount,
       });
     }
 
     if (result.pngBase64 !== undefined) {
-      if (!isLibraryRasterThumbnailExtension(request.extension)) {
-        throw new Error('Unexpected direct thumbnail output');
+      if (!isLibraryDirectPngThumbnailExtension(request.extension)) {
+        throw new LibraryThumbnailError(
+          LibraryThumbnailFailureCode.RendererResponseInvalid,
+          'Unexpected direct thumbnail output',
+          metrics,
+        );
       }
-      return this.decodeDirectPng(result.pngBase64);
+      return this.decodeDirectPng(result.pngBase64, metrics);
     }
 
     return this.captureRenderedPage(
       rendererWindow,
       size,
       request.extension,
-      result.metrics,
+      request.renderGeneration,
+      metrics,
     );
   }
 
@@ -164,51 +253,114 @@ export class LibraryThumbnailRenderer {
     rendererWindow: BrowserWindow,
     size: ThumbnailSize,
     extension: string,
+    renderGeneration: number,
     metrics?: LibraryThumbnailRenderMetrics,
   ): Promise<Buffer> {
     let image: NativeImage;
     if (this.platform === 'win32') {
-      image = await waitForCommittedThumbnailPresentation(
-        rendererWindow.webContents,
-        this.presentationTimeoutMs,
-      );
-    } else {
-      rendererWindow.webContents.invalidate();
-      image = await this.withTimeout(
-        rendererWindow.webContents.capturePage({
+      try {
+        const presentedImage = await waitForCommittedThumbnailPresentation(
+          rendererWindow.webContents,
+          this.presentationTimeoutMs,
+          {
+            width: size.width,
+            height: size.height,
+            renderGeneration,
+          },
+        );
+        image = presentedImage.crop({
           x: 0,
           y: 0,
           width: size.width,
           height: size.height,
-        }, {
-          stayHidden: true,
-          stayAwake: true,
-        }),
-        this.captureTimeoutMs,
-        'Thumbnail capture timed out',
-      );
+        });
+      } catch (error) {
+        throw withLibraryThumbnailErrorMetrics(
+          error,
+          LibraryThumbnailFailureCode.PresentationFailed,
+          metrics ?? {},
+        );
+      }
+    } else {
+      rendererWindow.webContents.invalidate();
+      try {
+        image = await this.withTimeout(
+          rendererWindow.webContents.capturePage({
+            x: 0,
+            y: 0,
+            width: size.width,
+            height: size.height,
+          }, {
+            stayHidden: true,
+            stayAwake: true,
+          }),
+          this.captureTimeoutMs,
+          LibraryThumbnailFailureCode.CaptureTimeout,
+          'Thumbnail capture timed out',
+        );
+      } catch (error) {
+        throw withLibraryThumbnailErrorMetrics(
+          error,
+          LibraryThumbnailFailureCode.PresentationFailed,
+          metrics ?? {},
+        );
+      }
     }
     const capturedSize = image.getSize();
     if (image.isEmpty() || capturedSize.width <= 0 || capturedSize.height <= 0) {
-      throw new Error('Thumbnail capture is empty');
+      throw new LibraryThumbnailError(
+        LibraryThumbnailFailureCode.CaptureEmpty,
+        'Thumbnail capture is empty',
+        metrics,
+      );
     }
+    const hasExpectedVisualContent = metrics?.sourceHasVisualContent === true
+      || metrics?.domHasVisualContent === true
+      || (
+        metrics?.sourceHasVisualContent === undefined
+        && metrics?.domHasVisualContent === undefined
+        && metrics?.hasVisualContent === true
+      );
     if (
       extension === '.pptx'
-      && metrics?.hasVisualContent === true
+      && hasExpectedVisualContent
       && isLikelyBlankThumbnailBitmap(image.toBitmap())
     ) {
-      throw new Error('Thumbnail capture is visually blank');
+      throw new LibraryThumbnailError(
+        LibraryThumbnailFailureCode.CaptureBlank,
+        'Thumbnail capture is visually blank',
+        metrics,
+      );
     }
     const png = image.toPNG();
-    if (png.length === 0) throw new Error('Thumbnail PNG is empty');
+    if (png.length === 0) {
+      throw new LibraryThumbnailError(
+        LibraryThumbnailFailureCode.CaptureEmpty,
+        'Thumbnail PNG is empty',
+        metrics,
+      );
+    }
     return png;
   }
 
-  private decodeDirectPng(pngBase64: string): Buffer {
-    if (!pngBase64.trim()) throw new Error('Direct thumbnail output is empty');
+  private decodeDirectPng(
+    pngBase64: string,
+    metrics: LibraryThumbnailRenderMetrics,
+  ): Buffer {
+    if (!pngBase64.trim()) {
+      throw new LibraryThumbnailError(
+        LibraryThumbnailFailureCode.DirectPngInvalid,
+        'Direct thumbnail output is empty',
+        metrics,
+      );
+    }
     const png = Buffer.from(pngBase64, 'base64');
     if (png.length <= PNG_SIGNATURE.length || !png.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) {
-      throw new Error('Direct thumbnail output is not a PNG');
+      throw new LibraryThumbnailError(
+        LibraryThumbnailFailureCode.DirectPngInvalid,
+        'Direct thumbnail output is not a PNG',
+        metrics,
+      );
     }
     return png;
   }
@@ -218,7 +370,7 @@ export class LibraryThumbnailRenderer {
 
     const rendererWindow = new BrowserWindow({
       width: size.width,
-      height: size.height,
+      height: size.height + LibraryThumbnailPresentationStamp.Height,
       show: false,
       frame: false,
       transparent: false,
@@ -261,7 +413,12 @@ export class LibraryThumbnailRenderer {
         'typeof window.renderLibraryThumbnail === "function"',
         true,
       );
-      if (isReady !== true) throw new Error('Thumbnail renderer did not initialize');
+      if (isReady !== true) {
+        throw new LibraryThumbnailError(
+          LibraryThumbnailFailureCode.RendererFailed,
+          'Thumbnail renderer did not initialize',
+        );
+      }
       this.window = rendererWindow;
       return rendererWindow;
     } catch (error) {
@@ -284,6 +441,7 @@ export class LibraryThumbnailRenderer {
   private async withTimeout<T>(
     promise: Promise<T>,
     timeoutMs: number,
+    failureCode: LibraryThumbnailFailureCodeType,
     message: string,
   ): Promise<T> {
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -291,7 +449,9 @@ export class LibraryThumbnailRenderer {
       return await Promise.race([
         promise,
         new Promise<T>((_resolve, reject) => {
-          timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+          timer = setTimeout(() => reject(
+            new LibraryThumbnailError(failureCode, message),
+          ), timeoutMs);
         }),
       ]);
     } finally {

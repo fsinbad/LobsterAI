@@ -1,7 +1,15 @@
 import type { NativeImage, Rectangle } from 'electron';
 import { describe, expect, test, vi } from 'vitest';
 
-import { waitForCommittedThumbnailPresentation } from './libraryThumbnailPresentation';
+import {
+  getLibraryThumbnailPresentationStampColor,
+  LibraryThumbnailFailureCode,
+  LibraryThumbnailPresentationStamp,
+} from '../../shared/library/thumbnail';
+import {
+  hasLibraryThumbnailPresentationStamp,
+  waitForCommittedThumbnailPresentation,
+} from './libraryThumbnailPresentation';
 
 const createWebContents = (frames: NativeImage[]) => {
   let callback: ((image: NativeImage, dirtyRect: Rectangle) => void) | undefined;
@@ -30,6 +38,34 @@ const createWebContents = (frames: NativeImage[]) => {
   };
 };
 
+const createStampedImage = (
+  renderGeneration: number,
+  scale = 1,
+  reportPhysicalSize = false,
+): NativeImage => {
+  const width = 480;
+  const height = 270 + LibraryThumbnailPresentationStamp.Height;
+  const bitmapWidth = Math.round(width * scale);
+  const bitmapHeight = Math.round(height * scale);
+  const stampStartY = Math.round(270 * scale);
+  const bitmap = Buffer.alloc(bitmapWidth * bitmapHeight * 4);
+  const color = getLibraryThumbnailPresentationStampColor(renderGeneration);
+  for (let y = stampStartY; y < bitmapHeight; y += 1) {
+    for (let x = 0; x < bitmapWidth; x += 1) {
+      bitmap.set(
+        [color.blue, color.green, color.red, 255],
+        ((y * bitmapWidth) + x) * 4,
+      );
+    }
+  }
+  return {
+    getSize: () => reportPhysicalSize
+      ? { width: bitmapWidth, height: bitmapHeight }
+      : { width, height },
+    toBitmap: () => bitmap,
+  } as unknown as NativeImage;
+};
+
 describe('library thumbnail presentation barrier', () => {
   test('ignores the first frame and returns the frame committed after a second repaint', async () => {
     const firstFrame = { frame: 'previous' } as unknown as NativeImage;
@@ -48,10 +84,49 @@ describe('library thumbnail presentation barrier', () => {
   test('ends the frame subscription when presentation times out', async () => {
     const webContents = createWebContents([]);
 
-    await expect(waitForCommittedThumbnailPresentation(webContents, 5)).rejects.toThrow(
-      'Thumbnail presentation timed out',
-    );
+    const presentation = waitForCommittedThumbnailPresentation(webContents, 5);
+    await expect(presentation).rejects.toThrow('Thumbnail presentation timed out');
+    await expect(presentation).rejects.toMatchObject({
+      code: LibraryThumbnailFailureCode.PresentationTimeout,
+    });
 
     expect(webContents.endFrameSubscription).toHaveBeenCalledTimes(1);
+  });
+
+  test('waits until the frame carries the current render generation stamp', async () => {
+    const previousFrame = createStampedImage(41);
+    const committedFrame = createStampedImage(42);
+    const expectation = { width: 480, height: 270, renderGeneration: 42 };
+    const webContents = createWebContents([previousFrame, committedFrame]);
+
+    expect(hasLibraryThumbnailPresentationStamp(previousFrame, expectation)).toBe(false);
+    expect(hasLibraryThumbnailPresentationStamp(committedFrame, expectation)).toBe(true);
+    await expect(
+      waitForCommittedThumbnailPresentation(webContents, 50, expectation),
+    ).resolves.toBe(committedFrame);
+    expect(webContents.invalidate).toHaveBeenCalledTimes(2);
+  });
+
+  test.each([1, 1.25, 1.5])(
+    'recognizes the current frame stamp at %sx display scale',
+    scale => {
+      const expectation = { width: 480, height: 270, renderGeneration: 9 };
+      expect(hasLibraryThumbnailPresentationStamp(
+        createStampedImage(9, scale),
+        expectation,
+      )).toBe(true);
+      expect(hasLibraryThumbnailPresentationStamp(
+        createStampedImage(8, scale),
+        expectation,
+      )).toBe(false);
+    },
+  );
+
+  test('recognizes a scaled frame when NativeImage reports physical dimensions', () => {
+    const expectation = { width: 480, height: 270, renderGeneration: 9 };
+    expect(hasLibraryThumbnailPresentationStamp(
+      createStampedImage(9, 1.25, true),
+      expectation,
+    )).toBe(true);
   });
 });

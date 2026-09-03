@@ -10,6 +10,9 @@ const unpackScript = repoFile('scripts/unpack-cfmind.cjs');
 const installSection = repoFile(
   'node_modules/app-builder-lib/templates/nsis/installSection.nsh',
 );
+const installUtilTemplate = repoFile(
+  'node_modules/app-builder-lib/templates/nsis/include/installUtil.nsh',
+);
 const extractTemplate = repoFile(
   'node_modules/app-builder-lib/templates/nsis/include/extractAppPackage.nsh',
 );
@@ -95,7 +98,19 @@ describe('Windows installer hardening contracts', () => {
     }
   });
 
-  test('releases the installer current-directory lock before the update rename', () => {
+  test('keeps the stock old-uninstaller failure dialog silent-safe', () => {
+    // handleUninstallResult fires when every legacy-uninstaller attempt
+    // failed (field dialog "Failed to uninstall old application files...: 2",
+    // 2026-09-01). Stock code had no silent default, so the dialog popped out
+    // of /S channel installs; the exit path must stay SetErrorLevel-readable
+    // instead.
+    expect(installUtilTemplate).toContain(
+      'MessageBox MB_OK|MB_ICONEXCLAMATION "$(uninstallFailed): $R0" /SD IDOK',
+    );
+    expect(appBuilderPatch).toContain('"$(uninstallFailed): $R0" /SD IDOK');
+  });
+
+  test('releases the installer current-directory lock before the old-install rename', () => {
     const switchOutPath = installerInclude.indexOf('SetOutPath "$PLUGINSDIR"');
     const rename = installerInclude.indexOf(
       'MoveFileW(w "$lobsterOldInstallOriginalPath", w "$lobsterOldInstallBackupPath")',
@@ -103,13 +118,33 @@ describe('Windows installer hardening contracts', () => {
 
     expect(switchOutPath).toBeGreaterThan(-1);
     expect(rename).toBeGreaterThan(switchOutPath);
-    expect(installerInclude).toContain('${IfNot} ${isUpdated}');
     expect(installerInclude).toContain('"install-location-mismatch"');
     expect(installerInclude).toContain('"ambiguous-dual-registration"');
     expect(installerInclude).toContain('phase=old-install-rename-attempt');
     expect(installerInclude).toContain('phase=old-install-rename-complete attempt_id=');
     expect(installerInclude).toContain('status=$lobsterOldInstallRenameStatus');
     expect(installerInclude).not.toContain('phase=old-install-cleanup-complete');
+  });
+
+  test('offers the rename fast path to manual overwrite installs, not only updates', () => {
+    // Field logs 2026-09-01: manual/channel overwrite installs fell back to
+    // the legacy uninstaller, whose stock un.atomicRMDir (--updated is always
+    // passed) moves the whole tree file-by-file into the unexcluded %TEMP%
+    // plugins dir -- 79s..31min per attempt, and one locked file aborts it
+    // wholesale after five silent retries (exit=2 dialog). Eligibility must
+    // therefore be decided by the registration ladder alone; no
+    // invocation-mode gate may sit between the rename-start log and the
+    // ladder.
+    const ladder = installerInclude.slice(
+      installerInclude.indexOf('phase=old-install-rename-start'),
+      installerInclude.indexOf('OldInstallRenameEligible:'),
+    );
+    expect(ladder).toContain('"registered-install-missing"');
+    expect(ladder).toContain('"install-location-mismatch"');
+    expect(ladder).toContain('"ambiguous-dual-registration"');
+    expect(ladder).toContain('"install-files-missing"');
+    expect(ladder).not.toContain('isUpdated');
+    expect(installerInclude).not.toContain('${IfNot} ${isUpdated}');
   });
 
   test('captures shortcut state before rename and explicitly controls old uninstallers', () => {
@@ -552,6 +587,45 @@ describe('Windows installer hardening contracts', () => {
     expect(stopMacro).toContain('name=$$($$p.ProcessName) pid=$$($$p.Id) path=$$fp');
     expect(stopMacro).toContain('phase=process-stop-survivors-logged');
     expect(stopMacro).toContain('exit $$procs.Count');
+  });
+
+  test('sweeps every process running from the install tree, excluding itself', () => {
+    // Name filters alone miss python-win skill/MCP servers and bundled
+    // git/ssh helpers; a survivor under the tree held a handle that failed
+    // the old-install replacement in the field (2026-09-01). The sweep is
+    // path-prefix based, must never match the invoking process (the stock
+    // fallback can run the old uninstaller in place from $INSTDIR), and is
+    // skipped for drive-root paths where the prefix would match everything.
+    const start = installerInclude.indexOf('!macro stopNukemAIProcesses');
+    const end = installerInclude.indexOf('!macroend', start);
+    const stopMacro = installerInclude.slice(start, end);
+
+    expect(stopMacro).toContain(
+      'SetEnvironmentVariable(t "LOBSTERAI_STOP_ROOT", t "$INSTDIR")',
+    );
+    expect(stopMacro).toContain(
+      'SetEnvironmentVariable(t "LOBSTERAI_STOP_SELF_PID", t "$lobsterCurrentProcessPid")',
+    );
+    expect(stopMacro).toContain('SetEnvironmentVariable(t "LOBSTERAI_STOP_ROOT", t "")');
+    expect(stopMacro).toContain('SetEnvironmentVariable(t "LOBSTERAI_STOP_SELF_PID", t "")');
+
+    // Both the kill loop and the survivor snapshot must use the same sweep so
+    // diagnostics describe the same process set the kill acted on.
+    const sweeps = stopMacro.match(
+      /\$\$fp\.StartsWith\(\$\$root, \[System\.StringComparison\]::OrdinalIgnoreCase\)/g,
+    );
+    expect(sweeps).toHaveLength(2);
+    const selfExclusions = stopMacro.match(/\$\$_\.Id\.ToString\(\) -ne \$\$selfPid/g);
+    expect(selfExclusions).toHaveLength(2);
+    const rootGuards = stopMacro.match(/\$\$root\.Length -gt 3/g);
+    expect(rootGuards).toHaveLength(2);
+    // The env-var clear must sit on the shared exit label so the non-survivor
+    // paths clear it too.
+    const logLabel = stopMacro.indexOf('StopNukemAIProcessesLog:');
+    expect(logLabel).toBeGreaterThan(-1);
+    expect(
+      stopMacro.indexOf('SetEnvironmentVariable(t "LOBSTERAI_STOP_ROOT", t "")'),
+    ).toBeGreaterThan(logLabel);
   });
 
   test('treats only an enumerably empty target as fresh', () => {
@@ -1033,6 +1107,33 @@ describe('Windows installer hardening contracts', () => {
     expect(extractTemplate).not.toContain(String.raw`/oname=$PLUGINSDIR\app-`);
   });
 
+  test('web install runs the staging preflight before extracting the downloaded package', () => {
+    // The web installer never materializes an embedded package, but
+    // extractUsing7za still stages the extracted tree in
+    // $appPackageStagingDir\7z-out, so the same default-init -> selection
+    // hook ordering must run before extraction. This is also what keeps
+    // lobsterSelectPayloadStagingDir referenced in nsis-web compiles: with
+    // the hook only in the embedded path, makensis failed the WebSetup build
+    // with warning 6010 (unreferenced install function) treated as an error.
+    const installFilesStart = installerTemplate.indexOf('!macro installApplicationFiles');
+    const installFilesEnd = installerTemplate.indexOf('!macroend', installFilesStart);
+    const installFilesBody = installerTemplate.slice(installFilesStart, installFilesEnd);
+    const webBranchStart = installFilesBody.indexOf('!ifdef APP_PACKAGE_URL');
+    expect(webBranchStart).toBeGreaterThan(-1);
+    const webBranch = installFilesBody.slice(
+      webBranchStart,
+      installFilesBody.indexOf('!else', webBranchStart),
+    );
+    const defaultInit = webBranch.indexOf('StrCpy $appPackageStagingDir "$PLUGINSDIR"');
+    const selectGuard = webBranch.indexOf('!ifmacrodef customSelectAppPackageStagingDir');
+    const selectHook = webBranch.indexOf('!insertmacro customSelectAppPackageStagingDir');
+    const extract = webBranch.indexOf('!insertmacro extractUsing7za "$packageFile"');
+    expect(defaultInit).toBeGreaterThan(-1);
+    expect(selectGuard).toBeGreaterThan(defaultInit);
+    expect(selectHook).toBeGreaterThan(selectGuard);
+    expect(extract).toBeGreaterThan(selectHook);
+  });
+
   test('preflights staging drive space and relocates or aborts before materialize', () => {
     const start = installerInclude.indexOf('Function lobsterSelectPayloadStagingDir');
     const end = installerInclude.indexOf('FunctionEnd', start);
@@ -1086,7 +1187,7 @@ describe('Windows installer hardening contracts', () => {
     // they must be emitted from customHeader, not at include parse time.
     const header = installerInclude.slice(
       installerInclude.indexOf('!macro customHeader'),
-      installerInclude.indexOf('!macro stopLobsterAIProcesses'),
+      installerInclude.indexOf('!macro stopNukemAIProcesses'),
     );
     expect(header).toContain('!insertmacro DefineLobsterPayloadStagingFunctions');
   });

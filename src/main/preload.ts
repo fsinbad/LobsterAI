@@ -457,6 +457,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(CoworkIpcChannel.MarkSessionViewed, sessionId),
     setActiveSession: (sessionId: string | null) =>
       ipcRenderer.invoke(CoworkIpcChannel.SetActiveSession, sessionId),
+    seedNewUserWelcomeTask: (options: { title: string; content: string }) =>
+      ipcRenderer.invoke(CoworkIpcChannel.SeedNewUserWelcomeTask, options),
     notifyOpenSessionFromNotificationReady: () =>
       ipcRenderer.invoke(CoworkIpcChannel.OpenSessionFromNotificationReady),
     remoteManaged: (sessionId: string) =>
