@@ -294,10 +294,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     newUserOnboardingAriaLabel: '新用户引导',
     newUserOnboardingNewTaskTitle: '发起一个新任务',
     newUserOnboardingNewTaskDescription:
-      '输入一个任务，LobsterAI 会帮你拆解步骤、生成内容，并推进成结果。',
+      '输入一个任务，NukemAI 会帮你拆解步骤、生成内容，并推进成结果。',
     newUserOnboardingPromptExample: '帮我做一个金融行业分析报告',
     newUserOnboardingPromptResultTitle: '直接说出你想完成的事',
-    newUserOnboardingPromptResultDescription: 'LobsterAI 会把复杂的事情变成清晰的结果',
+    newUserOnboardingPromptResultDescription: 'NukemAI 会把复杂的事情变成清晰的结果',
     newUserOnboardingPromptLoadingUnderstand: '正在理解你的目标',
     newUserOnboardingPromptLoadingBreakdown: '正在拆解任务步骤',
     newUserOnboardingPromptLoadingResult: '正在整理可交付结果',
@@ -306,13 +306,13 @@ const translations: Record<LanguageType, Record<string, string>> = {
     newUserOnboardingNext: '下一步',
     newUserWelcomeTaskTitle: '你好，新朋友',
     newUserWelcomeTaskContent:
-      '嗨～ 我是 LobsterAI，你的全能办公助手Agent，帮你解决一切问题！\n\n'
+      '嗨～ 我是 NukemAI，你的全能办公助手Agent，帮你解决一切问题！\n\n'
       + '我可以帮你处理数据分析、文档撰写、PPT生成、信息搜索、定时任务等各种工作；\n'
       + '我还是全能项目助手，轻松搞定网站开发部署与图片视频制作；\n'
       + '还能帮你拉起一个AI团队：多Agent组队接力干活。\n\n\n'
       + '最近工作上在忙什么呢？项目推进、信息整理，还是有什么新想法？\n'
       + '我可以一起帮你拆解拆解😄',
-    newUserWelcomeInputLockedLabel: '登录后继续体验 LobsterAI',
+    newUserWelcomeInputLockedLabel: '登录后继续体验 NukemAI',
     newUserWelcomeTaskCreateFailed: '新人任务创建失败，请稍后重试',
     search: '搜索任务',
     sidebarFilter: '筛选任务',
@@ -3673,11 +3673,11 @@ artifactPreviewCardLobsterBrowser: 'NukemAI 浏览器',
     newUserOnboardingAriaLabel: 'New user onboarding',
     newUserOnboardingNewTaskTitle: 'Start a New Task',
     newUserOnboardingNewTaskDescription:
-      'Enter a task and LobsterAI will break it into steps, generate content, and move it toward a result.',
+      'Enter a task and NukemAI will break it into steps, generate content, and move it toward a result.',
     newUserOnboardingPromptExample: 'Create a financial industry analysis report',
     newUserOnboardingPromptResultTitle: 'Say what you want to get done',
     newUserOnboardingPromptResultDescription:
-      'LobsterAI turns complex work into clear results',
+      'NukemAI turns complex work into clear results',
     newUserOnboardingPromptLoadingUnderstand: 'Understanding your goal',
     newUserOnboardingPromptLoadingBreakdown: 'Breaking the task into steps',
     newUserOnboardingPromptLoadingResult: 'Preparing a clear deliverable',
@@ -3686,13 +3686,13 @@ artifactPreviewCardLobsterBrowser: 'NukemAI 浏览器',
     newUserOnboardingNext: 'Next',
     newUserWelcomeTaskTitle: 'Hello, New Friend',
     newUserWelcomeTaskContent:
-      "Hi, I'm LobsterAI, your all-purpose office Agent, here to help you solve problems.\n\n"
+      "Hi, I'm NukemAI, your all-purpose office Agent, here to help you solve problems.\n\n"
       + 'I can help with data analysis, document writing, PPT generation, research, scheduled tasks, and more.\n'
       + 'I can also act as a project assistant for website development, deployment, image creation, and video work.\n'
       + 'And I can help you spin up an AI team, with multiple Agents taking turns to move work forward.\n\n\n'
       + 'What has been keeping you busy lately? Project progress, information sorting, or a new idea?\n'
       + "I can help you break it down together.",
-    newUserWelcomeInputLockedLabel: 'Sign in to continue with LobsterAI',
+    newUserWelcomeInputLockedLabel: 'Sign in to continue with NukemAI',
     newUserWelcomeTaskCreateFailed: 'Could not create the welcome task. Please try again later.',
     search: 'Search Tasks',
     sidebarFilter: 'Filter tasks',

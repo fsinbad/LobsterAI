@@ -661,7 +661,7 @@ FunctionEnd
     IfFileExists "$INSTDIR\.lobsterai-staging" 0 LobsterStagingRelocateCreateFailed
     StrCpy $appPackageStagingDir "$INSTDIR\.lobsterai-staging"
     DetailPrint "[Installer] Staging installation payload on the install drive"
-    FileOpen $9 "$APPDATA\LobsterAI\install-timing.log" a
+    FileOpen $9 "$APPDATA\NukemAI\install-timing.log" a
     FileSeek $9 0 END
     !insertmacro GetTimestamp $8
     FileWrite $9 "$8 phase=staging-drive-selected attempt_id=$lobsterInstallerAttemptId drive=$3 mode=install-dir free_mb=$5 needed_mb=$6 plugins_drive=$4 plugins_free_mb=$2 plugins_needed_mb=$1 staging=$appPackageStagingDir$\r$\n"
@@ -672,7 +672,7 @@ FunctionEnd
     ; Could not create the relocated staging directory. Keep the default so
     ; behavior matches previous installers; payload validation still stops a
     ; truncated staging tree afterwards.
-    FileOpen $9 "$APPDATA\LobsterAI\install-timing.log" a
+    FileOpen $9 "$APPDATA\NukemAI\install-timing.log" a
     FileSeek $9 0 END
     !insertmacro GetTimestamp $8
     FileWrite $9 "$8 phase=staging-drive-selected attempt_id=$lobsterInstallerAttemptId drive=$4 mode=plugins-dir result=relocate-create-failed free_mb=$2 needed_mb=$1$\r$\n"
@@ -682,7 +682,7 @@ FunctionEnd
     LobsterStagingQueryFailed:
     ; Never turn a failed probe into an install blocker. Extraction plus the
     ; staged-payload validation remain the authority on success.
-    FileOpen $9 "$APPDATA\LobsterAI\install-timing.log" a
+    FileOpen $9 "$APPDATA\NukemAI\install-timing.log" a
     FileSeek $9 0 END
     !insertmacro GetTimestamp $8
     FileWrite $9 "$8 phase=staging-drive-selected attempt_id=$lobsterInstallerAttemptId drive=$4 mode=plugins-dir result=query-failed free_mb=$2 needed_mb=$1$\r$\n"
@@ -690,18 +690,18 @@ FunctionEnd
     Goto LobsterStagingSelected
 
     LobsterStagingNoRoom:
-    FileOpen $9 "$APPDATA\LobsterAI\install-timing.log" a
+    FileOpen $9 "$APPDATA\NukemAI\install-timing.log" a
     FileSeek $9 0 END
     !insertmacro GetTimestamp $8
     FileWrite $9 "$8 phase=staging-preflight-insufficient attempt_id=$lobsterInstallerAttemptId plugins_drive=$4 plugins_free_mb=$2 staging_needed_mb=$1 install_drive=$3 install_free_mb=$5 install_needed_mb=$6 action=abort-install$\r$\n"
     FileClose $9
     !insertmacro customBeforeInstallerQuit "staging-space-insufficient"
-    MessageBox MB_OK|MB_ICONEXCLAMATION "${U+78C1}${U+76D8}${U+7A7A}${U+95F4}${U+4E0D}${U+8DB3}${U+FF0C}${U+65E0}${U+6CD5}${U+5B89}${U+88C5} LobsterAI${U+3002}${U+8BF7}${U+6E05}${U+7406}${U+78C1}${U+76D8}${U+7A7A}${U+95F4}${U+540E}${U+91CD}${U+8BD5}${U+3002}$\r$\n$\r$\nThere is not enough free disk space to install LobsterAI: drive $4 has $2 MB free but staging the installation needs about $1 MB, and installing to drive $3 would need about $6 MB free there. Free up disk space and run the installer again. Details: $APPDATA\LobsterAI\install-timing.log" /SD IDOK
+    MessageBox MB_OK|MB_ICONEXCLAMATION "${U+78C1}${U+76D8}${U+7A7A}${U+95F4}${U+4E0D}${U+8DB3}${U+FF0C}${U+65E0}${U+6CD5}${U+5B89}${U+88C5} NukemAI${U+3002}${U+8BF7}${U+6E05}${U+7406}${U+78C1}${U+76D8}${U+7A7A}${U+95F4}${U+540E}${U+91CD}${U+8BD5}${U+3002}$\r$\n$\r$\nThere is not enough free disk space to install NukemAI: drive $4 has $2 MB free but staging the installation needs about $1 MB, and installing to drive $3 would need about $6 MB free there. Free up disk space and run the installer again. Details: $APPDATA\NukemAI\install-timing.log" /SD IDOK
     SetErrorLevel 2
     Quit
 
     LobsterStagingDefaultOk:
-    FileOpen $9 "$APPDATA\LobsterAI\install-timing.log" a
+    FileOpen $9 "$APPDATA\NukemAI\install-timing.log" a
     FileSeek $9 0 END
     !insertmacro GetTimestamp $8
     FileWrite $9 "$8 phase=staging-drive-selected attempt_id=$lobsterInstallerAttemptId drive=$4 mode=plugins-dir free_mb=$2 needed_mb=$1$\r$\n"
@@ -730,7 +730,7 @@ FunctionEnd
     StrCmp $appPackageStagingDir "" LobsterStagingCleanupDone
     StrCmp $appPackageStagingDir "$PLUGINSDIR" LobsterStagingCleanupDone
     RMDir /r "$appPackageStagingDir"
-    FileOpen $9 "$APPDATA\LobsterAI\install-timing.log" a
+    FileOpen $9 "$APPDATA\NukemAI\install-timing.log" a
     FileSeek $9 0 END
     !insertmacro GetTimestamp $8
     FileWrite $9 "$8 phase=staging-relocated-cleanup attempt_id=$lobsterInstallerAttemptId staging=$appPackageStagingDir$\r$\n"
@@ -799,13 +799,13 @@ FunctionEnd
 
     ${If} $1 == "ok"
     ${OrIf} $1 == "size-query-failed"
-      FileOpen $9 "$APPDATA\LobsterAI\install-timing.log" a
+      FileOpen $9 "$APPDATA\NukemAI\install-timing.log" a
       FileSeek $9 0 END
       !insertmacro GetTimestamp $8
       FileWrite $9 "$8 phase=payload-staging-validated attempt_id=$lobsterInstallerAttemptId mode=${MODE} result=$1 root=$0 tar_bytes=$2 expected_bytes=$3$\r$\n"
       FileClose $9
     ${Else}
-      FileOpen $9 "$APPDATA\LobsterAI\install-timing.log" a
+      FileOpen $9 "$APPDATA\NukemAI\install-timing.log" a
       FileSeek $9 0 END
       !insertmacro GetTimestamp $8
       FileWrite $9 "$8 phase=payload-staging-validation-failed attempt_id=$lobsterInstallerAttemptId mode=${MODE} reason=$1 root=$0 found_bytes=$2 expected_bytes=$3 action=abort-install$\r$\n"
@@ -813,7 +813,7 @@ FunctionEnd
       ; Never commit a partial app: restore the previous installation first,
       ; then report. /SD keeps silent (/S) installs from blocking on the box.
       !insertmacro customBeforeInstallerQuit "payload-staging-validation-failed"
-      MessageBox MB_OK|MB_ICONEXCLAMATION "${U+5B89}${U+88C5}${U+5305}${U+6570}${U+636E}${U+4E0D}${U+5B8C}${U+6574}${U+FF1A}${U+53EF}${U+80FD}${U+662F}${U+4E34}${U+65F6}${U+76EE}${U+5F55}${U+78C1}${U+76D8}${U+7A7A}${U+95F4}${U+4E0D}${U+8DB3}${U+6216}${U+5B89}${U+88C5}${U+5305}${U+4E0B}${U+8F7D}${U+4E0D}${U+5B8C}${U+6574}${U+3002}${U+8BF7}${U+6E05}${U+7406}${U+78C1}${U+76D8}${U+7A7A}${U+95F4}${U+540E}${U+91CD}${U+8BD5}${U+FF0C}${U+6216}${U+91CD}${U+65B0}${U+4E0B}${U+8F7D}${U+5B89}${U+88C5}${U+5305}${U+3002}$\r$\n$\r$\nThe LobsterAI installation stopped because the unpacked installer data is incomplete ($1). This usually means the drive holding the temporary directory ran out of space during extraction, or the installer download was truncated. Free up disk space on the temp drive or download the installer again. No partial application was committed. Details: $APPDATA\LobsterAI\install-timing.log" /SD IDOK
+      MessageBox MB_OK|MB_ICONEXCLAMATION "${U+5B89}${U+88C5}${U+5305}${U+6570}${U+636E}${U+4E0D}${U+5B8C}${U+6574}${U+FF1A}${U+53EF}${U+80FD}${U+662F}${U+4E34}${U+65F6}${U+76EE}${U+5F55}${U+78C1}${U+76D8}${U+7A7A}${U+95F4}${U+4E0D}${U+8DB3}${U+6216}${U+5B89}${U+88C5}${U+5305}${U+4E0B}${U+8F7D}${U+4E0D}${U+5B8C}${U+6574}${U+3002}${U+8BF7}${U+6E05}${U+7406}${U+78C1}${U+76D8}${U+7A7A}${U+95F4}${U+540E}${U+91CD}${U+8BD5}${U+FF0C}${U+6216}${U+91CD}${U+65B0}${U+4E0B}${U+8F7D}${U+5B89}${U+88C5}${U+5305}${U+3002}$\r$\n$\r$\nThe NukemAI installation stopped because the unpacked installer data is incomplete ($1). This usually means the drive holding the temporary directory ran out of space during extraction, or the installer download was truncated. Free up disk space on the temp drive or download the installer again. No partial application was committed. Details: $APPDATA\NukemAI\install-timing.log" /SD IDOK
       SetErrorLevel 2
       Quit
     ${EndIf}
@@ -1050,7 +1050,7 @@ FunctionEnd
     Push $8
     Push $9
     !insertmacro EnsureInstallerAttemptId
-    FileOpen $9 "$APPDATA\LobsterAI\install-timing.log" a
+    FileOpen $9 "$APPDATA\NukemAI\install-timing.log" a
     FileSeek $9 0 END
     !insertmacro GetTimestamp $8
     FileWrite $9 "$8 phase=installer-quit attempt_id=$lobsterInstallerAttemptId reason=${REASON} ui_mode=$lobsterUiMode rename_status=$lobsterOldInstallRenameStatus$\r$\n"
@@ -1729,7 +1729,7 @@ FunctionEnd
     !insertmacro EnsureInstallerAttemptId
     System::Call 'kernel32::GetTickCount()i .r0'
     StrCpy $lobsterWebAcquireStartTick $0
-    FileOpen $9 "$APPDATA\LobsterAI\install-timing.log" a
+    FileOpen $9 "$APPDATA\NukemAI\install-timing.log" a
     FileSeek $9 0 END
     !insertmacro GetTimestamp $8
     FileWrite $9 "$8 phase=web-package-acquire-start attempt_id=$lobsterInstallerAttemptId$\r$\n"
@@ -1746,7 +1746,7 @@ FunctionEnd
     Push $9
     System::Call 'kernel32::GetTickCount()i .r0'
     IntOp $1 $0 - $lobsterWebAcquireStartTick
-    FileOpen $9 "$APPDATA\LobsterAI\install-timing.log" a
+    FileOpen $9 "$APPDATA\NukemAI\install-timing.log" a
     FileSeek $9 0 END
     !insertmacro GetTimestamp $8
     FileWrite $9 "$8 phase=web-package-acquire-complete attempt_id=$lobsterInstallerAttemptId source=${SOURCE} elapsed_ms=$1 file=$packageFile$\r$\n"
@@ -1764,7 +1764,7 @@ FunctionEnd
     Push $9
     System::Call 'kernel32::GetTickCount()i .r0'
     StrCpy $lobsterWebVerifyStartTick $0
-    FileOpen $9 "$APPDATA\LobsterAI\install-timing.log" a
+    FileOpen $9 "$APPDATA\NukemAI\install-timing.log" a
     FileSeek $9 0 END
     !insertmacro GetTimestamp $8
     FileWrite $9 "$8 phase=web-package-verify-start attempt_id=$lobsterInstallerAttemptId attempt=$webDownloadAttempt$\r$\n"
@@ -1781,7 +1781,7 @@ FunctionEnd
     Push $9
     System::Call 'kernel32::GetTickCount()i .r0'
     IntOp $1 $0 - $lobsterWebVerifyStartTick
-    FileOpen $9 "$APPDATA\LobsterAI\install-timing.log" a
+    FileOpen $9 "$APPDATA\NukemAI\install-timing.log" a
     FileSeek $9 0 END
     !insertmacro GetTimestamp $8
     FileWrite $9 "$8 phase=web-package-verify-complete attempt_id=$lobsterInstallerAttemptId attempt=$webDownloadAttempt result=${RESULT} elapsed_ms=$1$\r$\n"
@@ -1802,7 +1802,7 @@ FunctionEnd
     Push $9
     System::Call 'kernel32::GetTickCount()i .r0'
     StrCpy $lobsterWebDownloadStartTick $0
-    FileOpen $9 "$APPDATA\LobsterAI\install-timing.log" a
+    FileOpen $9 "$APPDATA\NukemAI\install-timing.log" a
     FileSeek $9 0 END
     !insertmacro GetTimestamp $8
     FileWrite $9 "$8 phase=web-package-download-start attempt_id=$lobsterInstallerAttemptId attempt=$webDownloadAttempt mode=${MODE} arch=$packageArch url=$packageUrl dest=$PLUGINSDIR\package.7z$\r$\n"
@@ -1824,7 +1824,7 @@ FunctionEnd
     StrCpy $2 "${STATUS}"
     System::Call 'kernel32::GetTickCount()i .r0'
     IntOp $1 $0 - $lobsterWebDownloadStartTick
-    FileOpen $9 "$APPDATA\LobsterAI\install-timing.log" a
+    FileOpen $9 "$APPDATA\NukemAI\install-timing.log" a
     FileSeek $9 0 END
     !insertmacro GetTimestamp $8
     FileWrite $9 "$8 phase=web-package-download-exit attempt_id=$lobsterInstallerAttemptId attempt=$webDownloadAttempt mode=${MODE} elapsed_ms=$1 status=$2$\r$\n"
@@ -2121,7 +2121,7 @@ FunctionEnd
     Push $R6
     Call lobsterBuildSingleLineTail
     Pop $R6
-    FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+    FileOpen $2 "$APPDATA\NukemAI\install-timing.log" a
     FileSeek $2 0 END
     !insertmacro GetTimestamp $8
     FileWrite $2 "$8 phase=tar-extract-output attempt_id=$lobsterInstallerAttemptId extractor=system-tar exit=$R2 text=$R6$\r$\n"
