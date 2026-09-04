@@ -24,6 +24,12 @@ import {
   type CoworkBrowserAnnotationMessageBatch,
 } from '../../../shared/cowork/browserAnnotations';
 import {
+  type AgentBrowserToolEvent,
+  AgentBrowserToolPhase,
+  type BrowserControlGatewayRequest,
+  OpenClawBrowserGatewayMethod,
+} from '../../../shared/browserWebAccess/constants';
+import {
   COWORK_BTW_IDENTIFIER_MAX_CHARS,
   COWORK_BTW_RESULT_MAX_CHARS,
   type CoworkBtwAbortResponse,
@@ -217,6 +223,8 @@ const FORK_COMPACTION_SUMMARY_MAX_CHARS = 40_000;
 // attempt.  Keep a broad timeout to accommodate plugin loading and runtime
 // warmup on slow machines.
 const GATEWAY_READY_TIMEOUT_MS = 60_000;
+const BROWSER_GATEWAY_REQUEST_TIMEOUT_MS = 15_000;
+const BROWSER_GATEWAY_REQUEST_TIMEOUT_SLACK_MS = 5_000;
 const FINAL_HISTORY_SYNC_LIMIT = 50;
 const CHANNEL_SESSION_DISCOVERY_LIMIT = 200;
 export const OPENCLAW_CHAT_SEND_PAYLOAD_LIMIT_BYTES = 30 * 1000 * 1000;
@@ -470,6 +478,7 @@ type OpenClawRuntimeAdapterOptions = {
     platform: string;
   }) => void;
   onGatewayClientReady?: () => void;
+  onBrowserToolEvent?: (event: AgentBrowserToolEvent) => void;
 };
 
 const SessionModelPatchSource = {
@@ -3992,6 +4001,21 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
    * Unlike `connectGatewayIfNeeded`, this always tears down the old client first
    * to avoid a race where the old client's `onClose` fires after a new client is created.
    */
+  async requestBrowserControl(request: BrowserControlGatewayRequest): Promise<unknown> {
+    if (!this.gatewayClient) {
+      await this.ensureGatewayClientReady();
+    }
+    const browserTimeoutMs = request.timeoutMs ?? BROWSER_GATEWAY_REQUEST_TIMEOUT_MS;
+    return this.requireGatewayClient().request(
+      OpenClawBrowserGatewayMethod.Request,
+      {
+        ...request,
+        timeoutMs: browserTimeoutMs,
+      },
+      { timeoutMs: browserTimeoutMs + BROWSER_GATEWAY_REQUEST_TIMEOUT_SLACK_MS },
+    );
+  }
+
   async reconnectGateway(): Promise<void> {
     console.log('[ChannelSync] reconnectGateway: tearing down old client and reconnecting...');
     this.gatewayReconnectSuppressed = false;
@@ -6746,39 +6770,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     void this.prewarmBrowserWithRetry(browserControlPort, token);
   }
 
-  private probeBrowserControlService(toolCallId: string, phase: string): void {
-    const connection = this.engineManager.getGatewayConnectionInfo();
-    if (!connection.port || !connection.token) {
-      console.log(`[OpenClawRuntime] browser probe (${toolCallId}/${phase}): no gateway connection info`);
-      return;
-    }
-    const browserControlPort = connection.port + 2;
-    const token = connection.token;
-    const probeStartTime = Date.now();
-    console.log(`[OpenClawRuntime] browser probe (${toolCallId}/${phase}): checking port ${browserControlPort} ...`);
-
-    // Probe multiple endpoints to diagnose reachability
-    const endpoints = [`http://127.0.0.1:${browserControlPort}/status`, `http://127.0.0.1:${browserControlPort}/`];
-    for (const probeUrl of endpoints) {
-      fetch(probeUrl, {
-        method: 'GET',
-        headers: { 'Authorization': `Bearer ${token}` },
-        signal: AbortSignal.timeout(5_000),
-      })
-        .then(async (response) => {
-          const body = await response.text().catch(() => '');
-          console.log(
-            `[OpenClawRuntime] browser probe (${toolCallId}/${phase}): ${probeUrl} → HTTP ${response.status} (${Date.now() - probeStartTime}ms) body=${body.slice(0, 500)}`,
-          );
-        })
-        .catch((err) => {
-          const message = err instanceof Error ? err.message : String(err);
-          console.warn(
-            `[OpenClawRuntime] browser probe (${toolCallId}/${phase}): ${probeUrl} → FAILED (${Date.now() - probeStartTime}ms) error=${message}`,
-          );
-        });
-    }
-  }
 
   private async prewarmBrowserWithRetry(
     port: number,
@@ -8321,42 +8312,37 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     if (toolNameRaw.toLowerCase() === 'browser') {
       const isError = resolveToolEventIsError(data);
-      // Log full data keys and values for diagnosis
-      const dataKeys = Object.keys(data);
-      const resultType = data.result === undefined ? 'undefined'
-        : data.result === null ? 'null'
-          : typeof data.result === 'string' ? `string(len=${data.result.length})`
-            : Array.isArray(data.result) ? `array(len=${data.result.length})`
-              : `object(keys=${Object.keys(data.result as Record<string, unknown>).join(',')})`;
-      console.log(
-        `[OpenClawRuntime] browser tool event: phase=${phase} toolCallId=${toolCallId}`
-        + ` dataKeys=[${dataKeys.join(',')}] resultType=${resultType}`
-        + (phase === 'start' ? ` args=${JSON.stringify(data.args ?? {}).slice(0, 500)}` : '')
-        + (phase === 'result' ? ` isError=${isError}` : ''),
+      const browserArgs = isRecord(data.args) ? data.args : {};
+      const browserResult = isRecord(data.result) ? data.result : {};
+      const browserResultDetails = isRecord(browserResult.details) ? browserResult.details : {};
+      const readBrowserEventString = (value: unknown): string | undefined => (
+        typeof value === 'string' && value.trim() ? value.trim() : undefined
       );
-      if (phase === 'result') {
-        // Log full result for browser events (may contain error details)
-        try {
-          const fullResult = JSON.stringify(data.result, null, 2);
-          console.log(`[OpenClawRuntime] browser tool result (${toolCallId}): ${fullResult?.slice(0, 2000) ?? '(null)'}`);
-        } catch {
-          console.log(`[OpenClawRuntime] browser tool result (${toolCallId}): [unstringifiable] ${String(data.result).slice(0, 500)}`);
-        }
-        if (isError) {
-          // Log any additional error-related fields
-          const errorFields: Record<string, unknown> = {};
-          for (const key of dataKeys) {
-            if (/error|reason|message|detail|status/i.test(key)) {
-              errorFields[key] = data[key];
-            }
-          }
-          if (Object.keys(errorFields).length > 0) {
-            console.log(`[OpenClawRuntime] browser tool error fields (${toolCallId}): ${JSON.stringify(errorFields).slice(0, 1000)}`);
-          }
-        }
+      const browserAction = readBrowserEventString(browserArgs.action);
+      const browserProfile = readBrowserEventString(browserArgs.profile);
+      const browserTargetId = readBrowserEventString(browserResultDetails.targetId)
+        ?? readBrowserEventString(browserResult.targetId)
+        ?? readBrowserEventString(browserArgs.targetId);
+      try {
+        this.options.onBrowserToolEvent?.({
+          sessionId,
+          phase,
+          ...(browserAction ? { action: browserAction } : {}),
+          ...(browserProfile ? { profile: browserProfile } : {}),
+          ...(browserTargetId ? { targetId: browserTargetId } : {}),
+          ...(phase === AgentBrowserToolPhase.Result ? { isError } : {}),
+        });
+      } catch (error) {
+        console.warn('[OpenClawRuntime] Browser observation callback failed.', error);
       }
-      // Probe browser control service reachability from Electron main process
-      this.probeBrowserControlService(toolCallId, phase);
+      const browserEventSummary = `[OpenClawRuntime] browser tool event: phase=${phase}`
+        + ` action=${browserAction ?? 'unknown'} toolCallId=${toolCallId}`
+        + (browserTargetId ? ` targetId=${browserTargetId}` : '');
+      if (phase === AgentBrowserToolPhase.Result && isError) {
+        console.warn(`${browserEventSummary} failed.`);
+      } else {
+        console.debug(browserEventSummary);
+      }
     }
 
     if (!turn.toolUseMessageIdByToolCallId.has(toolCallId)) {

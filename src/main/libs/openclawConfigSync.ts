@@ -6,6 +6,11 @@ import path from 'path';
 import { buildScheduledTaskEnginePrompt } from '../../scheduledTask/enginePrompt';
 import { AgentId, DefaultAgentProfile } from '../../shared/agent';
 import {
+  BrowserCredentialLoginTool,
+  BrowserCredentialMcpServer,
+} from '../../shared/browserCredentials/constants';
+import {
+  BrowserDisplayMode,
   BrowserNetworkMode,
   BrowserRuntimeProfile,
   type BrowserWebAccessConfig,
@@ -53,6 +58,7 @@ import {
   getCoworkOpenAICompatProxyBaseURL,
   getCoworkOpenAICompatProxyToken,
 } from './coworkOpenAICompatProxy';
+import type { LobsterBrowserMcpStdioLaunch } from './lobsterBrowserMcpServer';
 import {
   buildAgentEntry,
   buildManagedAgentEntries,
@@ -356,10 +362,10 @@ const MANAGED_SKILL_ENTRY_OVERRIDES: Record<string, { enabled: boolean }> = {
   'feishu-cron-reminder': {
     enabled: false,
   },
-  // LobsterAI configures MCP servers via openclaw.json mcp.servers field.
+  // NukemAI configures MCP servers via openclaw.json mcp.servers field.
   // The bundled mcporter skill tries to discover MCP servers via its own CLI,
   // finds none, and produces confusing "no MCP servers" output. Disable it so
-  // users are routed through LobsterAI's MCP layer instead.
+  // users are routed through NukemAI's MCP layer instead.
   'mcporter': {
     enabled: false,
   },
@@ -403,6 +409,9 @@ const MANAGED_BROWSER_POLICY_PROMPT = [
   '- For every `browser` tool call, set `target="host"` explicitly.',
   '- Do not use `target="sandbox"` or `target="node"` unless a future NukemAI version explicitly enables it.',
   '- If a browser call fails because the sandbox browser is unavailable, retry the same action with `target="host"`.',
+  '- The `lobster-in-app` profile is NukemAI\'s own browser bridge. If it is unavailable, report an internal NukemAI browser startup failure; never tell the user to enable Chrome remote debugging or launch Chrome with debugging flags.',
+  `- When a page requires a password and \`${BrowserCredentialMcpServer.ModelToolName}\` is available, call it before asking the user to sign in manually. The tool can use an encrypted saved login without revealing its password to you.`,
+  '- If no saved login is available, ask the user to sign in directly in the visible NukemAI browser. Never ask the user to send a password in chat, and never search files, memory, or logs for passwords.',
 ].join('\n');
 
 const MANAGED_EXEC_SAFETY_PROMPT = [
@@ -432,9 +441,9 @@ const MANAGED_EXEC_SAFETY_PROMPT = [
  * embedding in AGENTS.md so the model knows where to create new skills.
  *
  * Example outputs:
- *   macOS:   ~/Library/Application Support/LobsterAI/SKILLs
- *   Windows: ~/AppData/Roaming/LobsterAI/SKILLs
- *   Linux:   ~/.config/LobsterAI/SKILLs
+ *   macOS:   ~/Library/Application Support/NukemAI/SKILLs
+ *   Windows: ~/AppData/Roaming/NukemAI/SKILLs
+ *   Linux:   ~/.config/NukemAI/SKILLs
  */
 const resolveSkillCreationPath = (): string => {
   const skillsDir = path.join(app.getPath('userData'), 'SKILLs');
@@ -1302,8 +1311,8 @@ export type OpenClawProviderModelSource = {
 
 /**
  * Classifies an OpenClaw provider id (as reported in gateway error metadata)
- * back to the LobsterAI Settings entry it was generated from, so runtime
- * errors can tell the user whether the failing model is the LobsterAI plan,
+ * back to the NukemAI Settings entry it was generated from, so runtime
+ * errors can tell the user whether the failing model is the NukemAI plan,
  * a vendor coding plan, or their own custom provider.
  */
 export function resolveModelSourceForOpenClawProvider(
@@ -1787,6 +1796,9 @@ type OpenClawConfigSyncDeps = {
   getResolvedMcpServers?: () => ResolvedMcpServer[];
   getAskUserCallbackUrl?: () => string | null;
   getMediaCallbackUrl?: () => string | null;
+  getBrowserCallbackUrl?: () => string | null;
+  getLobsterBrowserMcpCommand?: () => string | null;
+  getLobsterBrowserMcpStdioLaunch?: () => LobsterBrowserMcpStdioLaunch | null;
   getMcpBridgeSecret?: () => string;
   getSkillsList?: () => Array<{ id: string; name: string; enabled: boolean }>;
   getAgents?: () => Agent[];
@@ -1815,6 +1827,9 @@ export class OpenClawConfigSync {
   private readonly getResolvedMcpServers?: () => ResolvedMcpServer[];
   private readonly getAskUserCallbackUrl?: () => string | null;
   private readonly getMediaCallbackUrl?: () => string | null;
+  private readonly getBrowserCallbackUrl?: () => string | null;
+  private readonly getLobsterBrowserMcpCommand?: () => string | null;
+  private readonly getLobsterBrowserMcpStdioLaunch?: () => LobsterBrowserMcpStdioLaunch | null;
   private readonly getMcpBridgeSecret?: () => string;
   private readonly getSkillsList?: () => Array<{ id: string; name: string; enabled: boolean }>;
   private readonly getAgents?: () => Agent[];
@@ -1844,6 +1859,9 @@ export class OpenClawConfigSync {
     this.getResolvedMcpServers = deps.getResolvedMcpServers;
     this.getAskUserCallbackUrl = deps.getAskUserCallbackUrl;
     this.getMediaCallbackUrl = deps.getMediaCallbackUrl;
+    this.getBrowserCallbackUrl = deps.getBrowserCallbackUrl;
+    this.getLobsterBrowserMcpCommand = deps.getLobsterBrowserMcpCommand;
+    this.getLobsterBrowserMcpStdioLaunch = deps.getLobsterBrowserMcpStdioLaunch;
     this.getMcpBridgeSecret = deps.getMcpBridgeSecret;
     this.getSkillsList = deps.getSkillsList;
     this.getAgents = deps.getAgents;
@@ -1858,7 +1876,7 @@ export class OpenClawConfigSync {
    * read against a "last known good" fingerprint.  One of the checks is
    * `hasConfigMeta` — if the previous good config had `meta` but the current
    * one doesn't, an anomaly is logged and the file content is persisted as a
-   * `.clobbered.<timestamp>` snapshot.  Because LobsterAI writes openclaw.json
+   * `.clobbered.<timestamp>` snapshot.  Because NukemAI writes openclaw.json
    * directly (bypassing OpenClaw's own `writeConfigFile` which calls
    * `stampConfigVersion`), we need to stamp `meta` ourselves.
    */
@@ -1904,13 +1922,38 @@ export class OpenClawConfigSync {
           ...(blockedHostnames.length > 0 ? { blockedHostnames } : {}),
         };
 
-    return {
+    const commonConfig = {
       enabled: true,
-      defaultProfile: BrowserRuntimeProfile.Managed,
       evaluateEnabled: browserWebAccess.evaluateEnabled,
-      ...(browserWebAccess.headless === true ? { headless: true } : {}),
-      ...(extraArgs.length > 0 ? { extraArgs } : {}),
       ssrfPolicy,
+    };
+
+    if (browserWebAccess.displayMode === BrowserDisplayMode.InApp) {
+      const callbackUrl = this.getBrowserCallbackUrl?.();
+      const mcpCommand = this.getLobsterBrowserMcpCommand?.();
+      if (callbackUrl && mcpCommand) {
+        return {
+          ...commonConfig,
+          defaultProfile: BrowserRuntimeProfile.InApp,
+          profiles: {
+            [BrowserRuntimeProfile.InApp]: {
+              driver: 'existing-session',
+              attachOnly: true,
+              color: '#D7A514',
+              mcpCommand,
+              mcpArgs: [`--lobster-bridge-url=${callbackUrl}`],
+            },
+          },
+        };
+      }
+      console.warn('[OpenClawConfigSync] In-app browser bridge is unavailable; falling back to external browser.');
+    }
+
+    return {
+      ...commonConfig,
+      defaultProfile: BrowserRuntimeProfile.Managed,
+      headless: false,
+      ...(extraArgs.length > 0 ? { extraArgs } : {}),
     };
   }
 
@@ -2422,7 +2465,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
               ...(p.config && Object.keys(p.config).length > 0 ? { config: p.config } : {}),
             }]),
           ),
-          // Disable acpx (ACP agent runtime) — LobsterAI does not use ACP and
+          // Disable acpx (ACP agent runtime) — NukemAI does not use ACP and
           // the embedded probe adds ~11s to gateway startup while it waits for
           // a process that always fails.  See openclaw/openclaw#62588.
           'acpx': { enabled: false },
@@ -2486,12 +2529,29 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
     // Sync MCP servers into OpenClaw's native mcp.servers config field.
     // OpenClaw handles connection, tool discovery, and execution natively.
     const resolvedMcpServers = this.getResolvedMcpServers?.() ?? [];
-    if (resolvedMcpServers.length > 0) {
+    const nativeMcpServers = buildOpenClawMcpServers(resolvedMcpServers);
+    if (browserWebAccess.displayMode === BrowserDisplayMode.InApp) {
+      const browserMcpLaunch = this.getLobsterBrowserMcpStdioLaunch?.();
+      if (browserMcpLaunch) {
+        nativeMcpServers[BrowserCredentialMcpServer.Name] = {
+          command: browserMcpLaunch.command,
+          args: [...browserMcpLaunch.args, BrowserCredentialMcpServer.ToolSetArgument],
+          ...(Object.keys(browserMcpLaunch.env).length > 0
+            ? { env: browserMcpLaunch.env }
+            : {}),
+          toolFilter: {
+            include: [BrowserCredentialLoginTool.Name],
+          },
+        };
+      }
+    }
+    const nativeMcpServerCount = Object.keys(nativeMcpServers).length;
+    if (nativeMcpServerCount > 0) {
       (managedConfig as Record<string, unknown>).mcp = {
-        servers: buildOpenClawMcpServers(resolvedMcpServers),
+        servers: nativeMcpServers,
       };
     }
-    console.log(`[OpenClawConfigSync] mcp.servers: ${resolvedMcpServers.length} server(s)`);
+    console.log(`[OpenClawConfigSync] mcp.servers: ${nativeMcpServerCount} server(s)`);
 
     // Sync AskUserQuestion plugin config
     const askUserCallbackUrl = this.getAskUserCallbackUrl?.();
@@ -2728,7 +2788,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
         clientSecret: `\${${secretEnvVar}}`,
         // v3.5.x schema: dmPolicy/groupPolicy/allowFrom are valid; sessionTimeout/
         // separateSessionByConversation/groupSessionScope/sharedMemoryAcrossConversations/
-        // gatewayBaseUrl were LobsterAI-specific and are not in the plugin schema.
+        // gatewayBaseUrl were NukemAI-specific and are not in the plugin schema.
         dmPolicy: inst.dmPolicy || 'open',
         allowFrom: (() => {
           const ids = inst.allowFrom?.length ? [...inst.allowFrom] : [];
@@ -3306,7 +3366,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
   }
 
   /**
-   * Ensures exec-approvals.json under the LobsterAI-managed openclaw home has
+   * Ensures exec-approvals.json under the NukemAI-managed openclaw home has
    * security=full + ask=off so the gateway never triggers approval-pending
    * for any command. The path must match the OPENCLAW_HOME env var passed to
    * the gateway process so both sides read/write the same file.
@@ -3510,13 +3570,13 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
   }
 
   /**
-   * Resolve the LobsterAI SKILLs installation directory for OpenClaw's
+   * Resolve the NukemAI SKILLs installation directory for OpenClaw's
    * `skills.load.extraDirs` configuration.
    *
    * Cross-platform paths (via Electron app.getPath('userData')):
-   *   macOS:   ~/Library/Application Support/LobsterAI/SKILLs
-   *   Windows: %APPDATA%/LobsterAI/SKILLs
-   *   Linux:   ~/.config/LobsterAI/SKILLs
+   *   macOS:   ~/Library/Application Support/NukemAI/SKILLs
+   *   Windows: %APPDATA%/NukemAI/SKILLs
+   *   Linux:   ~/.config/NukemAI/SKILLs
    */
   private resolveSkillsExtraDirs(): string[] {
     const userDataSkillsDir = path.join(app.getPath('userData'), 'SKILLs');
@@ -3539,8 +3599,8 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
   }
 
   /**
-   * Build per-skill `enabled` overrides from the LobsterAI SkillManager state,
-   * so that skills disabled in the LobsterAI UI are also hidden from OpenClaw.
+   * Build per-skill `enabled` overrides from the NukemAI SkillManager state,
+   * so that skills disabled in the NukemAI UI are also hidden from OpenClaw.
    *
    * Entries must be keyed by the skill's frontmatter `name`, not the
    * directory-derived `id`: OpenClaw resolves these overrides through
@@ -3567,7 +3627,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
    * Sync AGENTS.md to the OpenClaw workspace directory.
    * Embeds the skills routing prompt and system prompt so that OpenClaw's
    * native channel connectors (DingTalk, Feishu, etc.) can discover and
-   * invoke LobsterAI skills.
+   * invoke NukemAI skills.
    */
   private syncAgentsMd(workspaceDir: string, coworkConfig: CoworkConfig): string | undefined {
     const MARKER = AGENTS_MD_MANAGED_MARKER;

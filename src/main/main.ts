@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import {
   app,
+  safeStorage,
   BrowserWindow,
   clipboard,
   dialog,
@@ -40,10 +41,18 @@ import { AppSettingsAutoLaunchErrorCode, AppSettingsIpc } from '../shared/appSet
 import { AppUpdateIpc } from '../shared/appUpdate/constants';
 import { ArtifactBrowserPartition, ArtifactPreviewIpc, ArtifactPreviewProtocol } from '../shared/artifactPreview/constants';
 import {
+  type AgentBrowserCredentialSavePromptRequest,
+  type AgentBrowserHostNavigateRequest,
+  type AgentBrowserHostPageRequest,
+  type AgentBrowserHostRequest,
+  type AgentBrowserHostResponse,
+  type AgentBrowserHostSetViewRequest,
   type BrowserDiagnosticResultStep,
   BrowserDiagnosticStatus,
   BrowserDiagnosticStep,
+  BrowserDisplayMode,
   BrowserIpc,
+  BrowserNetworkMode,
   BrowserRuntimeProfile,
   type BrowserWebAccessConfig,
   normalizeBrowserWebAccessConfig,
@@ -164,6 +173,7 @@ import { registerCoworkSubagentHandlers } from './ipcHandlers/coworkSubagent';
 import { registerKitHandlers } from './ipcHandlers/kits';
 import { registerMcpHandlers } from './ipcHandlers/mcp';
 import { registerNimQrLoginHandlers } from './ipcHandlers/nimQrLogin';
+import { registerBrowserCredentialHandlers } from './ipcHandlers/browserCredentials/handlers';
 import { registerPermissionIpcHandlers } from './ipcHandlers/permissions/handlers';
 import { registerPluginHandlers } from './ipcHandlers/plugins';
 import {
@@ -217,8 +227,11 @@ import {
 } from './libs/coworkTempJanitor';
 import {
   generateSessionTitle,
+  getElectronNodeRuntimePath,
   probeCoworkModelReadiness,
 } from './libs/coworkUtil';
+import { BrowserCredentialApprovalService } from './browserCredentials/browserCredentialApprovalService';
+import { BrowserCredentialService } from './browserCredentials/browserCredentialService';
 import {
   assertDataMigrationSqliteSnapshotMatchesLiveSync,
   buildDataMigrationBackupFileName,
@@ -248,6 +261,11 @@ import {
   stopHtmlPreviewServer,
 } from './libs/htmlPreviewServer';
 import { getKeyfromAttribution, initializeKeyfromAttribution } from './libs/keyfromAttribution';
+import { AgentBrowserHost } from './libs/agentBrowserHost';
+import {
+  resolveLobsterBrowserMcpCommand,
+  resolveLobsterBrowserMcpStdioLaunch,
+} from './libs/lobsterBrowserMcpServer';
 import { exportLogsZip } from './libs/logExport';
 import { MainLogReporter } from './libs/mainLogReporter';
 import { migrateAgentModelRefs, resolveQualifiedAgentModelRef } from './libs/openclawAgentModels';
@@ -994,6 +1012,9 @@ let store: SqliteStore | null = null;
 let coworkStore: CoworkStore | null = null;
 let openClawRuntimeAdapter: OpenClawRuntimeAdapter | null = null;
 let coworkEngineRouter: CoworkEngineRouter | null = null;
+let agentBrowserHost: AgentBrowserHost | null = null;
+let browserCredentialService: BrowserCredentialService | null = null;
+let browserCredentialApprovalService: BrowserCredentialApprovalService | null = null;
 let skillManager: SkillManager | null = null;
 let mcpRuntime: McpRuntime | null = null;
 let skinRuntimeController: SkinRuntimeController | null = null;
@@ -1388,6 +1409,33 @@ const getOpenClawConfigSync = (): OpenClawConfigSync => {
       },
       getAskUserCallbackUrl: () => getMcpRuntime().getAskUserCallbackUrl(),
       getMediaCallbackUrl: () => getMcpRuntime().getMediaCallbackUrl(),
+      getBrowserCallbackUrl: () => getMcpRuntime().getBrowserCallbackUrl(),
+      getLobsterBrowserMcpCommand: () => {
+        const mcpRuntime = getMcpRuntime();
+        const bridgeUrl = mcpRuntime.getBrowserCallbackUrl();
+        if (!bridgeUrl) return null;
+        return resolveLobsterBrowserMcpCommand(
+          path.join(getOpenClawEngineManager().getStateDir(), 'generated'),
+          {
+            electronNodeRuntimePath: getElectronNodeRuntimePath(),
+            bridgeUrl,
+            bridgeSecret: mcpRuntime.getBridgeSecret(),
+          },
+        );
+      },
+      getLobsterBrowserMcpStdioLaunch: () => {
+        const mcpRuntime = getMcpRuntime();
+        const bridgeUrl = mcpRuntime.getBrowserCallbackUrl();
+        if (!bridgeUrl) return null;
+        return resolveLobsterBrowserMcpStdioLaunch(
+          path.join(getOpenClawEngineManager().getStateDir(), 'generated'),
+          {
+            electronNodeRuntimePath: getElectronNodeRuntimePath(),
+            bridgeUrl,
+            bridgeSecret: mcpRuntime.getBridgeSecret(),
+          },
+        );
+      },
       getMcpBridgeSecret: () => getMcpRuntime().getBridgeSecret(),
       getAgents: () => getCoworkStore().listAgents(),
       getUserPlugins: () =>
@@ -2206,6 +2254,14 @@ const getCoworkEngineRouter = () => {
             getCronJobService().notifyGatewayReady();
             handleGatewaySelfRestartSettled();
           },
+          onBrowserToolEvent: event => {
+            const displayMode = normalizeBrowserWebAccessConfig(
+              getStore().get<AppConfigSettings>('app_config')?.browserWebAccess,
+            ).displayMode;
+            if (displayMode === BrowserDisplayMode.InApp) {
+              getAgentBrowserHost().handleToolEvent(event);
+            }
+          },
         },
         new SubagentRunStore(getStore().getDatabase()),
         new SubagentMessageStore(getStore().getDatabase()),
@@ -2320,7 +2376,63 @@ const getMcpRuntime = (): McpRuntime => {
   return mcpRuntime;
 };
 
+const getBrowserCredentialService = (): BrowserCredentialService => {
+  if (!browserCredentialService) {
+    browserCredentialService = new BrowserCredentialService(
+      getStore().getDatabase(),
+      safeStorage,
+    );
+  }
+  return browserCredentialService;
+};
+
+const getBrowserCredentialApprovalService = (): BrowserCredentialApprovalService => {
+  if (!browserCredentialApprovalService) {
+    browserCredentialApprovalService = new BrowserCredentialApprovalService({
+      askUser: (questions, timeoutMs, options) => getMcpRuntime().askUserInternal(
+        questions,
+        timeoutMs,
+        options,
+      ),
+      translate: t,
+    });
+  }
+  return browserCredentialApprovalService;
+};
+
+const getAgentBrowserHost = (): AgentBrowserHost => {
+  if (!agentBrowserHost) {
+    agentBrowserHost = new AgentBrowserHost({
+      getMainWindow: () => mainWindow,
+      getBrowserConfig: () => getStore().get<AppConfigSettings>('app_config')?.browserWebAccess,
+      useSystemProxy: () => {
+        const appConfig = getStore().get<AppConfigSettings>('app_config');
+        const browserConfig = normalizeBrowserWebAccessConfig(appConfig?.browserWebAccess);
+        return getUseSystemProxyFromConfig(appConfig)
+          && browserConfig.followGlobalProxy
+          && browserConfig.networkMode === BrowserNetworkMode.ProxyCompatible;
+      },
+      emitState: event => {
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (!window.isDestroyed()) {
+            window.webContents.send(BrowserIpc.HostState, event);
+          }
+        }
+      },
+      credentialService: getBrowserCredentialService(),
+      credentialApprovalService: getBrowserCredentialApprovalService(),
+      resolveSessionKey: sessionId => {
+        const normalizedSessionId = sessionId?.trim();
+        if (!normalizedSessionId) return undefined;
+        return getCoworkStore().getSession(normalizedSessionId, 0)?.claudeSessionId ?? undefined;
+      },
+    });
+  }
+  return agentBrowserHost;
+};
+
 const startAskUserServer = async (): Promise<void> => {
+  getMcpRuntime().setBrowserToolHandler(request => getAgentBrowserHost().handleToolRequest(request));
   await getMcpRuntime().startAskUserServer();
 };
 
@@ -2855,6 +2967,11 @@ const hasBrowserWebAccessConfigChanged = (
   return JSON.stringify(normalizeBrowserWebAccessConfig(previousConfig?.browserWebAccess)) !==
     JSON.stringify(normalizeBrowserWebAccessConfig(nextConfig?.browserWebAccess));
 };
+const hasBrowserHostConfigChanged = (
+  previousConfig?: AppConfigSettings,
+  nextConfig?: AppConfigSettings,
+): boolean => JSON.stringify(normalizeBrowserWebAccessConfig(previousConfig?.browserWebAccess)) !==
+  JSON.stringify(normalizeBrowserWebAccessConfig(nextConfig?.browserWebAccess));
 
 const getSqliteAutoBackupEnabledFromConfig = (
   config?: { sqliteAutoBackupEnabled?: boolean },
@@ -3078,6 +3195,11 @@ if (!gotTheLock) {
       const systemProxyChanged = getUseSystemProxyFromConfig(previousAppConfig) !==
         getUseSystemProxyFromConfig(nextAppConfig);
       refreshEndpointsTestMode(getStore());
+      const browserHostConfigChanged = hasBrowserHostConfigChanged(previousAppConfig, nextAppConfig);
+      if (browserHostConfigChanged || previousAppConfig?.useSystemProxy !== nextAppConfig?.useSystemProxy) {
+        agentBrowserHost?.refreshConfig();
+      }
+
       const impactDecision = classifyAppConfigChange(previousAppConfig, value);
       const proxyChanged = impactDecision.reasons.includes(OpenClawConfigImpactReason.AppUseSystemProxy);
       const actionDecision = removeImpactDecisionReasons(impactDecision, [
@@ -5667,6 +5789,233 @@ if (!gotTheLock) {
     startNimQrLogin,
     pollNimQrLogin,
   });
+
+
+  registerBrowserCredentialHandlers({
+    ipcMain,
+    getService: getBrowserCredentialService,
+  });
+
+  const runBrowserHostAction = async (
+    action: () => Promise<ReturnType<AgentBrowserHost['getState']>> | ReturnType<AgentBrowserHost['getState']>,
+  ): Promise<AgentBrowserHostResponse> => {
+    try {
+      return { success: true, state: await action() };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'LobsterAI in-app browser action failed.';
+      return {
+        success: false,
+        state: {
+          ...getAgentBrowserHost().getState(),
+          error: message,
+        },
+        error: message,
+      };
+    }
+  };
+
+  ipcMain.handle(
+    BrowserIpc.GetHostState,
+    (_event, _request?: AgentBrowserHostRequest): Promise<AgentBrowserHostResponse> =>
+      runBrowserHostAction(() => getAgentBrowserHost().getState()),
+  );
+
+  ipcMain.handle(
+    BrowserIpc.SetHostView,
+    (_event, request?: AgentBrowserHostSetViewRequest): Promise<AgentBrowserHostResponse> =>
+      runBrowserHostAction(() => getAgentBrowserHost().setView({
+        sessionId: request?.sessionId,
+        visible: request?.visible === true,
+        bounds: request?.bounds,
+      })),
+  );
+
+  ipcMain.handle(
+    BrowserIpc.NavigateHost,
+    (_event, request?: AgentBrowserHostNavigateRequest): Promise<AgentBrowserHostResponse> =>
+      runBrowserHostAction(() => getAgentBrowserHost().navigate(
+        request?.url ?? '',
+        request?.sessionId,
+      )),
+  );
+
+  ipcMain.handle(
+    BrowserIpc.GoBackHost,
+    (): Promise<AgentBrowserHostResponse> => runBrowserHostAction(() => getAgentBrowserHost().goBack()),
+  );
+
+  ipcMain.handle(
+    BrowserIpc.GoForwardHost,
+    (): Promise<AgentBrowserHostResponse> => runBrowserHostAction(() => getAgentBrowserHost().goForward()),
+  );
+
+  ipcMain.handle(
+    BrowserIpc.ReloadHost,
+    (): Promise<AgentBrowserHostResponse> => runBrowserHostAction(() => getAgentBrowserHost().reload()),
+  );
+
+  ipcMain.handle(
+    BrowserIpc.StopHost,
+    (): Promise<AgentBrowserHostResponse> => runBrowserHostAction(() => getAgentBrowserHost().stop()),
+  );
+
+  ipcMain.handle(
+    BrowserIpc.SelectHostPage,
+    (_event, request?: AgentBrowserHostPageRequest): Promise<AgentBrowserHostResponse> =>
+      runBrowserHostAction(() => getAgentBrowserHost().selectPage(
+        request?.pageId ?? 0,
+        request?.sessionId,
+      )),
+  );
+
+  ipcMain.handle(
+    BrowserIpc.CloseHostPage,
+    (_event, request?: AgentBrowserHostPageRequest): Promise<AgentBrowserHostResponse> =>
+      runBrowserHostAction(() => getAgentBrowserHost().closePage(request?.pageId ?? 0)),
+  );
+
+  ipcMain.handle(
+    BrowserIpc.ResolveCredentialSavePrompt,
+    (_event, request?: AgentBrowserCredentialSavePromptRequest): Promise<AgentBrowserHostResponse> =>
+      runBrowserHostAction(() => {
+        if (!request) {
+          throw new Error('A browser credential save decision is required.');
+        }
+        return getAgentBrowserHost().resolveCredentialSavePrompt(
+          request.requestId,
+          request.decision,
+        );
+      }),
+  );
+
+  ipcMain.handle(BrowserIpc.GetStatus, async (_event, options?: { profile?: BrowserRuntimeProfile }) => {
+    try {
+      const status = await fetchBrowserControlJson<Record<string, unknown>>(
+        `/${buildBrowserProfileQuery(options?.profile)}`,
+        { timeoutMs: 3000 },
+      );
+      return { success: true, status };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to get browser status',
+      };
+    }
+  });
+
+  ipcMain.handle(BrowserIpc.ListProfiles, async () => {
+    try {
+      const result = await fetchBrowserControlJson<{ profiles?: unknown[] }>(
+        '/profiles',
+        { timeoutMs: 5000 },
+      );
+      return { success: true, profiles: result.profiles ?? [] };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to list browser profiles',
+      };
+    }
+  });
+
+  ipcMain.handle(BrowserIpc.ResetProfile, async (_event, options?: { profile?: BrowserRuntimeProfile }) => {
+    try {
+      const profile = options?.profile || BrowserRuntimeProfile.Managed;
+      const result = await fetchBrowserControlJson<Record<string, unknown>>(
+        `/reset-profile${buildBrowserProfileQuery(profile)}`,
+        { method: 'POST', timeoutMs: 20000 },
+      );
+      return { success: true, result };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to reset browser profile',
+      };
+    }
+  });
+
+  ipcMain.handle(BrowserIpc.Test, async (_event, options?: { profile?: BrowserRuntimeProfile }) => {
+    const steps: BrowserDiagnosticResultStep[] = [];
+    const addStep = (step: BrowserDiagnosticStep, status: BrowserDiagnosticStatus, message: string, details?: string) => {
+      steps.push({
+        step,
+        status,
+        message,
+        ...(details ? { details } : {}),
+      });
+    };
+    const profile = options?.profile;
+
+    try {
+      const engineStatus = getOpenClawEngineManager().getStatus();
+      if (engineStatus.phase !== 'running') {
+        addStep(BrowserDiagnosticStep.GatewayStatus, BrowserDiagnosticStatus.Error, 'browserDiagnosticGatewayNotRunning', engineStatus.message);
+        return { success: false, steps, error: engineStatus.message || 'OpenClaw gateway is not running.' };
+      }
+      addStep(BrowserDiagnosticStep.GatewayStatus, BrowserDiagnosticStatus.Success, 'browserDiagnosticGatewayReady');
+
+      try {
+        const profiles = await fetchBrowserControlJson<{ profiles?: unknown[] }>(
+          '/profiles',
+          { timeoutMs: 5000 },
+        );
+        addStep(BrowserDiagnosticStep.Profiles, BrowserDiagnosticStatus.Success, 'browserDiagnosticProfilesReady', `${profiles.profiles?.length ?? 0}`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        addStep(BrowserDiagnosticStep.Profiles, BrowserDiagnosticStatus.Error, 'browserDiagnosticProfilesFailed', message);
+        return { success: false, steps, error: message };
+      }
+
+      try {
+        await fetchBrowserControlJson<Record<string, unknown>>(
+          `/${buildBrowserProfileQuery(profile)}`,
+          { timeoutMs: 5000 },
+        );
+        addStep(BrowserDiagnosticStep.BrowserStatus, BrowserDiagnosticStatus.Success, 'browserDiagnosticStatusReady');
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        addStep(BrowserDiagnosticStep.BrowserStatus, BrowserDiagnosticStatus.Warning, 'browserDiagnosticStatusWarning', message);
+      }
+
+      try {
+        await fetchBrowserControlJson<Record<string, unknown>>(
+          `/start${buildBrowserProfileQuery(profile)}`,
+          { method: 'POST', timeoutMs: 20000 },
+        );
+        addStep(BrowserDiagnosticStep.BrowserStart, BrowserDiagnosticStatus.Success, 'browserDiagnosticStartReady');
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        addStep(BrowserDiagnosticStep.BrowserStart, BrowserDiagnosticStatus.Error, 'browserDiagnosticStartFailed', message);
+        return { success: false, steps, error: message };
+      }
+
+      try {
+        await fetchBrowserControlJson<Record<string, unknown>>(
+          `/tabs/open${buildBrowserProfileQuery(profile)}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: 'https://example.com' }),
+            timeoutMs: 20000,
+          },
+        );
+        addStep(BrowserDiagnosticStep.OpenTestPage, BrowserDiagnosticStatus.Success, 'browserDiagnosticOpenPageReady');
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        addStep(BrowserDiagnosticStep.OpenTestPage, BrowserDiagnosticStatus.Error, 'browserDiagnosticOpenPageFailed', message);
+        return { success: false, steps, error: message };
+      }
+
+      return { success: true, steps };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Browser diagnostic failed';
+      if (steps.length === 0) {
+        addStep(BrowserDiagnosticStep.GatewayStatus, BrowserDiagnosticStatus.Error, 'browserDiagnosticGatewayFailed', message);
+      }
+      return { success: false, steps, error: message };
+    }
+  });
+
 
   registerPermissionIpcHandlers({ ipcMain, isDev });
 
@@ -8444,6 +8793,15 @@ if (!gotTheLock) {
     console.log(`[Main] App cleanup started for ${reason}`);
     currentAppCleanupStep = 'sync-teardown';
     skillManager?.stopWatching();
+
+    const browserHost = agentBrowserHost;
+    if (browserHost) {
+      currentAppCleanupStep = 'agent-browser-storage';
+      await browserHost.dispose().catch(error => {
+        console.error('[AgentBrowserHost] Failed to flush persistent browser storage on quit:', error);
+      });
+    }
+
 
     // Stop Cowork sessions without blocking shutdown.
     if (coworkEngineRouter) {

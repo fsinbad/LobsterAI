@@ -5,6 +5,20 @@ import type {
   AsrRealtimeSessionResult,
 } from '../../shared/asr/constants';
 import type {
+  BrowserCredentialAvailabilityResponse,
+  BrowserCredentialDeleteRequest,
+  BrowserCredentialListResponse,
+  BrowserCredentialMutationResponse,
+  BrowserCredentialSaveRequest,
+} from '../../shared/browserCredentials/constants';
+import type {
+  AgentBrowserCredentialSavePromptRequest,
+  AgentBrowserHostNavigateRequest,
+  AgentBrowserHostPageRequest,
+  AgentBrowserHostRequest,
+  AgentBrowserHostResponse,
+  AgentBrowserHostSetViewRequest,
+  AgentBrowserHostStateEvent,
   BrowserDiagnosticResult,
   BrowserRuntimeProfile,
 } from '../../shared/browserWebAccess/constants';
@@ -822,6 +836,25 @@ interface IElectronAPI {
       listProfiles: () => Promise<{ success: boolean; profiles?: unknown[]; error?: string }>;
       test: (options?: { profile?: BrowserRuntimeProfile }) => Promise<BrowserDiagnosticResult>;
       resetProfile: (options?: { profile?: BrowserRuntimeProfile }) => Promise<{ success: boolean; result?: Record<string, unknown>; error?: string }>;
+      getHostState: (request?: AgentBrowserHostRequest) => Promise<AgentBrowserHostResponse>;
+      setHostView: (request: AgentBrowserHostSetViewRequest) => Promise<AgentBrowserHostResponse>;
+      navigateHost: (request: AgentBrowserHostNavigateRequest) => Promise<AgentBrowserHostResponse>;
+      goBackHost: (request?: AgentBrowserHostRequest) => Promise<AgentBrowserHostResponse>;
+      goForwardHost: (request?: AgentBrowserHostRequest) => Promise<AgentBrowserHostResponse>;
+      reloadHost: (request?: AgentBrowserHostRequest) => Promise<AgentBrowserHostResponse>;
+      stopHost: (request?: AgentBrowserHostRequest) => Promise<AgentBrowserHostResponse>;
+      selectHostPage: (request: AgentBrowserHostPageRequest) => Promise<AgentBrowserHostResponse>;
+      closeHostPage: (request: AgentBrowserHostPageRequest) => Promise<AgentBrowserHostResponse>;
+      resolveCredentialSavePrompt: (
+        request: AgentBrowserCredentialSavePromptRequest,
+      ) => Promise<AgentBrowserHostResponse>;
+      onHostState: (callback: (event: AgentBrowserHostStateEvent) => void) => () => void;
+      credentials: {
+        getAvailability: () => Promise<BrowserCredentialAvailabilityResponse>;
+        list: () => Promise<BrowserCredentialListResponse>;
+        save: (request: BrowserCredentialSaveRequest) => Promise<BrowserCredentialMutationResponse>;
+        delete: (request: BrowserCredentialDeleteRequest) => Promise<BrowserCredentialMutationResponse>;
+      };
     };
     dataMigration: {
       backup: () => Promise<DataMigrationBackupResult>;
