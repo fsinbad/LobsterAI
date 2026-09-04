@@ -394,7 +394,7 @@ export class McpBridgeServer {
       if (!this.onBrowserToolCallback) {
         res.writeHead(503, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
-          content: [{ type: 'text', text: 'LobsterAI in-app browser is not ready.' }],
+          content: [{ type: 'text', text: 'NukemAI in-app browser is not ready.' }],
           isError: true,
         }));
         return;
@@ -415,7 +415,7 @@ export class McpBridgeServer {
       if (!res.writableEnded) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
-          content: [{ type: 'text', text: `LobsterAI browser error: ${message}` }],
+          content: [{ type: 'text', text: `NukemAI browser error: ${message}` }],
           isError: true,
         }));
       }
