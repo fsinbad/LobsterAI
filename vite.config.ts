@@ -133,6 +133,30 @@ export default defineConfig({
         },
         onstart() {},
       },
+      {
+        // Sandboxed preload used only by the isolated saved-credential login view.
+        entry: 'src/main/browserCredentials/agentBrowserCredentialPreload.ts',
+        vite: {
+          build: {
+            sourcemap: true,
+            outDir: 'dist-electron',
+            minify: false,
+          },
+        },
+        onstart() {},
+      },
+      {
+        // Sandboxed preload that observes manual login submissions without exposing secrets to pages.
+        entry: 'src/main/browserCredentials/manualCredentialCapturePreload.ts',
+        vite: {
+          build: {
+            sourcemap: true,
+            outDir: 'dist-electron',
+            minify: false,
+          },
+        },
+        onstart() {},
+      },
     ]),
     renderer(),
   ],

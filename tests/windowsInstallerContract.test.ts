@@ -54,7 +54,7 @@ const classifyFreshTarget = ({
     return 'possible-existing';
   }
   if (enumerationError !== undefined) {
-    return enumerationError === 2 || enumerationError === 18
+    return enumerationError === 2 || enumerationError === 3 || enumerationError === 18
       ? 'fresh-install'
       : 'possible-existing';
   }
@@ -186,7 +186,7 @@ describe('Windows installer hardening contracts', () => {
     expect(installerInclude).toContain('target=exact-current-backup');
     expect(installerInclude).not.toContain('target_pattern=$INSTDIR.old');
     expect(installerInclude.indexOf('phase=old-install-cleanup-scheduled')).toBeGreaterThan(
-      installerInclude.indexOf('phase=defender-exclusion-permanent-complete'),
+      installerInclude.indexOf('phase=defender-exclusion-rebalance-complete'),
     );
   });
 
@@ -659,6 +659,12 @@ describe('Windows installer hardening contracts', () => {
     expect(
       classifyFreshTarget({
         hasRegistrationEvidence: false,
+        enumerationError: 3,
+      }),
+    ).toBe('fresh-install');
+    expect(
+      classifyFreshTarget({
+        hasRegistrationEvidence: false,
         enumerationError: 18,
       }),
     ).toBe('fresh-install');
@@ -669,15 +675,26 @@ describe('Windows installer hardening contracts', () => {
       }),
     ).toBe('possible-existing');
 
+    // The enumeration runs through the System plug-in so the terminating
+    // Win32 error is captured in the same call (?e). NSIS FindNext plus a
+    // separate GetLastError read a stale value, never saw
+    // ERROR_NO_MORE_FILES and classified every install as possible-existing
+    // (field logs 2026-08-20..09-02: 46 of 46 preflights).
     const start = installerInclude.indexOf('!macro DetectFreshOrPossibleExisting');
     const end = installerInclude.indexOf('!macroend', start);
     const detector = installerInclude.slice(start, end);
-    expect(detector).toContain('FindFirst $4 $5 "$INSTDIR\\*"');
-    expect(detector).toContain('FindNext $4 $5');
+    expect(detector).toContain(
+      String.raw`kernel32::FindFirstFileW(w "$INSTDIR\*", p r6) p .r4 ?e`,
+    );
+    expect(detector).toContain(String.raw`kernel32::FindNextFileW(p r4, p r6) i .r0 ?e`);
     expect(detector).toContain('StrCmp $5 "."');
     expect(detector).toContain('StrCmp $5 ".."');
-    expect(detector).toContain('IntCmp $6 2 LobsterInstallPreflightFresh');
-    expect(detector).toContain('IntCmp $6 18 LobsterInstallPreflightFresh');
+    expect(detector).toContain('IntCmp $5 2 LobsterInstallPreflightFresh');
+    expect(detector).toContain('IntCmp $5 3 LobsterInstallPreflightFresh');
+    expect(detector).toContain('IntCmp $5 18 LobsterInstallPreflightFresh');
+    expect(detector).toContain('System::Free $6');
+    expect(detector).not.toContain('FindNext $4 $5');
+    expect(detector).not.toContain('kernel32::GetLastError()');
     expect(detector).not.toContain('IfFileExists "$INSTDIR\\*"');
     expect(detector).not.toContain('IfFileExists "$INSTDIR\\*.*"');
   });
@@ -692,21 +709,140 @@ describe('Windows installer hardening contracts', () => {
     expect(installerInclude).toContain(String.raw`$WINDIR\Sysnative\tar.exe`);
     expect(installerInclude).toContain(String.raw`$WINDIR\System32\tar.exe`);
     expect(installerInclude).toContain(
-      String.raw`nsExec::ExecToStack '"$lobsterTrustedTarPath"`,
+      String.raw`Push '"$lobsterTrustedTarPath" -xf`,
     );
     expect(installerInclude).not.toMatch(
-      /(?:nsExec::\w+|Exec)\s+['"][^'"\n]*\bpowershell(?:\.exe)?\b/i,
+      /(?:nsExec::\w+|Exec|Push)\s+['"][^'"\n]*\bpowershell(?:\.exe)?\b/i,
     );
     expect(installerInclude).not.toContain(String.raw`$SYSDIR\tar.exe`);
 
+    // Every interpreted helper command line is pushed for the hidden launcher
+    // and names only the resolved absolute PowerShell path; inputs travel
+    // through the child environment, never through string interpolation.
     const interpretedCommands = installerInclude
       .split('\n')
-      .filter((line) => /(?:nsExec::\w+|Exec).*-Command/.test(line));
+      .filter((line) => /^\s*Push\s+'.*-Command/.test(line));
     expect(interpretedCommands.length).toBeGreaterThan(0);
     for (const command of interpretedCommands) {
       expect(command).toContain('$lobsterTrustedPowerShellPath');
       expect(command).not.toMatch(/\$(?:INSTDIR|APPDATA|lobsterOldInstall\w*)/);
     }
+  });
+
+  test('launches every helper without a console window', () => {
+    // Field feedback 2026-09-02 (dictbind bundle): users watched PowerShell
+    // windows pop up and vanish during the install and took the installer
+    // for malware. nsExec creates its child with CREATE_NEW_CONSOLE + SW_HIDE
+    // (Windows Terminal as the default terminal can still flash it) and NSIS
+    // Exec with a plain, visible console. Every helper therefore goes through
+    // the System plug-in launcher with CREATE_NO_WINDOW, which never creates a
+    // console window at all.
+    const code = installerInclude
+      .split(/\r?\n/)
+      .filter((line) => !/^\s*;/.test(line))
+      .join('\n');
+    expect(code).not.toMatch(/^\s*nsExec::/m);
+    expect(code).not.toMatch(/^\s*Exec(?:Wait|Shell|Dos)?\s/m);
+    expect(code).not.toContain('-WindowStyle Hidden');
+
+    expect(installerInclude).toContain('Var lobsterHiddenExecExitCode');
+    expect(installerInclude).toContain('Var lobsterHiddenExecOutput');
+    expect(installerInclude).toContain('Function un.lobsterExecHiddenProcess');
+    const launcherStart = installerInclude.indexOf('Function lobsterExecHiddenProcess');
+    const launcher = installerInclude.slice(
+      launcherStart,
+      installerInclude.indexOf('FunctionEnd', launcherStart),
+    );
+    expect(launcher).toContain(
+      "kernel32::CreateProcessW(p 0, w r0, p 0, p 0, i r5, i 0x08000000, p 0, p 0, p r7, p r8) i .r4 ?e",
+    );
+    // 32-bit STARTUPINFOW (68 bytes) with SW_HIDE and, when capturing,
+    // redirected standard handles; stdin always comes from NUL.
+    expect(launcher).toContain(
+      "'*(i 68, p 0, p 0, p 0, i 0, i 0, i 0, i 0, i 0, i 0, i 0, i r6, i 0, p 0, p r2, p r3, p r3) p .r7'",
+    );
+    expect(launcher).toContain('CreateFileW(w "NUL", i 0x80000000');
+    expect(launcher).toContain('WaitForSingleObject(p r4, i -1)');
+    expect(launcher).toContain('GetExitCodeProcess(p r4, *i .r5)');
+    // Launch failures keep the "error" verdict every call site already
+    // dispatches on (formerly nsExec's), with the Win32 error in the output.
+    expect(launcher).toContain('StrCpy $lobsterHiddenExecExitCode "error"');
+    expect(launcher).toContain('launch-failed win32_error=$lobsterHiddenExecLaunchError');
+    // The exit code is authoritative; a capture-file failure only drops the
+    // diagnostic output.
+    expect(launcher).toContain('LobsterHiddenExecCaptureUnavailable:');
+    // The detached macro re-raises the Exec error flag for launch failures.
+    const detachedStart = installerInclude.indexOf('!macro LobsterExecHiddenDetached');
+    const detached = installerInclude.slice(
+      detachedStart,
+      installerInclude.indexOf('!macroend', detachedStart),
+    );
+    expect(detached).toContain('!insertmacro LobsterExecHidden "detach"');
+    expect(detached).toContain('SetErrors');
+
+    // Every pushed helper command line is consumed by a launcher macro as the
+    // very next instruction, so no stack contract can drift.
+    const lines = installerInclude.split(/\r?\n/);
+    const launcherMacro = /^\s*!insertmacro LobsterExecHidden(?:ToStack|ExitCode|Detached)\s*$/;
+    let helperLaunches = 0;
+    for (let index = 0; index < lines.length; index += 1) {
+      if (!/^\s*Push\s+'"\$lobsterTrusted(?:PowerShell|Tar)Path"/.test(lines[index])) {
+        continue;
+      }
+      helperLaunches += 1;
+      let cursor = index + 1;
+      while (cursor < lines.length && /\\\s*$/.test(lines[cursor - 1])) {
+        cursor += 1;
+      }
+      expect(lines[cursor]).toMatch(launcherMacro);
+    }
+    // process-stop kill loop + survivor dump, rollback Defender cleanup +
+    // displaced-tree cleanup, Skills backup, Defender post-uninstaller add +
+    // query-only, tar, extractor watchdog, Skills restore, Defender
+    // rebalance, old-install cleanup, uninstaller Defender cleanup.
+    expect(helperLaunches).toBe(13);
+  });
+
+  test('rebalances Defender exclusions in one helper launch', () => {
+    // Trim (install-scope root + legacy SKILLs entry) always runs; the
+    // permanent re-add is gated by /NoDefenderExclusion through the child
+    // environment, so the opt-out keeps removing without ever adding.
+    const start = installerInclude.indexOf(
+      '; -- Rebalance Defender exclusions now that extraction is done --',
+    );
+    expect(start).toBeGreaterThan(-1);
+    const rebalance = installerInclude.slice(
+      start,
+      installerInclude.indexOf('phase=defender-exclusion-rebalance-complete', start),
+    );
+    expect(rebalance).toContain('${GetOptions} $R9 "/NoDefenderExclusion" $R8');
+    expect(rebalance).toContain(
+      'SetEnvironmentVariable(t "LOBSTERAI_DEFENDER_ADD_PERMANENT", t "$R7")',
+    );
+    expect(rebalance).toContain(
+      'SetEnvironmentVariable(t "LOBSTERAI_DEFENDER_ADD_PERMANENT", t "")',
+    );
+    expect(rebalance).toContain(
+      'Remove-MpPreference -ExclusionPath $$trimTargets -ErrorAction SilentlyContinue',
+    );
+    expect(rebalance).toContain(
+      String.raw`if ($$env:LOBSTERAI_DEFENDER_ADD_PERMANENT -ne \"1\") { $$permanent = \"skipped:opt-out\" }`,
+    );
+    expect(rebalance).toContain('Add-MpPreference -ExclusionPath $$addTargets -ErrorAction Stop');
+    for (const entry of [
+      String.raw`resources\cfmind\"`,
+      String.raw`resources\python-win\"`,
+      String.raw`resources\app.asar.unpacked\"`,
+      String.raw`resources\app.asar\"`,
+      String.raw`resources\win-resources.tar\"`,
+      String.raw`resources\SKILLs\"`,
+    ]) {
+      expect(rebalance).toContain(entry);
+    }
+    expect(rebalance.match(/!insertmacro LobsterExecHiddenToStack/g)).toHaveLength(1);
+    expect(installerInclude).toContain('permanent_requested=$R7');
+    expect(installerInclude).not.toContain('phase=defender-exclusion-trim-complete');
+    expect(installerInclude).not.toContain('phase=defender-exclusion-permanent-complete');
   });
 
   test('uses typed helper outcomes and a marker-backed ten-minute watchdog', () => {
@@ -1067,6 +1203,25 @@ describe('Windows installer hardening contracts', () => {
     expect(electronBuilderConfig.nsis?.deleteAppDataOnUninstall).toBe(false);
   });
 
+  test('declares the installer DPI-aware so high-DPI icons and text stay crisp', () => {
+    // electron-builder's template never emits a dpiAware manifest element, so
+    // Windows bitmap-scales the whole wizard on 125%-200% displays and the
+    // title-bar/header icons render blurry. The attribute is global, so it
+    // must come from customHeader (file scope of installer.nsi), not from a
+    // section or function, and it must be emitted for the uninstaller pass
+    // too, i.e. outside any BUILD_UNINSTALLER guard.
+    expect(rootInstallerTemplate).toContain('!insertmacro customHeader');
+    expect(installerInclude.match(/^\s*ManifestDPIAware\b/gm)?.length).toBe(1);
+    const headerStart = installerInclude.indexOf('!macro customHeader');
+    const header = installerInclude.slice(
+      headerStart,
+      installerInclude.indexOf('!macroend', headerStart),
+    );
+    expect(header).toContain('ManifestDPIAware true');
+    const afterUninstallerGuard = header.slice(header.indexOf('!endif'));
+    expect(afterUninstallerGuard).toContain('ManifestDPIAware true');
+  });
+
   test('stages the embedded package through a selectable staging directory', () => {
     // Template contract: default init -> selection hook -> materialize hook ->
     // File materialize, all against $appPackageStagingDir, so the preflight
@@ -1268,13 +1423,14 @@ describe('Windows installer hardening contracts', () => {
       String.raw`nsExec::ExecToLog '"$lobsterTrustedTarPath"`,
     );
     const tarStart = installerInclude.indexOf(
-      String.raw`nsExec::ExecToStack '"$lobsterTrustedTarPath"`,
+      String.raw`Push '"$lobsterTrustedTarPath" -xf`,
     );
     const tarEnd = installerInclude.indexOf('TarExtractElectron:', tarStart);
     const tar = installerInclude.slice(tarStart, tarEnd);
 
     // Exit code and output are always both popped (stack balance), and the
     // original exit-code dispatch survives verbatim.
+    expect(tar).toContain('!insertmacro LobsterExecHiddenToStack');
     expect(tar).toContain('Pop $0');
     expect(tar).toContain('Pop $R6');
     expect(tar).toContain('IntCmp $R2 0 TarExtractVerify TarExtractElectron TarExtractElectron');

@@ -182,7 +182,7 @@ npm run dsh:runtime:host
 # Boot it once and assert the web UI answers
 npm run dsh:runtime:verify
 
-# Full gate: build, pack, install over HTTP, boot, delegate a coding task
+# Full gate: build, pack, install over HTTP, boot, assert provider/model over RPC
 npm run dsh:e2e
 ```
 

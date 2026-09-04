@@ -182,7 +182,7 @@ npm run dsh:runtime:host
 # 启动一次并验证 Web UI 可访问
 npm run dsh:runtime:verify
 
-# 完整门禁：构建、打包、经 HTTP 安装、启动、跑通委托编码任务
+# 完整门禁：构建、打包、经 HTTP 安装、启动、经 RPC 断言 provider/model
 npm run dsh:e2e
 ```
 
