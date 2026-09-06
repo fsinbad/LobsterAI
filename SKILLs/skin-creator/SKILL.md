@@ -93,7 +93,7 @@ Listing models is not an image-generation attempt.
 
 ### 4. Generate and register the backdrop
 
-Generate exactly one 16:9 or closest supported landscape image. The prompt must include the shared style bible, the same presentation palette, the intended focus coordinates, and the backdrop contract. Prefer a 2K-class output when supported. Use a stable filename hint such as `lobster-skin-backdrop.png`.
+Generate exactly one 16:9 or closest supported landscape image. The prompt must include the shared style bible, the same presentation palette, the intended focus coordinates, and the backdrop contract. Prefer a 2K-class output when supported. Use a stable filename hint such as `nukem-skin-backdrop.png`.
 
 If the generation returns a pending task, wait for its completion event and continue from this workflow.
 
@@ -112,7 +112,7 @@ Proceed only after registration succeeds.
 
 ### 5. Generate and register the emblem
 
-Generate exactly one square emblem using the same style bible, backend, and model. When the selected model supports reference images, use the registered backdrop source as a style reference; otherwise repeat the same style bible in the prompt. Use a stable filename hint such as `lobster-skin-emblem.png`.
+Generate exactly one square emblem using the same style bible, backend, and model. When the selected model supports reference images, use the registered backdrop source as a style reference; otherwise repeat the same style bible in the prompt. Use a stable filename hint such as `nukem-skin-emblem.png`.
 
 The emblem must not contain words or letters. Do not rely on transparency. Generate a full-bleed square tile whose background reaches all four canvas edges; NukemAI owns the displayed corner radius. Do not bake an inset rounded card, white outer canvas, border, frame, or padding into the image.
 
